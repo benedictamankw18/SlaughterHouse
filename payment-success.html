@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Payment Confirmation | UltBigBoy</title>
+	<link rel="stylesheet" href="style.css">
+</head>
+<body id="top">
+	<main class="catalog-page payment-result">
+		<section class="catalog-heading">
+			<p class="section-kicker">ORDER STATUS</p>
+			<h1 id="payment-title">Checking your payment...</h1>
+			<p id="payment-message">Please wait while we confirm your transaction.</p>
+			<div id="download-links"></div>
+			<a class="browse-more-beats" id="payment-return-link" href="beats.html">Return to beats</a>
+		</section>
+	</main>
+	<footer class="site-footer"><div class="site-footer-inner"><div class="site-footer-brand"><a href="index.html"><img src="Images/Logo 2.png" alt="UltBigBoy home"><span>UltBigBoy</span></a><p>Explore original beats and licenses, shop merchandise, stream music, book studio sessions, send custom requests, and share reviews.</p></div><div class="site-footer-content"><section class="site-footer-services"><h2>SERVICES</h2><nav class="site-footer-links" aria-label="Footer navigation"><a href="index.html">Home</a><a href="beats.html">Beats</a><a href="merchandise.html">Merchandise</a><a href="booking.html">Book Section</a><a href="produced.html">Stream</a></nav></section><section class="site-footer-store"><h2>BEATS STORE</h2><nav class="site-footer-genres" aria-label="Shop beats by genre"><a href="beats.html?genre=amapiano#beat-listing">Amapiano</a><a href="beats.html?genre=trap#beat-listing">Trap</a><a href="beats.html?genre=rap#beat-listing">Rap</a><a href="beats.html?genre=afrobeat#beat-listing">Afrobeat</a><a href="beats.html#beat-listing">All</a></nav></section><address class="site-footer-contact"><h2>CONTACT</h2><a href="mailto:derryakyene99@gmail.com"><svg class="site-footer-contact-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg><span>derryakyene99@gmail.com</span></a><a href="mailto:sallywaves28@gmail.com"><svg class="site-footer-contact-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg><span>sallywaves28@gmail.com</span></a><a href="tel:+233244531198"><svg class="site-footer-contact-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h3l2 5-2 1.5a13 13 0 0 0 6.5 6.5L16 14l5 2v3c0 1-1 2-2 2C10 21 3 14 3 5c0-1 1-2 2-2z"/></svg><span>+233 24 453 1198</span></a></address></div></div><div class="site-footer-bottom"><span>&copy; UltBigBoy</span><a href="index.html">Back to home</a></div></footer>
+	<script src="footer.js"></script>
+	<script>
+		const params = new URLSearchParams(location.search);
+		const reference = params.get('reference') || params.get('trxref');
+		const apiBaseUrl = params.get('apiBaseUrl') || 'http://localhost:3000';
+		const title = document.getElementById('payment-title');
+		const message = document.getElementById('payment-message');
+		const links = document.getElementById('download-links');
+
+		if (!reference) {
+			title.textContent = 'Payment reference missing';
+			message.textContent = 'We could not find an order reference.';
+		} else {
+			const verifyUrl = new URL(`/api/payments/verify/${encodeURIComponent(reference)}`, apiBaseUrl);
+			fetch(verifyUrl)
+				.then(async response => {
+					const data = await response.json();
+					if (!response.ok) throw new Error(data.error || 'Could not verify payment.');
+					if (data.status !== 'success' || !Array.isArray(data.downloads)) {
+						throw new Error('Payment was not confirmed.');
+					}
+
+					title.textContent = 'Payment confirmed';
+					if (data.booking) {
+						message.textContent = `${data.booking.service} payment received. Your session request is now booked.`;
+						const returnLink = document.getElementById('payment-return-link');
+						returnLink.href = 'booking.html';
+						returnLink.textContent = 'Return to booking';
+					} else {
+						message.textContent = `Order ${data.reference} is ready. Download your files below.`;
+					}
+					data.downloads.forEach(item => {
+						const downloadItem = document.createElement('div');
+						downloadItem.className = 'download-item';
+						const name = document.createElement('strong');
+						name.textContent = item.name;
+						const license = document.createElement('span');
+						license.textContent = `${item.license} license`;
+						downloadItem.append(name, license);
+
+						item.files.forEach(file => {
+							const link = document.createElement('a');
+							link.className = 'license-browse-button';
+							link.href = file.url;
+							link.textContent = `Download ${file.format}`;
+							downloadItem.appendChild(link);
+						});
+						links.appendChild(downloadItem);
+					});
+				})
+				.catch(error => {
+					title.textContent = 'Payment needs attention';
+					message.textContent = error.message || 'We could not verify this payment yet.';
+				});
+		}
+	</script>
+</body>
+</html>

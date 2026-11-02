@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>UltBigBoy</title>
+  <link rel="icon" type="image/png" href="Images/Logo 2.png">
+  <link rel="stylesheet" href="style.css">
+  <script>
+    if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+    window.addEventListener('pageshow', () => {
+      if (!window.location.hash) window.scrollTo(0, 0);
+    });
+  </script>
+</head>
+<body id="top">
+  <header>
+    <!-- Logo -->
+    <div class="logo">
+      <img src="images/Logo 2.png" alt="UltBigBoy Logo">
+    </div>
+
+    <a class="home-button" href="index.html" aria-label="Home">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1V10Z"/>
+      </svg>
+    </a>
+
+    <div class="header-nav">
+      <form class="search-form" role="search">
+        <label class="sr-only" for="site-search">Search</label>
+        <input id="site-search" type="search" placeholder="Search" autocomplete="off">
+        <button type="submit" class="search-button" aria-label="Search">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m21 21-4.35-4.35m2.1-5.4a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z"/>
+          </svg>
+        </button>
+      </form>
+    </div>
+
+    <!-- Right controls -->
+    <div class="right-controls">
+       <div class="header-tools">
+  <button class="cart-button" id="cart-button" type="button" aria-label="Shopping cart" aria-expanded="false">
+    <span aria-hidden="true">&#128722;</span>
+  </button>
+
+  <!-- Menu Icon -->
+  <div class="menu-icon" id="menuIcon" role="button" aria-label="Open menu" tabindex="0">
+    <div></div>
+    <div></div>
+    <div></div>
+  </div>
+
+  <button class="login-button" type="button">Login</button>
+
+  <!-- Currency Switcher -->
+  <div class="currency-switcher">
+    <img id="flagIcon" src="http://flagcdn.com/20x15/gh.png" alt="Currency Flag">
+    <select id="currency">
+      <option value="GHS" data-flag="http://flagcdn.com/20x15/gh.png">GHS (₵)</option>
+      <option value="USD" data-flag="http://flagcdn.com/20x15/us.png">USD ($)</option>
+      <option value="GBP" data-flag="http://flagcdn.com/20x15/gb.png">GBP (£)</option>
+    </select>
+  </div>
+</div>
+      <aside class="cart-drawer" id="cart-drawer" aria-labelledby="cart-title" aria-hidden="true">
+        <div class="cart-drawer-header">
+          <h2 id="cart-title">Your cart</h2>
+          <button class="cart-close-button" id="cart-close-button" type="button" aria-label="Close cart">&#10005;</button>
+        </div>
+        <ul class="cart-items" id="cart-items"></ul>
+        <p class="cart-empty" id="cart-empty">Your cart is empty.</p>
+        <div class="cart-summary"><span>Total Amount</span><strong id="cart-total">$0.00 USD</strong></div>
+        <button class="cart-checkout-button" id="cart-checkout-button" type="button" disabled>Proceed Payment</button>
+      </aside>
+  </div>
+
+  </header>
+  <!-- Dropdown Menu -->
+  <nav class="dropdown" id="dropdownMenu">
+    <ul>
+      <li><a href="beats.html">BEAT</a></li>
+      <li><a href="merchandise.html">MERCHANDISE</a></li>
+      <li><a href="booking.html">BOOK SESSIONS</a></li>
+      <li><a href="produced.html">STREAM</a></li>
+    </ul>
+  </nav>
+
+<!-- Hero Section -->
+<section class="hero">
+  <div class="hero-overlay">
+    <h1><img src="Images/Logo 2.png" alt="UltBigBoy Logo"></h1>
+    <p class="hero-title">Premium Beats for Artists</p>
+    <div class="beattypes">
+      <p>.Afrobeat .Amapiano .Trap .HipHop .Highlife</p>
+      <p class="modern-production">Modern Productions</p>
+    </div>
+
+    <div class="hero-buttons">
+      <a class="primary" href="beats.html">Browse Beats</a>
+      <button>Buy Exclusive</button>
+      <a href="merchandise.html">Shop Merchandise</a>
+    </div>
+  </div>
+</section>
+
+<section class="beat-filter-bar" aria-label="Beat filters">
+  <div class="filter-row">
+    <div class="filter-field bpm-field">
+      <label>BPM range</label>
+      <div class="bpm-range">
+        <input id="bpm-min" type="number" placeholder="Min" min="60" max="220" aria-label="Minimum BPM" />
+        <span aria-hidden="true">-</span>
+        <input id="bpm-max" type="number" placeholder="Max" min="60" max="220" aria-label="Maximum BPM" />
+      </div>
+    </div>
+
+    <div class="filter-field genre-field">
+      <label for="genre">Genre</label>
+      <select id="genre">
+        <option value="">Select Genre</option>
+        <option value="afrobeat">Afrobeat</option>
+        <option value="amapiano">Amapiano</option>
+        <option value="trap">Trap</option>
+        <option value="hiphop">Hip Hop</option>
+        <option value="highlife">Highlife</option>
+        <option value="rnb">R&B</option>
+        <option value="dancehall">Dancehall</option>
+        <option value="reggae">Reggae</option>
+        <option value="asakaa">Asakaa</option>
+      </select>
+    </div>
+
+    <div class="filter-field key-field">
+      <label>Key</label>
+      <div class="key-picker" id="key-picker">
+        <button type="button" class="key-trigger" id="key-trigger" aria-haspopup="true" aria-expanded="false">
+          <span id="key-value">Select Key</span>
+          <span class="key-chevron" aria-hidden="true">&#8964;</span>
+        </button>
+        <div class="key-dropdown" id="key-dropdown" role="dialog" aria-label="Choose key">
+          <div class="key-mode-switch" role="group" aria-label="Key mode">
+            <button type="button" class="key-mode active" data-mode="major" aria-pressed="true">Maj</button>
+            <button type="button" class="key-mode" data-mode="minor" aria-pressed="false">Min</button>
+          </div>
+          <div class="key-notes" role="group" aria-label="Key note">
+            <button type="button" class="key-note active" data-note="">All</button>
+            <button type="button" class="key-note" data-note="c">C</button>
+            <button type="button" class="key-note" data-note="c#">C#</button>
+            <button type="button" class="key-note" data-note="d">D</button>
+            <button type="button" class="key-note" data-note="d#">Eb</button>
+            <button type="button" class="key-note" data-note="e">E</button>
+            <button type="button" class="key-note" data-note="f">F</button>
+            <button type="button" class="key-note" data-note="f#">F#</button>
+            <button type="button" class="key-note" data-note="g">G</button>
+            <button type="button" class="key-note" data-note="g#">Ab</button>
+            <button type="button" class="key-note" data-note="a">A</button>
+            <button type="button" class="key-note" data-note="a#">Bb</button>
+            <button type="button" class="key-note" data-note="b">B</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="filter-field mood-field">
+      <label for="mood">Mood / Type</label>
+      <select id="mood">
+        <option value="">Select Mood</option>
+        <option value="emotional">Emotional</option>
+        <option value="sad">Sad</option>
+        <option value="happy">Happy</option>
+        <option value="energetic">Energetic</option>
+        <option value="romantic">Romantic</option>
+        <option value="dark">Dark</option>
+        <option value="chill">Chill</option>
+        <option value="uplifting">Uplifting</option>
+        <option value="storytelling">Storytelling</option>
+        <option value="dance">Dance</option>
+        <option value="other">Other</option>
+      </select>
+    </div>
+
+    <button type="button" class="browse-btn" id="preview-browse-btn">Browse</button>
+  </div>
+</section>
+
+<section class="beat-listing vault-section" id="beat-listing" aria-labelledby="beat-listing-title">
+  <div class="beat-listing-heading">
+    <p class="section-kicker">THE BEAT VAULT</p>
+    <h2 id="beat-listing-title">FEATURED BEATS</h2>
+  </div>
+
+  <div class="beat-list" id="beat-list">
+    <article class="beat-card" data-bpm="86" data-key="d#" data-key-mode="major" data-genre="trap" data-mood="cool">
+      <button class="beat-cover" type="button" aria-label="Play Babylons preview">
+        <img src="Images/Babylons.jpg" alt="Babylons cover art">
+        <span class="play-icon" aria-hidden="true">&#9654;</span>
+      </button>
+      <div class="beat-details">
+        <h3>BABYLONS</h3>
+        <p class="beat-meta"><span class="meta-item"><span class="meta-icon" aria-hidden="true">&#129345;</span>86 BPM</span><span class="meta-item"><span class="meta-icon" aria-hidden="true">&#9835;</span>Eb Major</span><span class="meta-item"><span class="meta-icon" aria-hidden="true">&#127925;</span>Trap</span><span class="meta-item"><span class="meta-icon" aria-hidden="true">&#128522;</span>Cool</span></p>
+        <audio class="beat-audio" src="Beats/Babylons%20(mastered).mp3" preload="none"></audio>
+        <label class="license-label" for="babylons-license">License Type</label>
+        <select class="license-select" id="babylons-license">
+          <option value="basic" data-price="25">Basic</option>
+          <option value="premium" data-price="45">Premium</option>
+          <option value="unlimited" data-price="150">Unlimited</option>
+          <option value="exclusive" data-price="420">Exclusive</option>
+        </select>
+      </div>
+      <div class="beat-purchase">
+        <strong class="beat-price">$25.00 USD</strong>
+        <button class="beat-cart-button" type="button" aria-label="Add Babylons to cart">
+          <span aria-hidden="true">&#128722;</span>
+        </button>
+      </div>
+    </article>
+
+    <article class="beat-card" data-bpm="109" data-key="g#" data-key-mode="major" data-genre="trap" data-mood="emotional">
+      <button class="beat-cover" type="button" aria-label="Play Yesu preview">
+        <img src="Images/Yesu.jpg" alt="Yesu cover art">
+        <span class="play-icon" aria-hidden="true">&#9654;</span>
+      </button>
+      <div class="beat-details">
+        <h3>YESU</h3>
+        <p class="beat-meta"><span class="meta-item"><span class="meta-icon" aria-hidden="true">&#129345;</span>109 BPM</span><span class="meta-item"><span class="meta-icon" aria-hidden="true">&#9835;</span>Ab Major</span><span class="meta-item"><span class="meta-icon" aria-hidden="true">&#127925;</span>Trap</span><span class="meta-item"><span class="meta-icon" aria-hidden="true">&#128522;</span>Emotional</span></p>
+        <audio class="beat-audio" src="Beats/Yesu%20(mastered).mp3" preload="none"></audio>
+        <label class="license-label" for="yesu-license">License Type</label>
+        <select class="license-select" id="yesu-license">
+          <option value="basic" data-price="25">Basic</option>
+          <option value="premium" data-price="45">Premium</option>
+          <option value="unlimited" data-price="150">Unlimited</option>
+          <option value="exclusive" data-price="420">Exclusive</option>
+        </select>
+      </div>
+      <div class="beat-purchase">
+        <strong class="beat-price">$25.00 USD</strong>
+        <button class="beat-cart-button" type="button" aria-label="Add Yesu to cart">
+          <span aria-hidden="true">&#128722;</span>
+        </button>
+      </div>
+    </article>
+
+    <article class="beat-card beat-card-coming-soon">
+      <div class="beat-cover beat-cover-placeholder">
+        <img src="Images/Hero1.png" alt="Coming soon beat artwork">
+        <span>Coming soon</span>
+      </div>
+      <div class="beat-details">
+        <h3>COMING SOON 01</h3>
+        <p class="beat-meta"><span>New beat</span><span>Details coming soon</span></p>
+      </div>
+    </article>
+
+    <article class="beat-card beat-card-coming-soon">
+      <div class="beat-cover beat-cover-placeholder">
+        <img src="Images/Hero2.png" alt="Coming soon beat artwork">
+        <span>Coming soon</span>
+      </div>
+      <div class="beat-details">
+        <h3>COMING SOON 02</h3>
+        <p class="beat-meta"><span>New beat</span><span>Details coming soon</span></p>
+      </div>
+    </article>
+
+    <article class="beat-card beat-card-coming-soon">
+      <div class="beat-cover beat-cover-placeholder">
+        <img src="Images/Hero3.png" alt="Coming soon beat artwork">
+        <span>Coming soon</span>
+      </div>
+      <div class="beat-details">
+        <h3>COMING SOON 03</h3>
+        <p class="beat-meta"><span>New beat</span><span>Details coming soon</span></p>
+      </div>
+    </article>
+
+    <article class="beat-card beat-card-coming-soon">
+      <div class="beat-cover beat-cover-placeholder">
+        <img src="Images/Hero4.png" alt="Coming soon beat artwork">
+        <span>Coming soon</span>
+      </div>
+      <div class="beat-details">
+        <h3>COMING SOON 04</h3>
+        <p class="beat-meta"><span>New beat</span><span>Details coming soon</span></p>
+      </div>
+    </article>
+
+    <article class="beat-card beat-card-coming-soon">
+      <div class="beat-cover beat-cover-placeholder">
+        <img src="Images/Hero5.png" alt="Coming soon beat artwork">
+        <span>Coming soon</span>
+      </div>
+      <div class="beat-details">
+        <h3>COMING SOON 05</h3>
+        <p class="beat-meta"><span>New beat</span><span>Details coming soon</span></p>
+      </div>
+    </article>
+  </div>
+
+  <a class="browse-more-beats" href="beats.html">Browse more beats <span aria-hidden="true">&#8594;</span></a>
+</section>
+
+<section class="merchandise-section vault-section" id="merchandise" aria-labelledby="merchandise-title">
+  <div class="beat-listing-heading">
+    <p class="section-kicker">MERCHANDISE</p>
+    <h2 id="merchandise-title">SHOP THE VAULT</h2>
+  </div>
+
+  <div class="merchandise-carousel" aria-roledescription="carousel" aria-label="Merchandise collection">
+    <button class="merchandise-carousel-button" id="merchandise-prev" type="button" aria-label="Previous merchandise">&#8592;</button>
+    <div class="merchandise-track" id="merchandise-track">
+    <article class="merchandise-card">
+      <div class="merchandise-art"><img src="Images/ThurQ Angel Dread.png" alt="ThurQ Angel Dread cap artwork"><span class="limited-edition-tag">LIMITED EDITION</span><span class="coming-soon-tag">COMING SOON</span></div>
+      <div class="merchandise-details"><h3>THURQ ANGEL DREAD CAP</h3><p>A bold black cap carrying the ThurQ Angel Dread mark: armored energy, golden light, and a winged emblem made for the ones who move with purpose.</p><a class="merchandise-preorder-button" href="merchandise.html#request-customize">PRE-ORDER <span aria-hidden="true">&#8594;</span></a></div>
+    </article>
+    <article class="merchandise-card">
+      <div class="merchandise-art"><img src="Images/Brim Babe .png" alt="Brim Babe cap artwork"><span class="limited-edition-tag">LIMITED EDITION</span><span class="coming-soon-tag">COMING SOON</span></div>
+      <div class="merchandise-details"><h3>BRIM BABE CAP</h3><p>A signature pink statement cap built around the Brim Babe silhouette: playful, polished, and made to turn every entrance into a moment.</p><a class="merchandise-preorder-button" href="merchandise.html#request-customize">PRE-ORDER <span aria-hidden="true">&#8594;</span></a></div>
+    </article>
+    <article class="merchandise-card">
+      <div class="merchandise-art"><img src="Images/ThurQ Angel Female.png" alt="ThurQ Angel Female cap artwork"><span class="limited-edition-tag">LIMITED EDITION</span><span class="coming-soon-tag">COMING SOON</span></div>
+      <div class="merchandise-details"><h3>THURQ ANGEL FEMALE CAP</h3><p>A luminous black-and-gold cap inspired by the ThurQ Angel Female: fearless wings, radiant detail, and a refined edge for a powerful everyday look.</p><a class="merchandise-preorder-button" href="merchandise.html#request-customize">PRE-ORDER <span aria-hidden="true">&#8594;</span></a></div>
+    </article>
+    </div>
+    <button class="merchandise-carousel-button" id="merchandise-next" type="button" aria-label="Next merchandise">&#8594;</button>
+  </div>
+  <div class="merchandise-dots" role="tablist" aria-label="Merchandise slides">
+    <button class="merchandise-dot active" type="button" role="tab" aria-label="Show Derry J99 Tee" aria-selected="true" data-merchandise-slide="0"></button>
+    <button class="merchandise-dot" type="button" role="tab" aria-label="Show UltBigBoy Collection" aria-selected="false" data-merchandise-slide="1"></button>
+    <button class="merchandise-dot" type="button" role="tab" aria-label="Show Studio Essentials" aria-selected="false" data-merchandise-slide="2"></button>
+  </div>
+  <a class="merchandise-preorder-button merchandise-customize-button" href="merchandise.html#request-customize">CUSTOMIZE <span aria-hidden="true">&#8594;</span></a>
+</section>
+
+<section class="produced-songs vault-section" id="produced-songs" aria-labelledby="produced-songs-title">
+  <div class="beat-listing-heading">
+    <p class="section-kicker">FEATURED SONGS</p>
+    <h2 id="produced-songs-title">STREAM BANGERS</h2>
+  </div>
+
+  <div class="beat-list produced-song-list">
+    <article class="beat-card produced-song-card">
+      <div class="beat-cover song-cover"><img src="Images/Amusement.jpg" alt="Amusement cover artwork"><span class="song-cover-label">AMUSEMENT</span></div>
+      <div class="beat-details">
+        <div class="song-copy"><h3>AMUSEMENT</h3><p class="beat-meta"><span>Artist: Derry J</span><span>Producer: Derry J99</span></p></div>
+        <div class="song-listen-links"><a class="song-listen-button" href="https://open.spotify.com/track/3w3RsTz1UFWInx1Okfuf0v?si=8f939c7aef0348e8" target="_blank" rel="noopener noreferrer" aria-label="Listen to Amusement on Spotify" title="Listen on Spotify"><img src="Images/spotify.svg" alt=""><span>Spotify</span></a></div>
+      </div>
+    </article>
+
+    <article class="beat-card produced-song-card">
+      <div class="beat-cover song-cover"><img src="Images/Antisocial.jpg" alt="Antisocial Remix cover artwork"><span class="song-cover-label">ANTISOCIAL (REMIX)</span></div>
+      <div class="beat-details">
+        <div class="song-copy"><h3>ANTISOCIAL (REMIX)</h3><p class="beat-meta"><span>Artist: Kwasi Morgan ft. 39/40</span><span>Producer: Derry J99</span></p></div>
+        <div class="song-listen-links"><a class="song-listen-button" href="https://open.spotify.com/track/66LM0ycdBfhNLgfde7bjeB?si=3fa5d579fdaa45d5" target="_blank" rel="noopener noreferrer" aria-label="Listen to Antisocial Remix on Spotify" title="Listen on Spotify"><img src="Images/spotify.svg" alt=""><span>Spotify</span></a></div>
+      </div>
+    </article>
+
+    <article class="beat-card produced-song-card">
+      <div class="beat-cover song-cover"><img src="Images/Abom.jpg" alt="Abom cover artwork"><span class="song-cover-label">ABOM</span></div>
+      <div class="beat-details">
+        <div class="song-copy"><h3>ABOM</h3><p class="beat-meta"><span>Artist: Kwasi Morgan ft. 39/40</span><span>Producer: Derry J99</span></p></div>
+        <div class="song-listen-links"><a class="song-listen-button" href="https://open.spotify.com/track/6c9zYOHkuv8KCTv2ka47AG?si=deecddd9163c4910" target="_blank" rel="noopener noreferrer" aria-label="Listen to Abom on Spotify" title="Listen on Spotify"><img src="Images/spotify.svg" alt=""><span>Spotify</span></a></div>
+      </div>
+    </article>
+
+    <article class="beat-card produced-song-card">
+      <div class="beat-cover song-cover"><img src="Images/Not Again.jpg" alt="Not Again cover artwork"><span class="song-cover-label">NOT AGAIN</span></div>
+      <div class="beat-details">
+        <div class="song-copy"><h3>NOT AGAIN</h3><p class="beat-meta"><span>Artist: Yaw Wazinga</span><span>Producer: Derry J99</span></p></div>
+        <div class="song-listen-links"><a class="song-listen-button" href="https://open.spotify.com/track/1m3xcixV4v7U3pWFaqufBt?si=6e537d21430d439f" target="_blank" rel="noopener noreferrer" aria-label="Listen to Not Again on Spotify" title="Listen on Spotify"><img src="Images/spotify.svg" alt=""><span>Spotify</span></a></div>
+      </div>
+    </article>
+
+    <article class="beat-card produced-song-card">
+      <div class="beat-cover song-cover"><img src="Images/Low.jpg" alt="Low cover artwork"><span class="song-cover-label">LOW</span></div>
+      <div class="beat-details">
+        <div class="song-copy"><h3>LOW</h3><p class="beat-meta"><span>Artist: Ypee ft. Lami Jnr, Droplord SAS and Chief Kay</span><span>Recording Engineer: Derry J99</span></p></div>
+        <div class="song-listen-links"><a class="song-listen-button" href="https://open.spotify.com/track/70IsI3YHceS3z7Ezg5JYV0?si=f7c90b244a134476" target="_blank" rel="noopener noreferrer" aria-label="Listen to Low on Spotify" title="Listen on Spotify"><img src="Images/spotify.svg" alt=""><span>Spotify</span></a></div>
+      </div>
+    </article>
+
+    <article class="beat-card produced-song-card">
+      <div class="beat-cover song-cover"><img src="Images/Adwuma.jpg" alt="Adwuma cover artwork"><span class="song-cover-label">ADWUMA</span></div>
+      <div class="beat-details">
+        <div class="song-copy"><h3>ADWUMA</h3><p class="beat-meta"><span>Artist: Oseikrom Sikani ft. King Paluta</span><span>Synth, Brass and Guitar: Derry J99</span></p></div>
+        <div class="song-listen-links"><a class="song-listen-button" href="https://open.spotify.com/track/0O7qfw4nmcPwAOENrPoGcq?si=e877824de3c54fa0" target="_blank" rel="noopener noreferrer" aria-label="Listen to Adwuma on Spotify" title="Listen on Spotify"><img src="Images/spotify.svg" alt=""><span>Spotify</span></a></div>
+      </div>
+    </article>
+  </div>
+
+  <a class="explore-songs-link" href="produced.html">Explore more songs <span aria-hidden="true">&#8594;</span></a>
+</section>
+
+<section class="public-reviews vault-section" id="public-reviews" aria-labelledby="public-reviews-title">
+  <div class="beat-listing-heading"><p class="section-kicker">COMMUNITY</p><h2 id="public-reviews-title">REVIEWS &amp; COMMENTS</h2></div>
+  <div class="public-review-layout">
+    <div id="public-review-list" class="public-review-list" aria-live="polite"><p>Loading reviews...</p></div>
+    <form id="public-review-form" class="public-review-form">
+      <h3>Leave a review</h3>
+      <div class="review-rating-control"><span id="public-review-rating-label">Rating</span><div class="review-stars" role="group" aria-labelledby="public-review-rating-label"><button type="button" data-review-rating="1" aria-label="1 star" aria-pressed="false">&#9733;</button><button type="button" data-review-rating="2" aria-label="2 stars" aria-pressed="false">&#9733;</button><button type="button" data-review-rating="3" aria-label="3 stars" aria-pressed="false">&#9733;</button><button type="button" data-review-rating="4" aria-label="4 stars" aria-pressed="false">&#9733;</button><button type="button" data-review-rating="5" aria-label="5 stars" aria-pressed="false">&#9733;</button></div><input id="public-review-rating" name="rating" type="hidden" value=""></div>
+      <label for="public-review-text">Review</label><textarea id="public-review-text" name="review" rows="3" minlength="3" maxlength="2000" required></textarea>
+      <div class="review-login-prompt" id="review-login-prompt"><span>Log in to submit a review.</span><button type="button" id="review-login-button">Log in</button></div>
+      <button class="auth-primary-button" id="review-submit-button" type="submit" disabled>Submit</button>
+      <p class="request-form-message" id="public-review-message" role="status" aria-live="polite"></p>
+    </form>
+  </div>
+</section>
+
+<section class="license-browser vault-section" id="license-browser" aria-labelledby="license-browser-title">
+  <div class="beat-listing-heading">
+    <p class="section-kicker">LICENSE OPTIONS</p>
+    <h2 id="license-browser-title">CHOOSE YOUR RIGHTS</h2>
+  </div>
+
+  <div class="license-carousel" aria-roledescription="carousel" aria-label="Beat license options">
+    <button class="license-carousel-button license-carousel-prev" id="license-prev" type="button" aria-label="Previous license">&#8592;</button>
+    <div class="license-slide-frame">
+      <article class="license-slide active" data-slide="0">
+        <div class="license-card">
+          <div class="license-card-heading"><span class="license-badge">BASIC</span><h3>BASIC RIGHTS</h3><strong>Entry access</strong></div>
+          <ul><li>MP3 download</li><li>Non-commercial use</li><li>Up to 100K streams</li><li>Must credit Derry J99</li></ul>
+          <button class="license-terms-button" id="basic-license-terms-button" type="button" aria-haspopup="dialog" aria-controls="basic-license-terms-dialog">View license terms</button>
+          <a class="license-browse-button" href="beats.html?license=basic">Browse basic beats</a>
+        </div>
+      </article>
+      <article class="license-slide" data-slide="1">
+        <div class="license-card">
+          <div class="license-card-heading"><span class="license-badge">PREMIUM</span><h3>PREMIUM RIGHTS</h3><strong>Professional use</strong></div>
+          <ul><li>MP3 + WAV download</li><li>Up to 500K streams</li><li>Music video use</li><li>Commercial use</li><li>Must credit Derry J99</li></ul>
+          <button class="license-terms-button" id="premium-license-terms-button" type="button" aria-haspopup="dialog" aria-controls="premium-license-terms-dialog">View license terms</button>
+          <a class="license-browse-button" href="beats.html?license=premium">Browse premium beats</a>
+        </div>
+      </article>
+      <article class="license-slide" data-slide="2">
+        <div class="license-card">
+          <div class="license-card-heading"><span class="license-badge">UNLIMITED</span><h3>UNLIMITED RIGHTS</h3><strong>Scale without limits</strong></div>
+          <ul><li>MP3 + WAV download</li><li>Unlimited streams</li><li>Commercial and video use</li><li>Radio and live performance use</li><li>Must credit Derry J99</li></ul>
+          <button class="license-terms-button" id="unlimited-license-terms-button" type="button" aria-haspopup="dialog" aria-controls="unlimited-license-terms-dialog">View license terms</button>
+          <a class="license-browse-button" href="beats.html?license=unlimited">Browse unlimited beats</a>
+        </div>
+      </article>
+      <article class="license-slide" data-slide="3">
+        <div class="license-card">
+          <div class="license-card-heading"><span class="license-badge">EXCLUSIVE</span><h3>EXCLUSIVE RIGHTS</h3><strong>Full ownership transfer</strong></div>
+          <ul><li>All file formats + source</li><li>Full ownership transfer</li><li>Unlimited everything</li><li>No credit required</li><li>Beat removed from store</li><li>Commercial, radio and sync use</li></ul>
+          <button class="license-terms-button" id="exclusive-license-terms-button" type="button" aria-haspopup="dialog" aria-controls="exclusive-license-terms-dialog">View license terms</button>
+          <a class="license-browse-button" href="beats.html?license=exclusive">Browse exclusive beats</a>
+        </div>
+      </article>
+    </div>
+    <button class="license-carousel-button license-carousel-next" id="license-next" type="button" aria-label="Next license">&#8594;</button>
+  </div>
+  <div class="license-dots" role="tablist" aria-label="License slides">
+    <button class="license-dot active" type="button" role="tab" aria-label="Show Basic Rights" aria-selected="true" data-slide="0"></button>
+    <button class="license-dot" type="button" role="tab" aria-label="Show Premium Rights" aria-selected="false" data-slide="1"></button>
+    <button class="license-dot" type="button" role="tab" aria-label="Show Unlimited Rights" aria-selected="false" data-slide="2"></button>
+    <button class="license-dot" type="button" role="tab" aria-label="Show Exclusive Rights" aria-selected="false" data-slide="3"></button>
+  </div>
+</section>
+
+<div class="license-dialog" id="basic-license-terms-dialog" role="dialog" aria-modal="true" aria-labelledby="basic-license-terms-title" hidden>
+  <div class="license-dialog-panel">
+    <div class="license-dialog-header">
+      <div>
+        <p class="section-kicker">Basic license</p>
+        <h2 id="basic-license-terms-title">Basic License Agreement</h2>
+      </div>
+      <button class="license-dialog-close" id="basic-license-terms-close" type="button" aria-label="Close Basic License Agreement">&#10005;</button>
+    </div>
+    <p><strong>Producer/Licensor:</strong> Derry J99</p>
+    <p><strong>Legal name:</strong> Atta Junior Akyene</p>
+    <p><strong>Artist / Licensee:</strong> [Insert Artist Name]</p>
+    <p><strong>Beat Title:</strong> <span id="basic-license-beat-title">[Select a beat]</span></p>
+    <p><strong>Date of Agreement:</strong> <span id="basic-license-agreement-date">[Purchase date and time]</span></p>
+    <p><strong>License Code:</strong> <span id="basic-license-code">[Generated at purchase]</span></p>
+    <div class="license-dialog-content">
+      <h3>1. Grant of License</h3>
+      <p>The Producer/Licensor grants the Artiste/Licensee a non-exclusive license to use the Beat to create one (1) new recording (the “Track”) for a fee of <strong id="basic-license-fee">[Beat price]</strong>. The Artiste/Licensee may commercially release the Track worldwide subject to the terms below.</p>
+      <h3>2. Term</h3>
+      <p>This license is valid for <strong>one year</strong> from the date of this Agreement. After the Term, the license will automatically expire unless extended by payment of an additional fee or other arrangement with the Producer/Licensor.</p>
+      <h3>3. Usage Limits</h3>
+      <ul>
+        <li>Downloads/Sales: Up to <strong>5,000 for-profit downloads or physical sales</strong> of the Track.</li>
+        <li>Streams: For calculation purposes, <strong>200 streams = 1 sale</strong>.</li>
+        <li>Free Downloads: Unlimited for non-profit/non-commercial use.</li>
+        <li>Public Performances: Zero (0) for-profit and zero (0) non-profit public performances.</li>
+        <li>Music Video: One (1) music video allowed.</li>
+        <li>Once any of these limits are reached, the Artist must extend the license by paying an additional fee.</li>
+      </ul>
+      <h3>4. Royalties &amp; Publishing</h3>
+      <ul>
+        <li>The Artist is not required to pay royalties or income from the Track to the Producer.</li>
+        <li>The Producer shall retain a <strong>50% publishing share</strong> in the Track.</li>
+        <li>The Producer shall receive publishing income directly from the applicable Collection Society.</li>
+        <li>The Artist agrees to register the Producer’s interest at the Collection Society and use the Producer’s membership number as directed by email.</li>
+        <li>Both Producer and Artist shall administer their respective publishing shares.</li>
+        <li>Any sync license for the Track must be pre-approved by the Producer.</li>
+        <li>The Producer shall also have rights to receive neighboring rights income as a performer on the Track directly from the applicable Collection Society.</li>
+      </ul>
+      <h3>5. Warranties</h3>
+      <p>The Producer warrants and represents that they are the sole owner of the Beat and hold full copyright.</p>
+      <h3>6. Governing Law</h3>
+      <p>This Agreement shall be governed by and construed in accordance with the laws of Ghana.</p>
+      <h3>7. Signatures</h3>
+      <p>Producer / Licensor: Atta Junior Akyene (Derry J99)</p>
+      <p>Artist / Licensee: ___________________________</p>
+    </div>
+  </div>
+</div>
+
+<div class="license-dialog" id="premium-license-terms-dialog" role="dialog" aria-modal="true" aria-labelledby="premium-license-terms-title" hidden>
+  <div class="license-dialog-panel">
+    <div class="license-dialog-header">
+      <div>
+        <p class="section-kicker">Premium license</p>
+        <h2 id="premium-license-terms-title">Premium License Agreement</h2>
+      </div>
+      <button class="license-dialog-close" id="premium-license-terms-close" type="button" aria-label="Close Premium License Agreement">&#10005;</button>
+    </div>
+    <p><strong>Producer/Licensor:</strong> Derry J99</p>
+    <p><strong>Legal name:</strong> Atta Junior Akyene</p>
+    <p><strong>Artiste/Licensee:</strong> [Insert Artist Name]</p>
+    <p><strong>Beat Title:</strong> <span id="premium-license-beat-title">[Select a beat]</span></p>
+    <p><strong>Date of Agreement:</strong> <span id="premium-license-agreement-date">[Purchase date and time]</span></p>
+    <p><strong>License Code:</strong> <span id="premium-license-code">[Generated at purchase]</span></p>
+    <div class="license-dialog-content">
+      <h3>1. Grant of License</h3>
+      <p>The Producer/Licensor grants the Artiste/Licensee a non-exclusive, non-transferable license to use the Beat to create one (1) new recording (the “Track”) for a fee of <strong id="premium-license-fee">[Beat price]</strong>. The Artiste/Licensee may commercially release the Track worldwide subject to the terms below.</p>
+      <h3>2. Term</h3>
+      <p>This license is valid for <strong>two (2) years</strong> from the Effective Date. Renewal or upgrade requires a new agreement or payment of an extension fee.</p>
+      <h3>3. Delivery of Files</h3>
+      <p>The Artiste/Licensee will receive the Beat in <strong>MP3 (320kbps)</strong> and <strong>WAV (16-bit)</strong> formats upon purchase.</p>
+      <h3>4. Usage Limits (“Thresholds”)</h3>
+      <ul>
+        <li>Audio/Video Streams: Up to <strong>500,000 cumulative streams</strong> across all platforms.</li>
+        <li>Release Platforms: Social media, online websites, streaming services, and podcast services.</li>
+        <li>Performing Rights: Limited to <strong>three (3) live performances</strong>.</li>
+        <li>Broadcasting Rights: Limited to <strong>three (3) broadcasts</strong>.</li>
+        <li>Synchronization Rights: Not permitted for film, TV, ads, video games, or OTT platforms.</li>
+        <li>Music Video: <strong>One (1) music video</strong> allowed.</li>
+        <li>Once any limit is reached, the Artiste/Licensee must extend the license by paying an additional fee.</li>
+      </ul>
+      <h3>5. Royalties &amp; Publishing</h3>
+      <ul>
+        <li>The Producer/Licensor retains a <strong>50% publishing share</strong> in the Track.</li>
+        <li>The Artiste/Licensee retains a 50% publishing share and 50% master sound recording copyright.</li>
+        <li>If the Track generates gross revenue exceeding <strong>$3,000 USD</strong> with a record label or company, the Producer/Licensor shall receive a <strong>15% royalty share</strong>.</li>
+        <li>The Artiste/Licensee must disclose all earnings and provide split sheets within six (6) months.</li>
+        <li>Content ID registration rights are reserved exclusively for the Producer/Licensor.</li>
+      </ul>
+      <h3>6. Ownership &amp; Restrictions</h3>
+      <ul>
+        <li>The Producer/Licensor retains full copyright ownership of the Beat.</li>
+        <li>The Artiste/Licensee cannot lend, rent, share, upload, resell, or transfer the Beat.</li>
+        <li>The Artiste/Licensee cannot reassign or sublicense rights to the Beat.</li>
+        <li>The Producer/Licensor reserves the right to license the Beat to other parties.</li>
+      </ul>
+      <h3>7. Warranties</h3>
+      <ul>
+        <li>The Producer/Licensor warrants ownership of the Beat and the right to grant this license.</li>
+        <li>The Artiste/Licensee warrants that the Track will not infringe third-party rights and agrees to comply with this Agreement.</li>
+      </ul>
+      <h3>8. Credit</h3>
+      <p>The Artiste/Licensee agrees to credit the Producer/Licensor as: <strong>“Produced by Derry J.”</strong> in metadata, packaging, and promotion of the Track.</p>
+      <h3>9. Governing Law</h3>
+      <p>This Agreement shall be governed by and construed in accordance with the laws of Ghana.</p>
+      <h3>10. Signatures</h3>
+      <p>Producer/Licensor: ___________________________</p>
+      <p>Artiste/Licensee: ___________________________</p>
+    </div>
+  </div>
+</div>
+
+<div class="license-dialog" id="unlimited-license-terms-dialog" role="dialog" aria-modal="true" aria-labelledby="unlimited-license-terms-title" hidden>
+  <div class="license-dialog-panel">
+    <div class="license-dialog-header">
+      <div>
+        <p class="section-kicker">Unlimited license</p>
+        <h2 id="unlimited-license-terms-title">Unlimited License Agreement</h2>
+      </div>
+      <button class="license-dialog-close" id="unlimited-license-terms-close" type="button" aria-label="Close Unlimited License Agreement">&#10005;</button>
+    </div>
+    <p><strong>Producer/Licensor:</strong> Derry J99</p>
+    <p><strong>Legal name:</strong> Atta Junior Akyene</p>
+    <p><strong>Artiste/Licensee:</strong> [Insert Artist Name]</p>
+    <p><strong>Beat Title:</strong> <span id="unlimited-license-beat-title">[Select a beat]</span></p>
+    <p><strong>Date of Agreement:</strong> <span id="unlimited-license-agreement-date">[Purchase date and time]</span></p>
+    <div class="license-dialog-content">
+      <h3>1. Grant of License</h3>
+      <p>The Producer/Licensor grants the Artiste/Licensee a non-exclusive, non-transferable license to use the Beat to create one (1) new recording (the “Track”) for a fee of <strong id="unlimited-license-fee">$200.00</strong>. The Artiste/Licensee may commercially release the Track worldwide subject to the terms below.</p>
+      <h3>2. Term</h3>
+      <p>This license is valid for <strong>five (5) years</strong> from the Effective Date. Renewal requires a new agreement or payment of an extension fee.</p>
+      <h3>3. Delivery of Files</h3>
+      <p>The Artiste/Licensee will receive the Beat in <strong>MP3, WAV, and Track Stems</strong> formats upon purchase.</p>
+      <h3>4. Usage Rights</h3>
+      <ul>
+        <li>Sales &amp; Streams: Unlimited downloads, physical sales, and streams worldwide.</li>
+        <li>Public Performance: Unlimited live performances permitted.</li>
+        <li>Broadcasting: Unlimited radio and online broadcasts permitted.</li>
+        <li>Synchronization: One (1) music video allowed, up to the length of the Track. Broadcast and online upload permitted.</li>
+        <li>Modifications: The Artiste/Licensee may adjust arrangement, length, tempo, or pitch of the Beat for the Track.</li>
+      </ul>
+      <h3>5. Ownership &amp; Publishing</h3>
+      <ul>
+        <li>The Producer/Licensor retains full copyright ownership of the Beat.</li>
+        <li>The Artiste/Licensee owns the lyrics or other original musical components they create.</li>
+        <li>Publishing rights in the Track are split <strong>50% Producer/Licensor / 50% Artiste/Licensee</strong>.</li>
+        <li>The Producer/Licensor retains <strong>50% of the Publisher’s Share</strong> and must be registered accordingly with any PRO.</li>
+        <li>The Artiste/Licensee may not register the Beat or Track with Content ID systems.</li>
+      </ul>
+      <h3>6. Restrictions</h3>
+      <ul>
+        <li>The Artiste/Licensee may not resell, lend, rent, or sublicense the Beat.</li>
+        <li>The Beat cannot be distributed in its original form.</li>
+        <li>Synchronization rights for film, TV, commercials, or video games are not included.</li>
+      </ul>
+      <h3>7. Royalties</h3>
+      <ul>
+        <li>The Artiste/Licensee is not required to pay royalties from sales or streams.</li>
+        <li>Mechanical royalties apply at statutory rates for controlled compositions.</li>
+        <li>If the Track generates revenue exceeding <strong>$3,000 USD</strong> with a label or company, the Producer/Licensor shall receive a <strong>15% royalty share</strong>.</li>
+      </ul>
+      <h3>8. Credit</h3>
+      <p>The Artiste/Licensee agrees to credit the Producer/Licensor as: <strong>“Produced by Derry J.”</strong> in metadata, packaging, and promotion of the Track.</p>
+      <h3>9. Governing Law</h3>
+      <p>This Agreement shall be governed by and construed in accordance with the laws of Ghana.</p>
+      <h3>10. Signatures</h3>
+      <p>Producer/Licensor: ___________________________</p>
+      <p>Artiste/Licensee: ___________________________</p>
+    </div>
+  </div>
+</div>
+
+<div class="license-dialog" id="exclusive-license-terms-dialog" role="dialog" aria-modal="true" aria-labelledby="exclusive-license-terms-title" hidden>
+  <div class="license-dialog-panel">
+    <div class="license-dialog-header">
+      <div>
+        <p class="section-kicker">Exclusive license</p>
+        <h2 id="exclusive-license-terms-title">Exclusive Rights License Agreement</h2>
+      </div>
+      <button class="license-dialog-close" id="exclusive-license-terms-close" type="button" aria-label="Close Exclusive Rights License Agreement">&#10005;</button>
+    </div>
+    <p><strong>Producer/Licensor:</strong> Derry J99</p>
+    <p><strong>Legal name:</strong> Atta Junior Akyene</p>
+    <p><strong>Artiste/Client:</strong> [Insert Artist Name]</p>
+    <p><strong>Beat Title:</strong> <span id="exclusive-license-beat-title">[Select a beat]</span></p>
+    <p><strong>Date of Agreement:</strong> <span id="exclusive-license-agreement-date">[Purchase date and time]</span></p>
+    <p><strong>License Code:</strong> <span id="exclusive-license-code">[Generated at purchase]</span></p>
+    <div class="license-dialog-content">
+      <h3>1. Compensation</h3>
+      <p>As full and final consideration for the rights granted herein, the Artiste/Client shall pay the Producer/Licensor the agreed fee of <strong id="exclusive-license-fee">[Beat price]</strong>. This payment is non-refundable.</p>
+      <h3>2. Grant of Rights</h3>
+      <ul><li>The Artiste/Client is granted <strong>exclusive rights</strong> to the Beat.</li><li>The Producer/Licensor shall refrain from licensing the Beat to any other party once this Agreement is executed.</li><li>The Artiste/Client shall have the exclusive right to commercially exploit the Track worldwide, in all formats and media, for the duration of copyright.</li></ul>
+      <h3>3. Ownership</h3>
+      <ul><li>The <strong>Master Recording</strong> created by the Artiste/Client shall be the sole property of the Artiste/Client.</li><li>The Producer/Licensor retains joint copyright authorship of the underlying musical composition, with a <strong>50% publishing share</strong> unless otherwise agreed in a split sheet.</li><li>The Artiste/Client may register the Master in their name, but must also register the Producer/Licensor’s share of the composition with any PRO.</li></ul>
+      <h3>4. Royalties</h3>
+      <ul><li>The Producer/Licensor shall receive a <strong>3% royalty</strong> on net profits from exploitation of the Track after deduction of production costs.</li><li>Mechanical royalties for controlled compositions shall be paid at the statutory rate.</li></ul>
+      <h3>5. Warranties</h3>
+      <ul><li>The Producer/Licensor warrants that they are the sole owner of the Beat and have the right to grant exclusive rights.</li><li>The Artiste/Client warrants that the Track will not infringe third-party rights.</li></ul>
+      <h3>6. Indemnification</h3>
+      <p>Both parties agree to indemnify and hold each other harmless against claims, losses, or damages arising from breach of warranties or obligations under this Agreement.</p>
+      <h3>7. Term</h3>
+      <p>This Agreement shall remain in effect until terminated by either party upon thirty (30) days’ written notice in the event of a material breach.</p>
+      <h3>8. Credit</h3>
+      <p>The Artiste/Client agrees to credit the Producer/Licensor as: <strong>“Produced by Derry J.”</strong> in metadata, packaging, and promotion of the Track.</p>
+      <h3>9. Governing Law</h3>
+      <p>This Agreement shall be governed by and construed in accordance with the laws of Ghana.</p>
+      <h3>10. Signatures</h3>
+      <p>Producer/Licensor: ___________________________</p>
+      <p>Artiste/Client: ___________________________</p>
+    </div>
+  </div>
+</div>
+
+<div class="cart-toast" id="cart-toast" role="status" aria-live="polite"></div>
+
+<footer class="site-footer">
+  <div class="site-footer-inner">
+    <div class="site-footer-brand"><a href="index.html"><img src="Images/Logo 2.png" alt="UltBigBoy home"><span>UltBigBoy</span></a><p>Explore original beats and licenses, shop merchandise, stream music, book studio sessions, send custom requests, and share reviews.</p></div>
+    <div class="site-footer-content">
+      <section class="site-footer-services"><h2>SERVICES</h2><nav class="site-footer-links" aria-label="Footer navigation"><a href="index.html">Home</a><a href="beats.html">Beats</a><a href="merchandise.html">Merchandise</a><a href="booking.html">Book Session</a><a href="produced.html">Stream</a></nav></section>
+      <section class="site-footer-store"><h2>BEATS STORE</h2><nav class="site-footer-genres" aria-label="Shop beats by genre"><a href="beats.html#beat-listing">All</a><a href="beats.html?genre=amapiano#beat-listing">Amapiano</a><a href="beats.html?genre=trap#beat-listing">Trap</a><a href="beats.html?genre=rap#beat-listing">Rap</a><a href="beats.html?genre=afrobeat#beat-listing">Afrobeat</a></nav></section>
+      <address class="site-footer-contact"><h2>CONTACT</h2><a href="mailto:derryakyene99@gmail.com"><svg class="site-footer-contact-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg><span>derryakyene99@gmail.com</span></a><a href="mailto:sallywaves28@gmail.com"><svg class="site-footer-contact-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg><span>sallywaves28@gmail.com</span></a><a href="tel:+233244531198"><svg class="site-footer-contact-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h3l2 5-2 1.5a13 13 0 0 0 6.5 6.5L16 14l5 2v3c0 1-1 2-2 2C10 21 3 14 3 5c0-1 1-2 2-2z"/></svg><span>+233 24 453 1198</span></a><span class="site-footer-location"><svg class="site-footer-contact-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg><span>Ghana</span></span></address>
+    </div>
+  </div>
+  <div class="site-footer-bottom"><span>&copy; UltBigBoy</span><a href="#top">Back to top</a></div>
+</footer>
+
+  <script src="footer.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
+
