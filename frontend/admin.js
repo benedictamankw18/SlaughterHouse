@@ -46,19 +46,20 @@ function renderList(elementId, items, type) {
       const slotSummary = slots.length
         ? slots.map((slot, index) => `<br>Session ${index + 1}: ${escapeHtml(slot.date)} at ${escapeHtml(slot.time)}`).join('')
         : `<br>Preferred: ${escapeHtml(item.preferred_date || 'Flexible')} ${escapeHtml(item.preferred_time || '')}`;
-      return `<article class="admin-list-item"><strong>${escapeHtml(item.service)}</strong><p>${escapeHtml(item.name)} · ${escapeHtml(item.email)} · ${escapeHtml(item.phone || 'No phone')}<br>Artists: ${escapeHtml(item.artist_count || 1)}${item.song_count ? `<br>Songs: ${escapeHtml(item.song_count)}` : ''}${slotSummary}<br>${escapeHtml(item.details || 'No details provided')}<br>Status: ${escapeHtml(item.status || 'new')}</p></article>`;
+      return `<article class="admin-list-item"><strong>${escapeHtml(item.service)}</strong><p>${escapeHtml(item.name)} · ${escapeHtml(item.email)} · ${escapeHtml(item.phone || 'No phone')}<br>Artists: ${escapeHtml(item.artist_count || 1)}${item.song_count ? `<br>Songs: ${escapeHtml(item.song_count)}` : ''}${slotSummary}<br>${escapeHtml(item.details || 'No details provided')}<br>Status: ${escapeHtml(item.status || 'new')}</p><label class="admin-note-field">Admin notes<textarea data-booking-notes="${Number(item.id)}" rows="2" maxlength="5000">${escapeHtml(item.admin_notes || '')}</textarea></label><div class="admin-review-actions"><select data-booking-status="${Number(item.id)}" aria-label="Booking status"><option value="paid" ${item.status === 'paid' ? 'selected' : ''}>Paid</option><option value="confirmed" ${item.status === 'confirmed' ? 'selected' : ''}>Confirmed</option><option value="completed" ${item.status === 'completed' ? 'selected' : ''}>Completed</option><option value="cancelled" ${item.status === 'cancelled' ? 'selected' : ''}>Cancelled</option><option value="rescheduled" ${item.status === 'rescheduled' ? 'selected' : ''}>Rescheduled</option></select><button type="button" data-save-booking-status="${Number(item.id)}">Save status</button></div><p class="admin-message" data-booking-message></p></article>`;
     }
-    if (type === 'requests') return `<article class="admin-list-item"><strong>${escapeHtml(item.product_name || 'Request')}</strong><p>${escapeHtml(item.customer_name)} · ${escapeHtml(item.customer_email)}<br>${item.requested_license ? `License: ${escapeHtml(item.requested_license[0].toUpperCase() + item.requested_license.slice(1))} · ${formatMoney(item.license_price_gsh)}<br>` : ''}${escapeHtml(item.details || 'No details provided')}<br>${item.sample_link ? `<a href="${escapeHtml(item.sample_link)}" target="_blank" rel="noopener noreferrer">Open sample link</a><br>` : ''}${item.sample_audio_file ? `<a href="${API}/api/uploads/${encodeURIComponent(item.sample_audio_file)}" target="_blank" rel="noopener noreferrer">Listen to sample audio</a><br>` : ''}Status: ${escapeHtml(item.status || 'new')} · ${escapeHtml(item.created_at || '')}</p></article>`;
+    if (type === 'requests') return `<article class="admin-list-item"><strong>${escapeHtml(item.product_name || 'Request')}</strong><p>${escapeHtml(item.customer_name)} · ${escapeHtml(item.customer_email)}<br>${item.requested_license ? `License: ${escapeHtml(item.requested_license[0].toUpperCase() + item.requested_license.slice(1))} · ${formatMoney(item.license_price_gsh)}<br>` : ''}${escapeHtml(item.details || 'No details provided')}<br>${item.sample_link ? `<a href="${escapeHtml(item.sample_link)}" target="_blank" rel="noopener noreferrer">Open sample link</a><br>` : ''}${item.sample_audio_file ? `<a href="${API}/api/uploads/${encodeURIComponent(item.sample_audio_file)}" target="_blank" rel="noopener noreferrer">Listen to sample audio</a><br>` : ''}Created: ${escapeHtml(item.created_at || '')}</p><form class="admin-request-editor" data-request-id="${Number(item.id)}"><div class="admin-grid"><label>Status<select name="status"><option value="new" ${item.status === 'new' ? 'selected' : ''}>New</option><option value="reviewing" ${item.status === 'reviewing' ? 'selected' : ''}>Reviewing</option><option value="quoted" ${item.status === 'quoted' ? 'selected' : ''}>Quoted</option><option value="accepted" ${item.status === 'accepted' ? 'selected' : ''}>Accepted</option><option value="rejected" ${item.status === 'rejected' ? 'selected' : ''}>Rejected</option><option value="completed" ${item.status === 'completed' ? 'selected' : ''}>Completed</option></select></label><label>Quote (GHS)<input name="quoteGhs" type="number" min="0" step="0.01" value="${escapeHtml(item.quote_gsh)}"></label></div><label>Admin notes<textarea name="notes" rows="2" maxlength="5000">${escapeHtml(item.admin_notes || '')}</textarea></label><div class="admin-review-actions"><button type="submit">Save request</button></div><p class="admin-message" data-request-message></p></form></article>`;
     if (type === 'orders') {
       const itemsText = item.items.map(orderItem => `${orderItem.name || 'Item'}${orderItem.license ? ` (${orderItem.license} license)` : ''}`).join(', ') || 'No line items';
       return `<article class="admin-list-item"><strong>${escapeHtml(item.reference)} · ${escapeHtml(item.status)}</strong><p>${escapeHtml(item.customer_name)} · ${escapeHtml(item.customer_email)}<br>${escapeHtml(itemsText)}<br>${formatMoney(item.amount)} · ${escapeHtml(item.created_at || '')}</p></article>`;
     }
-    if (type === 'reviews') return `<article class="admin-list-item"><strong>${escapeHtml(item.customer_name)} · ${'★'.repeat(Number(item.rating) || 0)}${'☆'.repeat(Math.max(0, 5 - Number(item.rating || 0)))}</strong><p>${escapeHtml(item.customer_email)} · ${escapeHtml(item.status)} · ${escapeHtml(item.created_at || '')}</p><blockquote>${escapeHtml(item.review_text)}</blockquote>${item.status === 'pending' ? `<div class="admin-review-actions"><button type="button" data-review-id="${Number(item.id)}" data-review-status="approved">Approve</button><button type="button" data-review-id="${Number(item.id)}" data-review-status="rejected">Reject</button></div>` : ''}</article>`;
+    if (type === 'reviews') return `<article class="admin-list-item"><strong>${escapeHtml(item.customer_name)} · ${'★'.repeat(Number(item.rating) || 0)}${'☆'.repeat(Math.max(0, 5 - Number(item.rating || 0)))}</strong><p>${escapeHtml(item.customer_email)} · ${escapeHtml(item.status)} · ${escapeHtml(item.created_at || '')}</p><blockquote>${escapeHtml(item.review_text)}</blockquote><div class="admin-review-actions">${item.status === 'pending' ? '<button type="button" data-review-status="approved">Approve</button><button type="button" data-review-status="rejected">Reject</button>' : ''}${item.status !== 'removed' ? '<button type="button" data-review-status="removed">Remove</button>' : ''}</div><p class="admin-message" data-review-message></p><span data-review-id="${Number(item.id)}" hidden></span></article>`;
     if (type === 'artists') {
       const purchases = item.purchases.length ? item.purchases.map(purchase => `<li>${escapeHtml(purchase.beat_title)} · ${escapeHtml(purchase.license)} license · ${formatMoney(Number(purchase.amount) * 10)} · ${escapeHtml(purchase.purchased_at || '')}</li>`).join('') : '<li>No beat purchases yet.</li>';
       return `<article class="admin-list-item"><strong>${escapeHtml(item.artist_name || item.name)}</strong><p>${escapeHtml(item.email)} · ${item.purchases.length} license purchase(s)</p><ul>${purchases}</ul></article>`;
     }
     if (type === 'withdrawals') return `<article class="admin-list-item"><strong>${formatMoney(item.amount)}</strong><p>${escapeHtml(item.created_at || '')}</p></article>`;
+    if (type === 'audit') return `<article class="admin-list-item"><strong>${escapeHtml(item.action)}</strong><p>${escapeHtml(item.actor_email || 'System')} · ${escapeHtml(item.entity_type || 'event')}${item.entity_id ? ` #${escapeHtml(item.entity_id)}` : ''} · ${escapeHtml(item.created_at || '')}</p><small>${escapeHtml(item.details_json || '')}</small></article>`;
     return '';
   }).join('');
 }
@@ -106,10 +107,25 @@ function renderBeatManagement() {
   </form>`).join('');
 }
 
+function renderMerchandiseManagement() {
+  const container = $('#merchandise-management-list');
+  const merchandise = dashboardData.merchandise || [];
+  if (!merchandise.length) {
+    container.innerHTML = '<p>No merchandise has been added yet.</p>';
+    return;
+  }
+  container.innerHTML = merchandise.map(item => {
+    const stock = item.stock_quantity === null || item.stock_quantity === undefined ? '' : Number(item.stock_quantity);
+    const stockLabel = stock === '' ? 'Unlimited stock' : `${stock} available`;
+    return `<article class="admin-list-item"><div class="admin-inventory-heading"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(stockLabel)}</span></div><p>${formatMoney(item.price)}</p><form class="admin-inventory-form" data-merchandise-id="${Number(item.id)}"><label>Stock quantity (leave blank for unlimited)<input name="stockQuantity" type="number" min="0" step="1" value="${escapeHtml(stock)}"></label><button type="submit">Save inventory</button><p class="admin-message" data-inventory-message></p></form></article>`;
+  }).join('');
+}
+
 async function loadDashboard() {
   dashboardData = await api('/api/admin/data');
   renderAnalytics(dashboardData.analytics || {});
   renderBeatManagement();
+  renderMerchandiseManagement();
   renderList('sales-list', dashboardData.sales.filter(item => item.sale_type === 'beat'), 'sales');
   renderList('requests-list', dashboardData.requests.filter(item => item.request_type === 'beat'), 'requests');
   renderList('bookings-list', dashboardData.bookings || [], 'bookings');
@@ -118,6 +134,7 @@ async function loadDashboard() {
   renderList('reviews-list', dashboardData.reviews || [], 'reviews');
   renderList('artists-list', dashboardData.artists || [], 'artists');
   renderList('withdrawals-list', dashboardData.withdrawals || [], 'withdrawals');
+  api('/api/admin/audit-logs?limit=50').then(data => renderList('audit-list', data.logs || [], 'audit')).catch(error => message('admin-login-message', error.message, true));
   document.querySelectorAll('[data-sale-type]').forEach(button => {
     const type = button.dataset.saleType;
     if (button.classList.contains('active')) renderList('sales-list', dashboardData.sales.filter(item => item.sale_type === type), 'sales');
@@ -165,6 +182,7 @@ document.querySelectorAll('[data-content-type]').forEach(button => button.addEve
   document.querySelectorAll('[data-content-type]').forEach(item => item.classList.toggle('active', item === button));
   $('#beat-form').hidden = button.dataset.contentType !== 'beat';
   $('#merchandise-form').hidden = button.dataset.contentType !== 'merchandise';
+  $('#merchandise-management').hidden = button.dataset.contentType !== 'merchandise';
 }));
 
 document.querySelectorAll('[data-sale-type]').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('[data-sale-type]').forEach(item => item.classList.toggle('active', item === button)); renderList('sales-list', dashboardData.sales.filter(item => item.sale_type === button.dataset.saleType), 'sales'); }));
@@ -172,16 +190,60 @@ document.querySelectorAll('[data-request-type]').forEach(button => button.addEve
 document.querySelectorAll('[data-sale-type]').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('[data-sale-type]').forEach(item => item.classList.toggle('active', item === button)); renderList('sales-list', dashboardData.sales.filter(item => item.sale_type === button.dataset.saleType), 'sales'); }));
 document.querySelectorAll('[data-order-type]').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('[data-order-type]').forEach(item => item.classList.toggle('active', item === button)); renderList('orders-list', filterOrders(button.dataset.orderType), 'orders'); }));
 
-$('#reviews-list').addEventListener('click', async event => {
-  const button = event.target.closest('[data-review-id]');
-  if (!button) return;
+$('#export-orders').addEventListener('click', async event => {
+  const button = event.currentTarget;
   button.disabled = true;
   try {
-    await api(`/api/admin/reviews/${button.dataset.reviewId}/status`, { method: 'PATCH', body: JSON.stringify({ status: button.dataset.reviewStatus }) });
+    const response = await fetch(`${API}/api/admin/orders.csv`, { credentials: 'include', headers: { Authorization: `Bearer ${adminToken || ''}` } });
+    if (!response.ok) {
+      const result = await response.json();
+      throw new Error(result.error || 'Could not export orders.');
+    }
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(await response.blob());
+    link.download = 'ultbigboy-orders.csv';
+    link.click();
+    URL.revokeObjectURL(link.href);
+  } catch (error) {
+    message('admin-login-message', error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('#reviews-list').addEventListener('click', async event => {
+  const button = event.target.closest('[data-review-status]');
+  if (!button) return;
+  const card = button.closest('.admin-list-item');
+  const reviewId = card.querySelector('[data-review-id]').dataset.reviewId;
+  button.disabled = true;
+  try {
+    await api(`/api/admin/reviews/${reviewId}/status`, { method: 'PATCH', body: JSON.stringify({ status: button.dataset.reviewStatus }) });
     await loadDashboard();
   } catch (error) {
     button.disabled = false;
-    message('admin-login-message', error.message, true);
+    card.querySelector('[data-review-message]').textContent = error.message;
+    card.querySelector('[data-review-message]').classList.add('error');
+  }
+});
+
+$('#bookings-list').addEventListener('click', async event => {
+  const button = event.target.closest('[data-save-booking-status]');
+  if (!button) return;
+  const card = button.closest('.admin-list-item');
+  const select = card.querySelector(`[data-booking-status="${button.dataset.saveBookingStatus}"]`);
+  const notes = card.querySelector(`[data-booking-notes="${button.dataset.saveBookingStatus}"]`);
+  const statusMessage = card.querySelector('[data-booking-message]');
+  button.disabled = true;
+  try {
+    await api(`/api/admin/bookings/${button.dataset.saveBookingStatus}/status`, { method: 'PATCH', body: JSON.stringify({ status: select.value, notes: notes.value }) });
+    statusMessage.textContent = 'Booking status saved.';
+    statusMessage.classList.remove('error');
+    await loadDashboard();
+  } catch (error) {
+    button.disabled = false;
+    statusMessage.textContent = error.message;
+    statusMessage.classList.add('error');
   }
 });
 
@@ -251,6 +313,55 @@ $('#merchandise-form').addEventListener('submit', async event => {
     form.reset(); message('merchandise-message', 'Merchandise saved.');
     loadDashboard();
   } catch (error) { message('merchandise-message', error.message, true); }
+});
+
+$('#requests-list').addEventListener('submit', async event => {
+  const form = event.target.closest('[data-request-id]');
+  if (!form) return;
+  event.preventDefault();
+  const button = form.querySelector('button[type="submit"]');
+  const statusMessage = form.querySelector('[data-request-message]');
+  button.disabled = true;
+  try {
+    await api(`/api/admin/requests/${form.dataset.requestId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        status: form.elements.status.value,
+        quoteGhs: form.elements.quoteGhs.value,
+        notes: form.elements.notes.value
+      })
+    });
+    statusMessage.textContent = 'Request saved.';
+    statusMessage.classList.remove('error');
+    await loadDashboard();
+  } catch (error) {
+    button.disabled = false;
+    statusMessage.textContent = error.message;
+    statusMessage.classList.add('error');
+  }
+});
+
+$('#merchandise-management-list').addEventListener('submit', async event => {
+  const form = event.target.closest('[data-merchandise-id]');
+  if (!form) return;
+  event.preventDefault();
+  const button = form.querySelector('button[type="submit"]');
+  const statusMessage = form.querySelector('[data-inventory-message]');
+  const value = form.elements.stockQuantity.value.trim();
+  button.disabled = true;
+  try {
+    await api(`/api/admin/merchandise/${form.dataset.merchandiseId}/inventory`, {
+      method: 'PATCH',
+      body: JSON.stringify({ stockQuantity: value === '' ? null : Number(value) })
+    });
+    statusMessage.textContent = 'Inventory saved.';
+    statusMessage.classList.remove('error');
+    await loadDashboard();
+  } catch (error) {
+    button.disabled = false;
+    statusMessage.textContent = error.message;
+    statusMessage.classList.add('error');
+  }
 });
 
 $('#withdrawal-form').addEventListener('submit', async event => {

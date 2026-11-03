@@ -18,6 +18,18 @@
 .admin-list { display: grid; gap: 10px; }
 .admin-list-item { padding: 16px; border-left: 3px solid #22c55e; background: #161616; }
 .admin-list-item p { margin: 5px 0 0; color: rgba(255,255,255,.68); }
+.admin-inventory-heading { display: flex; justify-content: space-between; gap: 12px; }
+.admin-inventory-heading span { color: #86efac; font-size: .85rem; }
+.admin-inventory-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; margin-top: 12px; }
+.admin-inventory-form label { display: grid; gap: 7px; color: rgba(255,255,255,.72); font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; }
+.admin-inventory-form input { width: 100%; box-sizing: border-box; padding: 9px; border: 1px solid rgba(255,255,255,.22); border-radius: 6px; background: #0b0b0b; color: #fff; font: inherit; }
+.admin-inventory-form button { padding: 9px 12px; border: 1px solid #22c55e; border-radius: 5px; background: transparent; color: #86efac; cursor: pointer; }
+.admin-inventory-form button:disabled { opacity: .55; cursor: wait; }
+.admin-note-field { display: grid; gap: 7px; margin-top: 12px; color: rgba(255,255,255,.72); font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; }
+.admin-note-field textarea { width: 100%; box-sizing: border-box; padding: 9px; border: 1px solid rgba(255,255,255,.22); border-radius: 6px; background: #0b0b0b; color: #fff; font: inherit; }
+.admin-request-editor { display: grid; gap: 10px; margin-top: 12px; }
+.admin-request-editor label { display: grid; gap: 7px; color: rgba(255,255,255,.72); font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; }
+.admin-request-editor input, .admin-request-editor select, .admin-request-editor textarea { width: 100%; box-sizing: border-box; padding: 9px; border: 1px solid rgba(255,255,255,.22); border-radius: 6px; background: #0b0b0b; color: #fff; font: inherit; }
 .admin-message { min-height: 1.2em; color: #86efac; }
 .admin-message.error { color: #fca5a5; }
 .admin-section > h2 { margin-top: 30px; }

@@ -59,6 +59,20 @@ if (loginButton) {
         <p class="section-kicker">Signed in</p>
         <h2 id="auth-account-name"></h2>
         <p id="auth-account-email"></p>
+        <div class="account-dashboard">
+          <div class="account-dashboard-tabs" role="tablist" aria-label="Account history">
+            <button type="button" class="account-dashboard-tab active" data-account-tab="purchases">Purchases</button>
+            <button type="button" class="account-dashboard-tab" data-account-tab="licenses">Licenses</button>
+            <button type="button" class="account-dashboard-tab" data-account-tab="downloads">Downloads</button>
+            <button type="button" class="account-dashboard-tab" data-account-tab="wishlist">Wishlist</button>
+            <button type="button" class="account-dashboard-tab" data-account-tab="bookings">Bookings</button>
+            <button type="button" class="account-dashboard-tab" data-account-tab="profile">Profile</button>
+            <button type="button" class="account-dashboard-tab" data-account-tab="orders">Orders</button>
+            <button type="button" class="account-dashboard-tab" data-account-tab="notifications">Alerts</button>
+            <button type="button" class="account-dashboard-tab" data-account-tab="requests">Requests</button>
+          </div>
+          <div id="account-dashboard-content" class="account-dashboard-content" aria-live="polite">Loading account history...</div>
+        </div>
         <button class="auth-primary-button" id="logout-button" type="button">Log out</button>
         <p class="auth-message" id="logout-message" role="status" aria-live="polite"></p>
       </div>
@@ -122,11 +136,142 @@ if (loginButton) {
     }
     return loggedIn;
   };
+  const accountHistory = {
+    purchases: { endpoint: '/api/customer/purchases', key: 'purchases' },
+    licenses: { endpoint: '/api/customer/licenses', key: 'licenses' },
+    downloads: { endpoint: '/api/customer/downloads', key: 'downloads' },
+    wishlist: { endpoint: '/api/wishlists', key: 'wishlists' },
+    bookings: { endpoint: '/api/customer/bookings', key: 'bookings' },
+    profile: { endpoint: '/api/auth/profile', key: 'user' },
+    orders: { endpoint: '/api/customer/orders', key: 'orders' },
+    notifications: { endpoint: '/api/customer/notifications', key: 'notifications' },
+    requests: { endpoint: '/api/customer/requests', key: 'requests' }
+  };
+  const accountFormatMoney = value => `GHS ${Number(value || 0).toFixed(2)}`;
+  const renderAccountHistory = (type, items) => {
+    const content = document.getElementById('account-dashboard-content');
+    if (type !== 'profile' && !items.length) {
+      content.innerHTML = '<p>No records found.</p>';
+      return;
+    }
+    content.innerHTML = items.map(item => {
+      if (type === 'purchases') return `<article><strong>${escapeHTML(item.product_name || 'Purchase')}</strong><span>${escapeHTML(item.license_type || item.status || 'Paid')} · ${accountFormatMoney(item.unit_amount || item.amount)} · ${escapeHTML(item.created_at || '')}</span></article>`;
+      if (type === 'licenses') return `<article><strong>${escapeHTML(item.beat_title)}</strong><span>${escapeHTML(item.license_type)} license · ${escapeHTML(item.order_reference || '')} · ${escapeHTML(item.purchased_at || '')}</span><button type="button" data-license-certificate="${Number(item.id)}">Download certificate</button></article>`;
+      if (type === 'downloads') return `<article><strong>${escapeHTML(item.beat_title)}</strong><span>${escapeHTML(item.license_type)} · ${escapeHTML(item.format)} · ${escapeHTML(item.created_at || '')}</span></article>`;
+      if (type === 'bookings') {
+        let slots = [];
+        try { slots = typeof item.booking_slots_json === 'string' ? JSON.parse(item.booking_slots_json) : item.booking_slots_json || []; } catch {}
+        const slotSummary = slots.map(slot => `${slot.date} at ${slot.time}`).join(', ') || `${item.preferred_date || 'Flexible'} ${item.preferred_time || ''}`;
+        return `<article><strong>${escapeHTML(item.service)}</strong><span>Status: ${escapeHTML(item.status)} · ${escapeHTML(slotSummary)} · ${escapeHTML(item.created_at || '')}</span>${item.admin_notes ? `<span>Studio note: ${escapeHTML(item.admin_notes)}</span>` : ''}</article>`;
+      }
+      if (type === 'profile') return `<form class="account-profile-form" id="account-profile-form">
+        <label>First name<input name="firstName" value="${escapeHTML(items.firstName)}" required></label>
+        <label>Last name<input name="lastName" value="${escapeHTML(items.lastName)}" required></label>
+        <label>Phone<input name="phone" value="${escapeHTML(items.phone)}" required></label>
+        ${items.role === 'artist' ? `<label>Artist name<input name="artistName" value="${escapeHTML(items.artistName)}" required></label>` : `<label>Address<textarea name="address" rows="2" required>${escapeHTML(items.address)}</textarea></label>`}
+        <button class="auth-primary-button" type="submit">Save profile</button>
+        <p class="auth-message" data-profile-message role="status"></p>
+      </form>`;
+      if (type === 'orders') return `<article><strong>${escapeHTML(item.reference)}</strong><span>${escapeHTML(item.status)} · ${accountFormatMoney(item.amount)} · ${escapeHTML(item.created_at || '')}</span><span>${item.items.map(orderItem => escapeHTML(orderItem.product_name || 'Item')).join(', ')}</span></article>`;
+      if (type === 'notifications') return `<article class="${item.read_at ? '' : 'account-notification-unread'}" data-notification-id="${Number(item.id)}"><strong>${escapeHTML(item.title)}</strong><span>${escapeHTML(item.message)} · ${escapeHTML(item.created_at || '')}</span>${item.read_at ? '' : '<button type="button" data-mark-notification-read>Mark read</button>'}</article>`;
+      if (type === 'requests') return `<article><strong>${escapeHTML(item.product_name || `${item.request_type} request`)}</strong><span>Status: ${escapeHTML(item.status)} · ${item.quote_gsh === null ? 'No quote yet' : accountFormatMoney(item.quote_gsh)} · ${escapeHTML(item.created_at || '')}</span>${item.admin_notes ? `<span>Studio note: ${escapeHTML(item.admin_notes)}</span>` : ''}</article>`;
+      return `<article><strong>${escapeHTML(item.title)}</strong><span>${escapeHTML(item.genre || 'Beat')} · Added ${escapeHTML(item.addedAt || '')}</span></article>`;
+    }).join('');
+  };
+  const loadAccountHistory = async type => {
+    const content = document.getElementById('account-dashboard-content');
+    const config = accountHistory[type];
+    content.textContent = 'Loading account history...';
+    try {
+      const response = await fetch(`${API}${config.endpoint}`, { credentials: 'include', headers: { Authorization: `Bearer ${sessionStorage.getItem('customerToken') || ''}` } });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not load account history.');
+      renderAccountHistory(type, type === 'profile' ? data[config.key] : data[config.key] || []);
+      if (type === 'profile') {
+        const form = document.getElementById('account-profile-form');
+        form.addEventListener('submit', async event => {
+          event.preventDefault();
+          const message = form.querySelector('[data-profile-message]');
+          const button = form.querySelector('button');
+          button.disabled = true;
+          try {
+            const response = await fetch(`${API}/api/auth/profile`, {
+              method: 'PATCH',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionStorage.getItem('customerToken') || ''}` },
+              body: JSON.stringify(Object.fromEntries(new FormData(form)))
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'Could not save your profile.');
+            customerUser = { ...customerUser, ...result.user };
+            sessionStorage.setItem('customerUser', JSON.stringify(customerUser));
+            refreshAuthPanel();
+            message.textContent = 'Profile saved.';
+            message.classList.remove('error');
+          } catch (error) {
+            message.textContent = error.message;
+            message.classList.add('error');
+          } finally {
+            button.disabled = false;
+          }
+        });
+      }
+    } catch (error) {
+      content.innerHTML = `<p class="auth-message error">${escapeHTML(error.message)}</p>`;
+    }
+  };
+  authPanel.querySelectorAll('[data-account-tab]').forEach(button => button.addEventListener('click', () => {
+    authPanel.querySelectorAll('[data-account-tab]').forEach(tab => tab.classList.toggle('active', tab === button));
+    loadAccountHistory(button.dataset.accountTab);
+  }));
+  document.addEventListener('click', async event => {
+    const certificateButton = event.target.closest('[data-license-certificate]');
+    if (certificateButton) {
+      certificateButton.disabled = true;
+      try {
+        const response = await fetch(`${API}/api/customer/licenses/${certificateButton.dataset.licenseCertificate}/certificate`, { credentials: 'include', headers: { Authorization: `Bearer ${sessionStorage.getItem('customerToken') || ''}` } });
+        if (!response.ok) {
+          const result = await response.json();
+          throw new Error(result.error || 'Could not download the certificate.');
+        }
+        const blob = await response.blob();
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `ultbigboy-license-${certificateButton.dataset.licenseCertificate}.pdf`;
+        link.click();
+        URL.revokeObjectURL(link.href);
+      } catch (error) {
+        certificateButton.textContent = error.message;
+      } finally {
+        certificateButton.disabled = false;
+      }
+      return;
+    }
+    const button = event.target.closest('[data-mark-notification-read]');
+    if (!button) return;
+    const card = button.closest('[data-notification-id]');
+    button.disabled = true;
+    try {
+      await fetch(`${API}/api/customer/notifications/${card.dataset.notificationId}/read`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { Authorization: `Bearer ${sessionStorage.getItem('customerToken') || ''}` }
+      });
+      card.classList.remove('account-notification-unread');
+      button.remove();
+    } catch {
+      button.disabled = false;
+    }
+  });
 
   loginButton.addEventListener('click', () => {
     authPanel.hidden = !authPanel.hidden;
     loginButton.setAttribute('aria-expanded', String(!authPanel.hidden));
-    if (!authPanel.hidden) setAuthView(refreshAuthPanel() ? 'account' : 'login');
+    if (!authPanel.hidden) {
+      const loggedIn = refreshAuthPanel();
+      setAuthView(loggedIn ? 'account' : 'login');
+      if (loggedIn) loadAccountHistory('purchases');
+    }
   });
   authPanel.querySelector('.auth-close-button').addEventListener('click', () => {
     authPanel.hidden = true;
@@ -193,6 +338,7 @@ if (loginButton) {
       sessionStorage.setItem('customerUser', JSON.stringify(customerUser));
       sessionStorage.setItem('customerToken', data.token);
       refreshAuthPanel();
+      loadAccountHistory('purchases');
       setAuthMessage('login-message', `Welcome, ${data.user.name}.`, false);
       refreshReviewAccess();
     } catch (error) {
@@ -286,9 +432,8 @@ document.addEventListener('click', event => {
 });
 
 const previewBrowseButton = document.getElementById('preview-browse-btn');
-const previewCards = document.querySelectorAll('#beat-list .beat-card');
-
 function applyPreviewFilters() {
+  const previewCards = document.querySelectorAll('#beat-list .beat-card');
   const minBpm = Number(document.getElementById('bpm-min')?.value) || 0;
   const maxBpm = Number(document.getElementById('bpm-max')?.value) || Infinity;
   const genre = document.getElementById('genre')?.value || '';
@@ -705,9 +850,51 @@ async function loadDatabaseBeatCatalog() {
   }
 }
 
+async function loadFeaturedBeatCatalog() {
+  const catalogList = document.getElementById('beat-list');
+  if (!catalogList || document.querySelector('.catalog-page')) return;
+  try {
+    const response = await fetch(`${API}/api/beats?page=1&pageSize=6`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not load featured beats.');
+    catalogList.replaceChildren(...data.beats.map(beat => {
+      const card = document.createElement('article');
+      const prices = beat.prices || {};
+      const cover = beat.coverArt ? `${API}/api/uploads/${encodeURIComponent(beat.coverArt)}` : 'Images/Logo 2.png';
+      const preview = beat.previewUrl || '';
+      const key = String(beat.musicalKey || '').toLowerCase();
+      const keyMode = key.endsWith(' minor') ? 'minor' : 'major';
+      const duration = beat.previewDurationSeconds ? ` • ${Math.floor(beat.previewDurationSeconds / 60)}:${String(beat.previewDurationSeconds % 60).padStart(2, '0')}` : '';
+      card.className = 'beat-card';
+      card.dataset.productId = beat.id;
+      card.dataset.bpm = beat.bpm || '';
+      card.dataset.key = key.replace(/ (major|minor)$/, '');
+      card.dataset.keyMode = keyMode;
+      card.dataset.genre = String(beat.genre || '').toLowerCase();
+      card.dataset.mood = String(beat.mood || '').toLowerCase();
+      card.innerHTML = `<button class="beat-cover" type="button" aria-label="Play ${escapeHTML(beat.title)} preview"><img src="${escapeHTML(cover)}" alt="${escapeHTML(beat.title)} cover art"><span class="play-icon" aria-hidden="true">&#9654;</span></button><div class="beat-details"><h3>${escapeHTML(beat.title)}</h3><p class="beat-meta"><span class="meta-item">${escapeHTML(beat.bpm || '—')} BPM</span><span class="meta-item">${escapeHTML(beat.musicalKey || 'Key not set')}</span><span class="meta-item">${escapeHTML(beat.genre || 'Genre not set')}</span><span class="meta-item">${escapeHTML(beat.mood || 'Mood not set')}</span><span class="meta-item">${duration}</span></p><audio class="beat-audio" src="${escapeHTML(preview)}" preload="none"></audio><label class="license-label">License Type</label><select class="license-select">${Object.entries(prices).map(([license, price]) => `<option value="${license}" data-price="${Number(price)}">${license[0].toUpperCase() + license.slice(1)}</option>`).join('')}</select></div><div class="beat-purchase"><strong class="beat-price"></strong><button class="beat-cart-button" type="button" aria-label="Add ${escapeHTML(beat.title)} to cart"><span aria-hidden="true">&#128722;</span></button></div>`;
+      setupPreviewCard(card);
+      return card;
+    }));
+    catalogList.querySelectorAll('.license-select').forEach(select => select.addEventListener('change', updateBeatPrices));
+    catalogList.querySelectorAll('.beat-cart-button').forEach(button => button.addEventListener('click', () => {
+      const card = button.closest('.beat-card');
+      const select = card.querySelector('.license-select');
+      const option = select.options[select.selectedIndex];
+      addToCart({ type: 'beat', productId: Number(card.dataset.productId), name: card.querySelector('h3').textContent, license: option.value, price: Number(option.dataset.price), cover: card.querySelector('img')?.src || '', selected: true });
+      setCartOpen(true);
+      showCartToast('Beat added to cart.');
+    }));
+    updateBeatPrices();
+  } catch (error) {
+    catalogList.innerHTML = `<p class="filter-empty-state">${escapeHTML(error.message)}</p>`;
+  }
+}
+
 document.getElementById('apply-beat-filters')?.addEventListener('click', loadDatabaseBeatCatalog);
 document.getElementById('clear-beat-filters')?.addEventListener('click', () => setTimeout(loadDatabaseBeatCatalog, 0));
 loadDatabaseBeatCatalog();
+loadFeaturedBeatCatalog();
 
 const cartButton = document.getElementById('cart-button');
 const cartDrawer = document.getElementById('cart-drawer');
@@ -873,8 +1060,12 @@ if (merchandiseList) {
       const button = document.createElement('button');
       button.className = 'merchandise-submit-button';
       button.type = 'button';
-      button.textContent = 'Add to cart';
+      const finiteStock = product.stockQuantity !== null && product.stockQuantity !== undefined;
+      const outOfStock = finiteStock && Number(product.stockQuantity) < 1;
+      button.textContent = outOfStock ? 'Out of stock' : 'Add to cart';
+      button.disabled = outOfStock;
       button.addEventListener('click', () => {
+        if (outOfStock) return;
         addToCart({ type: 'merchandise', productId: product.id, name: product.title, price: Number(product.price) / rates.GHS, cover: image.src, selected: true });
         setCartOpen(true);
         showCartToast('Merchandise added.');

@@ -5,7 +5,9 @@ const database = require('../database');
 const config = require('../config');
 const { requireCustomer } = require('../session-store');
 const { databaseError } = require('../services/error-messages');
+const { createLicenseCertificatePdf } = require('../services/license-certificate');
 const validators = require('../services/input-validation');
+const { rateLimit } = require('../services/rate-limit');
 
 const router = express.Router();
 const queryRows = (query, parameters = []) => new Promise((resolve, reject) => database.all(query, parameters, (error, rows) => error ? reject(error) : resolve(rows || [])));
@@ -98,6 +100,152 @@ router.get('/wishlists', requireCustomer, (request, response) => {
     .catch(error => response.status(500).json({ error: databaseError('Loading your wishlist failed.', error) }));
 });
 
+router.get('/customer/purchases', requireCustomer, async (request, response) => {
+  try {
+    const orders = await queryRows(
+      `SELECT o.reference, o.status, o.amount, o.currency, o.created_at, oi.product_type, oi.product_id,
+              oi.product_name, oi.license_type, oi.unit_amount, oi.quantity
+       FROM orders o
+       JOIN order_items oi ON oi.order_id = o.id
+       WHERE lower(o.customer_email) = lower(?) AND o.status = 'paid'
+       ORDER BY o.created_at DESC, oi.id ASC`,
+      [request.customer.email]
+    );
+    response.json({ purchases: orders });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Loading your purchases failed.', error) });
+  }
+});
+
+router.get('/customer/orders', requireCustomer, async (request, response) => {
+  try {
+    const orders = await queryRows(
+      `SELECT id, reference, status, amount, currency, created_at
+       FROM orders
+       WHERE lower(customer_email) = lower(?)
+       ORDER BY created_at DESC`,
+      [request.customer.email]
+    );
+    const ordersWithItems = await Promise.all(orders.map(async order => ({
+      ...order,
+      items: await queryRows(
+        `SELECT product_type, product_name, license_type, unit_amount, quantity
+         FROM order_items WHERE order_id = ? ORDER BY id`,
+        [order.id]
+      )
+    })));
+    response.json({ orders: ordersWithItems });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Loading your orders failed.', error) });
+  }
+});
+
+router.get('/customer/licenses', requireCustomer, async (request, response) => {
+  try {
+    const licenses = await queryRows(
+      `SELECT l.id, l.beat_id, b.title AS beat_title, l.order_id, o.reference AS order_reference,
+              l.license_type, l.rights_json, l.certificate_path, l.purchased_at
+       FROM licenses l
+       JOIN beats b ON b.id = l.beat_id
+       JOIN orders o ON o.id = l.order_id
+       WHERE l.user_id = ?
+       ORDER BY l.purchased_at DESC`,
+      [request.customer.id]
+    );
+    response.json({ licenses });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Loading your licenses failed.', error) });
+  }
+});
+
+router.get('/customer/licenses/:id/certificate', requireCustomer, async (request, response) => {
+  if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) return response.status(400).json({ error: 'License ID must be a positive whole number.' });
+  try {
+    const license = await queryOne(
+      `SELECT l.id, l.license_type, l.rights_json, l.purchased_at,
+              b.title AS beat_title, o.reference AS order_reference,
+              u.name AS customer_name, u.email AS customer_email
+       FROM licenses l
+       JOIN beats b ON b.id = l.beat_id
+       JOIN orders o ON o.id = l.order_id AND o.status = 'paid'
+       JOIN users u ON u.id = l.user_id
+       WHERE l.id = ? AND l.user_id = ?`,
+      [Number(request.params.id), request.customer.id]
+    );
+    if (!license) return response.status(404).json({ error: 'Paid license was not found.' });
+    let rights = {};
+    try { rights = JSON.parse(license.rights_json || '{}'); } catch { rights = {}; }
+    const pdf = createLicenseCertificatePdf({ ...license, licenseId: license.id, rights });
+    response.setHeader('Content-Type', 'application/pdf');
+    response.setHeader('Content-Disposition', `attachment; filename="ultbigboy-license-${license.id}.pdf"`);
+    response.send(pdf);
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Generating the license certificate failed.', error) });
+  }
+});
+
+router.get('/customer/downloads', requireCustomer, async (request, response) => {
+  try {
+    const downloads = await queryRows(
+      `SELECT d.beat_id, b.title AS beat_title, d.license_type, d.format, d.created_at,
+              d.order_id, o.reference AS order_reference
+       FROM download_events d
+       JOIN orders o ON o.id = d.order_id
+       JOIN beats b ON b.id = d.beat_id
+       WHERE d.user_id = ?
+       ORDER BY d.created_at DESC`,
+      [request.customer.id]
+    );
+    response.json({ downloads });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Loading your download history failed.', error) });
+  }
+});
+
+router.get('/customer/bookings', requireCustomer, async (request, response) => {
+  try {
+    const bookings = await queryRows(
+      `SELECT id, service, artist_count, song_count, booking_slots_json, preferred_date,
+              preferred_time, details, status, admin_notes, payment_reference, created_at
+       FROM bookings
+       WHERE lower(email) = lower(?)
+       ORDER BY created_at DESC`,
+      [request.customer.email]
+    );
+    response.json({ bookings });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Loading your bookings failed.', error) });
+  }
+});
+
+router.get('/customer/notifications', requireCustomer, async (request, response) => {
+  try {
+    const notifications = await queryRows(
+      `SELECT id, type, title, message, read_at, created_at
+       FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 100`,
+      [request.customer.id]
+    );
+    response.json({ notifications });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Loading your notifications failed.', error) });
+  }
+});
+
+router.patch('/customer/notifications/:id/read', requireCustomer, async (request, response) => {
+  if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) return response.status(400).json({ error: 'Notification ID must be a positive whole number.' });
+  try {
+    const result = await new Promise((resolve, reject) => database.run(
+      'UPDATE notifications SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP) WHERE id = ? AND user_id = ?',
+      [Number(request.params.id), request.customer.id],
+      function (error) { if (error) reject(error); else resolve(this); }
+    ));
+    if (!result.changes) return response.status(404).json({ error: 'Notification was not found.' });
+    response.json({ id: Number(request.params.id), read: true });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Updating the notification failed.', error) });
+  }
+});
+
 router.post('/wishlists/:beatId', requireCustomer, (request, response) => {
   if (!/^\d+$/.test(request.params.beatId) || Number(request.params.beatId) < 1) return response.status(400).json({ error: 'Beat ID must be a positive whole number.' });
   const beatId = Number(request.params.beatId);
@@ -124,7 +272,7 @@ router.get('/reviews', (request, response) => {
     .catch(error => response.status(500).json({ error: databaseError('Loading approved reviews failed.', error) }));
 });
 
-router.post('/reviews', requireCustomer, (request, response) => {
+router.post('/reviews', requireCustomer, rateLimit({ windowMs: 60 * 60 * 1000, max: 5, message: 'Too many review submissions. Try again later.' }), (request, response) => {
   const name = request.customer.name;
   const email = request.customer.email;
   const review = String(request.body.review || '').trim();
@@ -134,7 +282,7 @@ router.post('/reviews', requireCustomer, (request, response) => {
     || (review.length < 3 || review.length > 2000 ? 'Review must be between 3 and 2,000 characters.' : null)
     || validators.integer(rating, 'Rating', { min: 1, max: 5 });
   if (validationError) return response.status(400).json({ error: validationError });
-  database.run('INSERT INTO customer_reviews (customer_name, customer_email, rating, review_text) VALUES (?, ?, ?, ?)', [name, email, rating, review], function (error) {
+  database.run('INSERT INTO customer_reviews (user_id, customer_name, customer_email, rating, review_text) VALUES (?, ?, ?, ?, ?)', [request.customer.id, name, email, rating, review], function (error) {
     if (error) return response.status(500).json({ error: databaseError('Submitting your review failed.', error) });
     response.status(201).json({ id: this.lastID, message: 'Thanks. Your review is waiting for approval.' });
   });
@@ -148,7 +296,7 @@ router.get('/users/count', (request, response) => {
 });
 
 router.get('/merchandise', (request, response) => {
-  database.all('SELECT id, title, description, price, photo FROM merchandise ORDER BY created_at DESC', (error, merchandise) => {
+  database.all('SELECT id, title, description, price, photo, stock_quantity AS stockQuantity FROM merchandise ORDER BY created_at DESC', (error, merchandise) => {
     if (error) return response.status(500).json({ error: databaseError('Loading merchandise failed.', error) });
     response.json({ merchandise });
   });

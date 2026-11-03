@@ -149,6 +149,67 @@ const migrations = [
       `ALTER TABLE beats ADD COLUMN catalog_status VARCHAR(20) NOT NULL DEFAULT 'published'`,
       `ALTER TABLE beats ADD INDEX idx_beats_catalog_status (catalog_status)`
     ]
+  },
+  {
+    version: 5,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS download_events (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        user_id INT,
+        order_id INT NOT NULL,
+        beat_id INT NOT NULL,
+        license_type VARCHAR(50) NOT NULL,
+        format VARCHAR(20) NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_download_events_user_id (user_id),
+        INDEX idx_download_events_order_id (order_id),
+        CONSTRAINT fk_download_events_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+        CONSTRAINT fk_download_events_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+      )`
+    ]
+  },
+  {
+    version: 6,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS payment_webhook_events (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        provider VARCHAR(50) NOT NULL,
+        event_reference VARCHAR(255) NOT NULL,
+        event_type VARCHAR(100) NOT NULL,
+        payload JSON NOT NULL,
+        received_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_payment_webhook_event (provider, event_reference, event_type)
+      )`
+    ]
+  },
+  {
+    version: 7,
+    statements: [
+      'ALTER TABLE bookings ADD COLUMN admin_notes TEXT NULL'
+    ]
+  },
+  {
+    version: 8,
+    statements: [
+      'ALTER TABLE merchandise ADD COLUMN stock_quantity INT NULL DEFAULT NULL',
+      'ALTER TABLE merchandise ADD INDEX idx_merchandise_stock_quantity (stock_quantity)'
+    ]
+  },
+  {
+    version: 9,
+    statements: [
+      'ALTER TABLE customization_requests ADD COLUMN user_id INT NULL',
+      'ALTER TABLE customization_requests ADD COLUMN quote_gsh DECIMAL(12,2) NULL',
+      'ALTER TABLE customization_requests ADD COLUMN admin_notes TEXT NULL',
+      'ALTER TABLE customization_requests ADD INDEX idx_customization_requests_user_id (user_id)'
+    ]
+  },
+  {
+    version: 10,
+    statements: [
+      'ALTER TABLE customer_reviews ADD COLUMN user_id INT NULL',
+      'ALTER TABLE customer_reviews ADD INDEX idx_customer_reviews_user_id (user_id)'
+    ]
   }
 ];
 

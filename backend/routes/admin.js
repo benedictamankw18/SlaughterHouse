@@ -7,10 +7,13 @@ const { databaseError } = require('../services/error-messages');
 const validators = require('../services/input-validation');
 const { rateLimit } = require('../services/rate-limit');
 const { recordAuditSafely } = require('../services/audit');
+const { createNotificationSafely } = require('../services/notifications');
+const { isAvailableBookingSlot } = require('../services/booking');
 
 const router = express.Router();
 router.use(rateLimit({ windowMs: 60 * 1000, max: 60, message: 'Too many administrator requests. Try again shortly.' }));
 const queryRows = (query, parameters = []) => new Promise((resolve, reject) => database.all(query, parameters, (error, rows) => error ? reject(error) : resolve(rows || [])));
+const csvCell = value => `"${String(value ?? '').replace(/"/g, '""')}"`;
 
 router.get('/admin/data', sessions.requireAdmin, (request, response) => {
   Promise.all([
@@ -60,6 +63,44 @@ router.get('/admin/data', sessions.requireAdmin, (request, response) => {
     };
     response.json({ beats, merchandise, sales, requests, bookings, orders, merchandiseOrders, reviews, artists: artistsWithPurchases, withdrawals, analytics });
   }).catch(error => response.status(500).json({ error: databaseError('Loading administrator data failed.', error) }));
+});
+
+router.get('/admin/audit-logs', sessions.requireAdmin, (request, response) => {
+  const action = String(request.query.action || '').trim();
+  const limit = Math.min(100, Math.max(1, Number.parseInt(request.query.limit, 10) || 50));
+  const parameters = [];
+  const conditions = [];
+  if (action) {
+    if (!/^[a-z0-9_]{1,100}$/i.test(action)) return response.status(400).json({ error: 'Audit action filter is invalid.' });
+    conditions.push('a.action = ?');
+    parameters.push(action);
+  }
+  parameters.push(limit);
+  queryRows(
+    `SELECT a.id, a.action, a.entity_type, a.entity_id, a.details_json, a.ip_address,
+            a.created_at, u.email AS actor_email
+     FROM audit_logs a
+     LEFT JOIN users u ON u.id = a.user_id
+     ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
+     ORDER BY a.created_at DESC LIMIT ?`,
+    parameters
+  ).then(logs => response.json({ logs }))
+    .catch(error => response.status(500).json({ error: databaseError('Loading audit logs failed.', error) }));
+});
+
+router.get('/admin/orders.csv', sessions.requireAdmin, (request, response) => {
+  queryRows(
+    `SELECT reference, customer_name, customer_email, status, amount, currency, created_at
+     FROM orders ORDER BY created_at DESC LIMIT 5000`
+  ).then(orders => {
+    const rows = [
+      ['Reference', 'Customer', 'Email', 'Status', 'Amount', 'Currency', 'Created at'],
+      ...orders.map(order => [order.reference, order.customer_name, order.customer_email, order.status, order.amount, order.currency, order.created_at])
+    ];
+    response.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    response.setHeader('Content-Disposition', 'attachment; filename="ultbigboy-orders.csv"');
+    response.send(`\uFEFF${rows.map(row => row.map(csvCell).join(',')).join('\r\n')}\r\n`);
+  }).catch(error => response.status(500).json({ error: databaseError('Exporting orders failed.', error) }));
 });
 
 router.post('/admin/beats', sessions.requireAdmin, (request, response) => {
@@ -133,9 +174,22 @@ router.post('/admin/merchandise', sessions.requireAdmin, (request, response) => 
       if (error) return response.status(500).json({ error: databaseError('Saving the merchandise failed.', error) });
       response.status(201).json({ id: this.lastID, title: title.trim() });
     });
+
   } catch (error) {
     response.status(400).json({ error: error.message });
   }
+});
+
+router.patch('/admin/merchandise/:id/inventory', sessions.requireAdmin, (request, response) => {
+  if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) return response.status(400).json({ error: 'Merchandise ID must be a positive whole number.' });
+  const stock = request.body.stockQuantity === null || request.body.stockQuantity === '' ? null : Number(request.body.stockQuantity);
+  if (stock !== null && (!Number.isInteger(stock) || stock < 0)) return response.status(400).json({ error: 'Stock quantity must be a non-negative whole number or null for unlimited stock.' });
+  database.run('UPDATE merchandise SET stock_quantity = ? WHERE id = ?', [stock, Number(request.params.id)], function (error) {
+    if (error) return response.status(500).json({ error: databaseError('Updating merchandise inventory failed.', error) });
+    if (!this.changes) return response.status(404).json({ error: `No merchandise was found with ID ${request.params.id}.` });
+    recordAuditSafely(database, { userId: request.admin.id, action: 'merchandise_inventory_changed', entityType: 'merchandise', entityId: Number(request.params.id), details: { stockQuantity: stock }, ipAddress: request.ip });
+    response.json({ id: Number(request.params.id), stockQuantity: stock });
+  });
 });
 
 router.post('/admin/withdraw', sessions.requireAdmin, (request, response) => {
@@ -155,11 +209,119 @@ router.post('/admin/withdraw', sessions.requireAdmin, (request, response) => {
 router.patch('/admin/reviews/:id/status', sessions.requireAdmin, (request, response) => {
   const status = String(request.body.status || '');
   if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) return response.status(400).json({ error: 'Review ID must be a positive whole number.' });
-  if (!['approved', 'rejected'].includes(status)) return response.status(400).json({ error: 'Choose approved or rejected.' });
+  if (!['approved', 'rejected', 'removed'].includes(status)) return response.status(400).json({ error: 'Choose approved, rejected, or removed.' });
   database.run('UPDATE customer_reviews SET status = ? WHERE id = ?', [status, Number(request.params.id)], function (error) {
     if (error) return response.status(500).json({ error: databaseError('Updating the review status failed.', error) });
     if (!this.changes) return response.status(404).json({ error: `No customer review was found with ID ${request.params.id}.` });
+    recordAuditSafely(database, {
+      userId: request.admin.id,
+      action: 'review_status_changed',
+      entityType: 'customer_review',
+      entityId: Number(request.params.id),
+      details: { status }
+    });
     response.json({ status });
+  });
+});
+
+router.patch('/admin/bookings/:id/status', sessions.requireAdmin, (request, response) => {
+  if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) return response.status(400).json({ error: 'Booking ID must be a positive whole number.' });
+  const status = String(request.body.status || '').toLowerCase();
+  const notes = request.body.notes === undefined ? null : String(request.body.notes || '').trim();
+  const allowedStatuses = ['paid', 'confirmed', 'completed', 'cancelled', 'rescheduled'];
+  if (!allowedStatuses.includes(status)) return response.status(400).json({ error: `Booking status must be one of: ${allowedStatuses.join(', ')}.` });
+  if (notes.length > 5000) return response.status(400).json({ error: 'Booking notes must be 5000 characters or fewer.' });
+  database.get('SELECT status, admin_notes FROM bookings WHERE id = ?', [Number(request.params.id)], (lookupError, booking) => {
+    if (lookupError) return response.status(500).json({ error: databaseError('Loading the booking failed.', lookupError) });
+    if (!booking) return response.status(404).json({ error: `No booking was found with ID ${request.params.id}.` });
+    database.run('UPDATE bookings SET status = ?, admin_notes = COALESCE(?, admin_notes) WHERE id = ?', [status, notes, Number(request.params.id)], function (error) {
+      if (error) return response.status(500).json({ error: databaseError('Updating the booking status failed.', error) });
+      recordAuditSafely(database, { userId: request.admin.id, action: 'booking_status_changed', entityType: 'booking', entityId: Number(request.params.id), details: { previousStatus: booking.status, status, notes: notes || booking.admin_notes || null }, ipAddress: request.ip });
+      database.get('SELECT email, service FROM bookings WHERE id = ?', [Number(request.params.id)], async (emailError, updatedBooking) => {
+        if (emailError) return response.status(500).json({ error: databaseError('Loading the booking customer failed.', emailError) });
+        try {
+          const customer = await new Promise((resolve, reject) => database.get('SELECT id FROM users WHERE lower(email) = lower(?) AND role <> ?', [updatedBooking.email, 'admin'], (lookupError, user) => lookupError ? reject(lookupError) : resolve(user)));
+          if (customer) await createNotificationSafely(database, {
+            userId: customer.id,
+            type: 'booking_status_changed',
+            title: 'Booking status updated',
+            message: `Your ${updatedBooking.service || 'studio'} booking is now ${status}.`
+          });
+
+          response.json({ id: Number(request.params.id), status, notes: notes || booking.admin_notes || null });
+        } catch (notificationError) {
+          response.status(500).json({ error: databaseError('Updating booking notification failed.', notificationError) });
+        }
+      });
+    });
+  });
+});
+
+router.patch('/admin/requests/:id/status', sessions.requireAdmin, (request, response) => {
+  if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) return response.status(400).json({ error: 'Request ID must be a positive whole number.' });
+  const status = String(request.body.status || '').toLowerCase();
+  const quote = request.body.quoteGhs === '' || request.body.quoteGhs === null || request.body.quoteGhs === undefined ? null : Number(request.body.quoteGhs);
+  const notes = request.body.notes === undefined ? null : String(request.body.notes || '').trim();
+  const statuses = ['new', 'reviewing', 'quoted', 'accepted', 'rejected', 'completed'];
+  if (!statuses.includes(status)) return response.status(400).json({ error: `Request status must be one of: ${statuses.join(', ')}.` });
+  if (quote !== null && (!Number.isFinite(quote) || quote < 0)) return response.status(400).json({ error: 'Quote must be a non-negative amount or blank.' });
+  if (notes !== null && notes.length > 5000) return response.status(400).json({ error: 'Request notes must be 5000 characters or fewer.' });
+  database.get('SELECT user_id, product_name, request_type, status AS previous_status FROM customization_requests WHERE id = ?', [Number(request.params.id)], (lookupError, requestRecord) => {
+    if (lookupError) return response.status(500).json({ error: databaseError('Loading the request failed.', lookupError) });
+    if (!requestRecord) return response.status(404).json({ error: 'Request was not found.' });
+    database.run('UPDATE customization_requests SET status = ?, quote_gsh = ?, admin_notes = COALESCE(?, admin_notes) WHERE id = ?', [status, quote, notes, Number(request.params.id)], async function (error) {
+    if (error) return response.status(500).json({ error: databaseError('Updating the request failed.', error) });
+    if (requestRecord.user_id) await createNotificationSafely(database, {
+      userId: requestRecord.user_id,
+      type: 'request_status_changed',
+      title: 'Request status updated',
+      message: `${requestRecord.product_name || requestRecord.request_type + ' request'} is now ${status}${quote === null ? '' : ` with a quote of GHS ${quote.toFixed(2)}`}.`
+    });
+    recordAuditSafely(database, {
+      userId: request.admin.id,
+      action: 'request_status_changed',
+      entityType: 'customization_request',
+      entityId: Number(request.params.id),
+      details: { previousStatus: requestRecord.previous_status, status, quoteGhs: quote }
+    });
+    response.json({ id: Number(request.params.id), status, quoteGhs: quote, notes });
+    });
+  });
+});
+
+router.post('/admin/bookings/availability', sessions.requireAdmin, (request, response) => {
+  const date = String(request.body.date || '').trim();
+  const time = String(request.body.time || '').trim();
+  const status = String(request.body.status || 'blocked').toLowerCase();
+  if (!isAvailableBookingSlot(date, time)) return response.status(400).json({ error: 'Choose a valid Tuesday, Wednesday, Thursday, or Sunday slot between 11:00 and 18:40.' });
+  if (!['available', 'blocked'].includes(status)) return response.status(400).json({ error: 'Availability status must be available or blocked.' });
+  database.run(
+    `INSERT INTO booking_availability (slot_date, start_time, end_time, status)
+     VALUES (?, ?, ADDTIME(?, '02:20:00'), ?)
+     ON DUPLICATE KEY UPDATE status = IF(status = 'booked', status, VALUES(status))`,
+    [date, time, time, status],
+    function (error) {
+      if (error) return response.status(500).json({ error: databaseError('Updating booking availability failed.', error) });
+      database.get('SELECT status FROM booking_availability WHERE slot_date = ? AND start_time = ?', [date, time], (lookupError, slot) => {
+        if (lookupError) return response.status(500).json({ error: databaseError('Reading booking availability failed.', lookupError) });
+        if (!slot) return response.status(404).json({ error: 'The booking slot was not found.' });
+        if (slot.status !== status && slot.status === 'booked') return response.status(409).json({ error: 'A paid booking already occupies this slot.' });
+        recordAuditSafely(database, { userId: request.admin.id, action: 'booking_availability_changed', entityType: 'booking_slot', details: { date, time, status: slot.status }, ipAddress: request.ip });
+        response.json({ date, time, status: slot.status });
+      });
+    }
+  );
+});
+
+router.delete('/admin/bookings/availability', sessions.requireAdmin, (request, response) => {
+  const date = String(request.query.date || '').trim();
+  const time = String(request.query.time || '').trim();
+  if (!isAvailableBookingSlot(date, time)) return response.status(400).json({ error: 'Provide a valid booking date and time.' });
+  database.run('DELETE FROM booking_availability WHERE slot_date = ? AND start_time = ? AND status <> ?', [date, time, 'booked'], function (error) {
+    if (error) return response.status(500).json({ error: databaseError('Removing booking availability failed.', error) });
+    if (!this.changes) return response.status(404).json({ error: 'No unreserved booking slot was found.' });
+    recordAuditSafely(database, { userId: request.admin.id, action: 'booking_availability_removed', entityType: 'booking_slot', details: { date, time }, ipAddress: request.ip });
+    response.json({ date, time, removed: true });
   });
 });
 

@@ -31,7 +31,8 @@
 			message.textContent = 'We could not find an order reference.';
 		} else {
 			const verifyUrl = new URL(`/api/payments/verify/${encodeURIComponent(reference)}`, apiBaseUrl);
-			fetch(verifyUrl)
+			const customerToken = sessionStorage.getItem('customerToken');
+			fetch(verifyUrl, { headers: customerToken ? { Authorization: `Bearer ${customerToken}` } : {} })
 				.then(async response => {
 					const data = await response.json();
 					if (!response.ok) throw new Error(data.error || 'Could not verify payment.');

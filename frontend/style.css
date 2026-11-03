@@ -202,6 +202,21 @@ header {
 .auth-account-summary h2,
 .auth-account-summary p { margin: 0; }
 .auth-account-summary > p:not(.section-kicker) { color: rgba(255, 255, 255, 0.65); }
+.account-dashboard { display: grid; gap: 10px; margin: 16px 0; }
+.account-dashboard-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.account-dashboard-tab { padding: 8px 4px; border: 1px solid rgba(255, 255, 255, .18); background: transparent; color: rgba(255, 255, 255, .72); cursor: pointer; font-size: .68rem; }
+.account-dashboard-tab.active { border-color: #22c55e; color: #86efac; }
+.account-dashboard-content { display: grid; gap: 7px; max-height: 220px; overflow-y: auto; }
+.account-dashboard-content > p { margin: 0; color: rgba(255, 255, 255, .65); font-size: .8rem; }
+.account-dashboard-content article { display: grid; gap: 3px; padding: 9px; border-left: 2px solid #22c55e; background: #0b0b0b; }
+.account-dashboard-content article strong { font-size: .82rem; }
+.account-dashboard-content article span { color: rgba(255, 255, 255, .62); font-size: .72rem; }
+.account-dashboard-content article.account-notification-unread { border-left-color: #fdba74; }
+.account-dashboard-content article button { justify-self: start; padding: 5px 8px; border: 1px solid rgba(255, 255, 255, .25); border-radius: 4px; background: transparent; color: #86efac; cursor: pointer; font-size: .7rem; }
+.account-dashboard-content article button:disabled { opacity: .55; cursor: wait; }
+.account-profile-form { display: grid; gap: 8px; }
+.account-profile-form label { display: grid; gap: 5px; color: rgba(255, 255, 255, .72); font-size: .72rem; text-transform: uppercase; }
+.account-profile-form input, .account-profile-form textarea { box-sizing: border-box; width: 100%; padding: 9px; border: 1px solid rgba(255, 255, 255, .2); border-radius: 5px; background: #0b0b0b; color: #fff; font: inherit; }
 .auth-close-button { border: 0; background: transparent; color: #fff; cursor: pointer; font-size: 1.1rem; }
 .auth-close-button:hover, .auth-close-button:focus-visible { color: #22c55e; }
 .auth-view { display: none; }
@@ -1145,6 +1160,12 @@ header {
   background: #22c55e;
   color: #07130a;
   outline: none;
+}
+
+.merchandise-submit-button:disabled {
+  border-color: rgba(255, 255, 255, .25);
+  color: rgba(255, 255, 255, .5);
+  cursor: not-allowed;
 }
 
 .request-form-message {

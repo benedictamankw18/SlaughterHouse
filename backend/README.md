@@ -65,6 +65,60 @@ Administrators can manage catalog visibility with
 `archived`. Only published beats appear in public catalog endpoints.
 Beat metadata and prices can be edited with `PATCH /api/admin/beats/:id`.
 
+Verified payments populate normalized order items, provider payment records, and
+customer-linked beat licenses with rights metadata. Customers can retrieve
+`GET /api/customer/purchases`, `GET /api/customer/licenses`, and
+`GET /api/customer/downloads`. Download links require the signed token, a paid
+order, and the matching authenticated customer account; authorized downloads
+are recorded in `download_events`.
+Paid customers can download a reproducible PDF certificate for an owned license
+through `GET /api/customer/licenses/:id/certificate`.
+
+Authenticated customers can also retrieve order history, booking history, and
+in-app notifications through `GET /api/customer/orders`,
+`GET /api/customer/bookings`, and `GET /api/customer/notifications`. Notification
+records are created idempotently for verified payments, issued licenses, booking
+confirmation, and administrator booking-status changes.
+
+Custom requests submitted with an account email are linked to that customer.
+Customers can retrieve them through `GET /api/customer/requests`; administrators
+can transition requests through `PATCH /api/admin/requests/:id/status` with an
+optional quote and internal notes. Status changes are audited and create an
+in-app customer notification when the request belongs to a registered account.
+
+Customer reviews require an authenticated customer session and are rate limited.
+Administrators can approve, reject, or remove reviews with
+`PATCH /api/admin/reviews/:id/status`; only approved reviews are public. Review
+moderation actions are recorded in the audit log.
+
+Administrators can review recent activity through the protected
+`GET /api/admin/audit-logs` endpoint, optionally filtered by an action name and
+limited to 100 records.
+
+Administrators can export up to 5,000 orders as CSV through the protected
+`GET /api/admin/orders.csv` endpoint.
+
+Paystack `POST /api/payments/webhook` validates the `x-paystack-signature`
+HMAC, records webhook deliveries idempotently, and reconciles successful
+non-booking orders. Booking payments continue through the slot-reserving
+verification path. Pending provider payments are recorded during initialization,
+and non-success webhook events update their payment status without unlocking
+the order.
+
+Administrators can transition paid bookings with
+`PATCH /api/admin/bookings/:id/status` using `paid`, `confirmed`, `completed`,
+`cancelled`, or `rescheduled`, with optional notes; each change is audited
+with the previous and new status.
+
+Administrators can reserve or block public booking slots with
+`POST /api/admin/bookings/availability` and remove unreserved overrides with
+`DELETE /api/admin/bookings/availability`. Paid slots cannot be overwritten.
+
+Merchandise stock is nullable: `NULL` means unlimited stock. Public merchandise
+responses expose `stockQuantity`; administrators can update it with
+`PATCH /api/admin/merchandise/:id/inventory`. Verified orders decrement finite
+stock atomically and fail when inventory is exhausted.
+
 The frontend stores only the selected preview position and volume locally. It
 does not autoplay restored previews.
 

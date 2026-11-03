@@ -32,7 +32,7 @@ router.get('/bookings/availability', async (request, response) => {
 router.post('/bookings', (request, response) => response.status(402).json({ error: 'Payment is required before a booking can be submitted.' }));
 
 router.post('/bookings/initialize-payment', async (request, response) => {
-  const { name, email, phone, service, artistCount, songCount, slots, details, paymentMethod } = request.body;
+  const { name, email, phone, service, artistCount, songCount, slots, details, paymentMethod, timezone, durationMinutes } = request.body;
   const normalizedEmail = String(email || '').trim().toLowerCase();
   const normalizedArtistCount = Number(artistCount);
   const normalizedSongCount = Number(songCount);
@@ -49,6 +49,8 @@ router.post('/bookings/initialize-payment', async (request, response) => {
   if (!['card', 'mobile_money'].includes(paymentMethod)) {
     return response.status(400).json({ error: `Invalid payment method "${paymentMethod}". Choose "card" or "mobile_money".` });
   }
+  if (timezone !== 'Africa/Accra') return response.status(400).json({ error: 'Booking timezone must be Africa/Accra.' });
+  if (Number(durationMinutes) !== 140) return response.status(400).json({ error: 'Each booking session must have a duration of exactly 140 minutes.' });
   let fees;
   try { ({ bookingFees: fees } = await getPricing(database)); } catch (error) { return response.status(500).json({ error: databaseError('Loading booking fees failed.', error) }); }
   const needsSongCount = service === 'ep-album';
@@ -80,12 +82,19 @@ router.post('/bookings/initialize-payment', async (request, response) => {
     const bookingItem = {
       type: 'booking', name: `${bookingServiceLabels[service]}${needsSongCount ? ` (${normalizedSongCount} songs)` : ''}`, service,
       songCount: needsSongCount ? normalizedSongCount : null, feeGhs,
-      booking: { name: String(name).trim(), email: normalizedEmail, phone: String(phone || '').trim(), artistCount: normalizedArtistCount, songCount: needsSongCount ? normalizedSongCount : null, sessionSlots: slots.map(slot => ({ date: slot.date, time: slot.time })), details: String(details || '').trim() }
+      booking: { name: String(name).trim(), email: normalizedEmail, phone: String(phone || '').trim(), artistCount: normalizedArtistCount, songCount: needsSongCount ? normalizedSongCount : null, timezone, durationMinutes: 140, sessionSlots: slots.map(slot => ({ date: slot.date, time: slot.time })), details: String(details || '').trim() }
     };
     await new Promise((resolve, reject) => database.run('INSERT INTO orders (reference, customer_name, customer_email, amount, currency, items_json) VALUES (?, ?, ?, ?, ?, ?)', [reference, bookingItem.booking.name, normalizedEmail, feeGhs, 'GHS', JSON.stringify([bookingItem])], error => error ? reject(error) : resolve()));
     const paystackResponse = await fetch('https://api.paystack.co/transaction/initialize', { method: 'POST', headers: { Authorization: `Bearer ${paystackSecretKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ email: normalizedEmail, amount: Math.round(feeGhs * 100), currency: 'GHS', reference, channels: [paymentMethod], callback_url: paymentCallbackUrl.toString() }) });
     const payment = await paystackResponse.json();
     if (!paystackResponse.ok || !payment.status) throw new Error(payment.message || 'Paystack rejected the booking payment initialization request.');
+    await new Promise((resolve, reject) => database.run(
+      `INSERT INTO payments (order_id, provider, provider_reference, status, amount, currency, provider_payload)
+       SELECT id, ?, ?, ?, ?, ?, ? FROM orders WHERE reference = ?
+       ON DUPLICATE KEY UPDATE order_id = VALUES(order_id), status = VALUES(status), amount = VALUES(amount), currency = VALUES(currency), provider_payload = VALUES(provider_payload)`,
+      ['paystack', payment.data.reference, 'pending', feeGhs, 'GHS', JSON.stringify(payment.data), reference],
+      error => error ? reject(error) : resolve()
+    ));
     response.json({ authorizationUrl: payment.data.authorization_url, reference, amount: feeGhs, currency: 'GHS' });
   } catch (error) {
     response.status(400).json({ error: error.message || 'Booking payment initialization failed because the payment request could not be completed.' });

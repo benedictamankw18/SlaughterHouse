@@ -177,7 +177,7 @@
         message.textContent = 'Connecting to secure payment...';
         const bookingFields = Object.fromEntries(new FormData(form));
         Object.keys(bookingFields).filter(key => key.startsWith('sessionDate-') || key.startsWith('sessionTime-')).forEach(key => delete bookingFields[key]);
-        const booking = { ...bookingFields, slots, name: customerUser.name, email: customerUser.email, phone: customerUser.phone || '' };
+        const booking = { ...bookingFields, slots, timezone: 'Africa/Accra', durationMinutes: 140, name: customerUser.name, email: customerUser.email, phone: customerUser.phone || '' };
         const response = await fetch(`${bookingApiBaseUrl}/api/bookings/initialize-payment`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(booking) });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error);

@@ -16,7 +16,10 @@ function isAvailableBookingSlot(dateValue, timeValue) {
   const day = Number(dayValue);
   const date = new Date(Date.UTC(year, month - 1, day));
   if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day || ![0, 2, 3, 4].includes(date.getUTCDay())) return false;
-  const minutes = Number(timeParts[1]) * 60 + Number(timeParts[2]);
+  const hour = Number(timeParts[1]);
+  const minute = Number(timeParts[2]);
+  if (hour > 23 || minute > 59) return false;
+  const minutes = hour * 60 + minute;
   return minutes >= 11 * 60 && minutes + 140 <= 21 * 60;
 }
 

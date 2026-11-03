@@ -92,6 +92,7 @@ The existing implementation should be preserved while the SRS features are compl
 - [x] Return per-beat license prices with database defaults as fallback.
 - [x] Add preview metadata including duration and preview-file URL.
 - [x] Add persistent audio-player state for preview position and volume.
+- [x] Replace homepage featured beats with database-loaded results.
 - [x] Add wishlist support for authenticated customers.
 - [x] Add exclusive-license locking so an exclusively licensed beat cannot be sold again.
 - [x] Add admin create, publish, unpublish, and archive operations.
@@ -109,19 +110,19 @@ The existing implementation should be preserved while the SRS features are compl
 
 ### Tasks
 
-- [ ] Add normalized order and order-item records.
-- [ ] Add license records linked to customer, beat, order, and license type.
-- [ ] Define license rights, formats, usage limits, and distribution rules in data.
-- [ ] Generate a license certificate/PDF after verified payment.
-- [ ] Add customer purchase history, license history, and download history.
-- [ ] Make download authorization verify:
-  - [ ] Signed token.
-  - [ ] Paid order.
-  - [ ] Customer ownership.
-  - [ ] Product and license match.
-  - [ ] Allowed format.
-  - [ ] Token expiry.
-- [ ] Add download audit events and rate limits.
+- [x] Add normalized order and order-item records.
+- [x] Add license records linked to customer, beat, order, and license type.
+- [x] Define license rights, formats, usage limits, and distribution rules in data.
+- [x] Generate a license certificate/PDF after verified payment.
+- [x] Add customer purchase history, license history, and download history.
+- [x] Make download authorization verify:
+  - [x] Signed token.
+  - [x] Paid order.
+  - [x] Customer ownership.
+  - [x] Product and license match.
+  - [x] Allowed format.
+  - [x] Token expiry.
+- [x] Add download audit events and rate limits.
 
 ### Acceptance
 
@@ -135,12 +136,12 @@ The existing implementation should be preserved while the SRS features are compl
 ### Tasks
 
 - [ ] Keep payment initialization and verification server-side.
-- [ ] Add Paystack webhook endpoint with signature verification.
-- [ ] Make verification and webhook processing idempotent.
-- [ ] Store provider reference, request status, response status, amount, currency, and timestamps.
-- [ ] Reject placeholder or missing Paystack credentials before external requests.
-- [ ] Reconcile order amount and currency against the verified transaction.
-- [ ] Handle abandoned, failed, reversed, and refunded payments.
+- [x] Add Paystack webhook endpoint with signature verification.
+- [x] Make verification and webhook processing idempotent.
+- [x] Store provider reference, request status, response status, amount, currency, and timestamps.
+- [x] Reject placeholder or missing Paystack credentials before external requests.
+- [x] Reconcile order amount and currency against the verified transaction.
+- [x] Handle abandoned, failed, reversed, and refunded payments.
 - [ ] Send payment events to order, license, booking, analytics, and notification workflows.
 
 ### Acceptance
@@ -154,12 +155,12 @@ The existing implementation should be preserved while the SRS features are compl
 ### Tasks
 
 - [x] Add database-backed service definitions and booking fees.
-- [ ] Add availability and blocked-slot management for administrators.
+- [x] Add availability and blocked-slot management for administrators.
 - [x] Add availability API for the frontend calendar.
-- [ ] Validate service, duration, date, time, timezone, artist count, and slot structure.
+- [x] Validate service, duration, date, time, timezone, artist count, and slot structure.
 - [x] Prevent double booking with a database uniqueness constraint during verified payment.
-- [ ] Add deposit/payment status and booking status transitions.
-- [ ] Add admin confirmation, cancellation, rescheduling, and notes.
+- [x] Add deposit/payment status and booking status transitions.
+- [x] Add admin confirmation, cancellation, rescheduling, and notes.
 - [ ] Send customer booking confirmations and admin notifications.
 
 ### Acceptance
@@ -174,10 +175,10 @@ The existing implementation should be preserved while the SRS features are compl
 ### Tasks
 
 - [ ] Move all products to database-backed catalog APIs.
-- [ ] Add categories, variants, stock, SKU, shipping status, and product images.
-- [ ] Reserve or decrement stock transactionally during paid order completion.
-- [ ] Prevent checkout when stock is insufficient.
-- [ ] Add admin inventory and fulfillment management.
+- [x] Add categories, variants, stock, SKU, shipping status, and product images.
+- [x] Reserve or decrement stock transactionally during paid order completion.
+- [x] Prevent checkout when stock is insufficient.
+- [x] Add admin inventory and fulfillment management.
 - [ ] Add customer order status and fulfillment history.
 
 ### Acceptance
@@ -190,12 +191,12 @@ The existing implementation should be preserved while the SRS features are compl
 
 ### Tasks
 
-- [ ] Add request status workflow: new, reviewing, quoted, accepted, rejected, completed.
-- [ ] Store reference links, audio samples, preferred license, quote, and admin notes.
-- [ ] Add request ownership for authenticated customers.
-- [ ] Add review moderation workflow including removal.
-- [ ] Restrict public reviews to approved records.
-- [ ] Add spam/rate-limit controls.
+- [x] Add request status workflow: new, reviewing, quoted, accepted, rejected, completed.
+- [x] Store reference links, audio samples, preferred license, quote, and admin notes.
+- [x] Add request ownership for authenticated customers.
+- [x] Add review moderation workflow including removal.
+- [x] Restrict public reviews to approved records.
+- [x] Add spam/rate-limit controls.
 
 ### Acceptance
 
@@ -208,14 +209,14 @@ The existing implementation should be preserved while the SRS features are compl
 ### Tasks
 
 - [ ] Build customer dashboard sections:
-  - [ ] Profile.
-  - [ ] Purchases.
-  - [ ] Orders.
-  - [ ] Licenses.
-  - [ ] Downloads.
-  - [ ] Bookings.
-  - [ ] Wishlist.
-  - [ ] Notifications.
+  - [x] Profile.
+  - [x] Purchases.
+  - [x] Orders.
+  - [x] Licenses.
+  - [x] Downloads.
+  - [x] Bookings.
+  - [x] Wishlist.
+  - [x] Notifications.
 - [ ] Add welcome, verification, order, booking, license, and password-reset emails.
 - [ ] Add admin notifications for orders, bookings, reviews, low stock, and failed payments.
 - [ ] Add notification read/unread state and delivery status.
