@@ -890,6 +890,10 @@ header {
   margin-top: 32px;
 }
 
+.beat-pagination:empty {
+  display: none;
+}
+
 .beat-page-button {
   display: grid;
   width: 42px;

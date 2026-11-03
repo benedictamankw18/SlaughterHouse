@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const path = require('node:path');
 const config = require('../config');
+const { DEFAULT_LICENSE_RIGHTS, rightsFor, allowedFormats } = require('./license-rights');
 
 function createDownloadToken(reference, productId, license, format, expiresAt = Date.now() + 15 * 60 * 1000) {
   if (!config.downloadSigningSecret) throw new Error('Download signing is not configured.');
@@ -22,14 +23,14 @@ function verifyDownloadToken(token, reference, productId, license, format) {
   return actualBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
-function getDownloadItems(order, apiPublicUrl) {
+function getDownloadItems(order, apiPublicUrl, licenseRights = null) {
+  const rightsMap = licenseRights || DEFAULT_LICENSE_RIGHTS;
   return JSON.parse(order.items_json).filter(item => !item.type || item.type === 'beat').map(item => ({
     name: item.name,
     license: item.license,
-    files: ['MP3', ...(['premium', 'unlimited', 'exclusive'].includes(item.license) ? ['WAV'] : []), ...(['unlimited', 'exclusive'].includes(item.license) ? ['STEMS'] : [])].map(format => {
-      const normalizedFormat = format.toLowerCase();
-      const token = createDownloadToken(order.reference, item.productId, item.license, normalizedFormat);
-      return { format, url: new URL(`/api/orders/${encodeURIComponent(order.reference)}/downloads/${item.productId}?license=${encodeURIComponent(item.license)}&format=${normalizedFormat}&token=${encodeURIComponent(token)}`, apiPublicUrl).toString() };
+    files: [...allowedFormats(rightsFor(rightsMap, item.license))].map(format => {
+      const token = createDownloadToken(order.reference, item.productId, item.license, format);
+      return { format: format.toUpperCase(), url: new URL(`/api/orders/${encodeURIComponent(order.reference)}/downloads/${item.productId}?license=${encodeURIComponent(item.license)}&format=${format}&token=${encodeURIComponent(token)}`, apiPublicUrl).toString() };
     })
   }));
 }

@@ -103,6 +103,24 @@ router.get('/admin/orders.csv', sessions.requireAdmin, (request, response) => {
   }).catch(error => response.status(500).json({ error: databaseError('Exporting orders failed.', error) }));
 });
 
+router.patch('/admin/orders/:reference/fulfillment', sessions.requireAdmin, (request, response) => {
+  const status = String(request.body?.status || '').trim().toLowerCase();
+  const allowedStatuses = ['unfulfilled', 'shipped', 'delivered'];
+  if (!allowedStatuses.includes(status)) return response.status(400).json({ error: `Fulfillment status must be one of: ${allowedStatuses.join(', ')}.` });
+  database.get('SELECT id, reference, items_json, status AS order_status FROM orders WHERE reference = ?', [request.params.reference], (error, order) => {
+    if (error) return response.status(500).json({ error: databaseError('Loading the order failed.', error) });
+    if (!order) return response.status(404).json({ error: `No order was found with reference ${request.params.reference}.` });
+    let items;
+    try { items = JSON.parse(order.items_json); } catch { return response.status(500).json({ error: 'Order data is invalid.' }); }
+    if (!Array.isArray(items) || !items.some(item => item.type === 'merchandise')) return response.status(400).json({ error: 'Fulfillment tracking only applies to orders that contain merchandise.' });
+    database.run('UPDATE orders SET fulfillment_status = ? WHERE id = ?', [status, order.id], runError => {
+      if (runError) return response.status(500).json({ error: databaseError('Updating fulfillment failed.', runError) });
+      recordAuditSafely(database, { userId: request.admin.id, action: 'order_fulfillment_updated', entityType: 'order', entityId: order.id, details: { reference: order.reference, fulfillmentStatus: status }, ipAddress: request.ip });
+      response.json({ reference: order.reference, fulfillmentStatus: status });
+    });
+  });
+});
+
 router.post('/admin/beats', sessions.requireAdmin, (request, response) => {
   const { title, bpm, musicalKey, genre, mood, previewDurationSeconds, prices, files } = request.body;
   const titleError = validators.text(title, 'Beat title', { required: true, max: 255 });
@@ -192,18 +210,43 @@ router.patch('/admin/merchandise/:id/inventory', sessions.requireAdmin, (request
   });
 });
 
-router.post('/admin/withdraw', sessions.requireAdmin, (request, response) => {
-  database.get('SELECT password_hash FROM users WHERE lower(email) = lower(?) AND role = ?', [request.admin.email, 'admin'], (error, admin) => {
-    if (error) return response.status(500).json({ error: databaseError('Verifying the administrator password failed.', error) });
-    if (!admin ) return response.status(401).json({ error: 'Withdrawal password is incorrect.' });
-    const amount = Number(request.body.amount);
-      const amountError = validators.money(amount, 'Withdrawal amount');
-      if (amountError) return response.status(400).json({ error: amountError });
-    database.run('INSERT INTO withdrawals (amount) VALUES (?)', [amount], function (insertError) {
-      if (insertError) return response.status(500).json({ error: databaseError('Recording the withdrawal failed.', insertError) });
-      response.status(201).json({ id: this.lastID, amount });
-    });
-  });
+router.post('/admin/withdraw', sessions.requireAdmin, async (request, response) => {
+  const amount = Number(request.body.amount);
+  const amountError = validators.money(amount, 'Withdrawal amount');
+  if (amountError) return response.status(400).json({ error: amountError });
+  const password = String(request.body.password || '');
+  if (!password) return response.status(400).json({ error: 'Administrator password is required to record a withdrawal.' });
+  let admin;
+  try {
+    admin = await new Promise((resolve, reject) => database.get(
+      'SELECT password_hash FROM users WHERE id = ? AND role = ?',
+      [request.admin.id, 'admin'],
+      (error, row) => error ? reject(error) : resolve(row)
+    ));
+  } catch (error) {
+    return response.status(500).json({ error: databaseError('Verifying the administrator password failed.', error) });
+  }
+  let matches = false;
+  try {
+    matches = admin ? await passwordMatches(password, admin.password_hash) : false;
+  } catch (error) {
+    console.error('Withdrawal password verification failed:', error.code || error.message);
+  }
+  if (!matches) {
+    recordAuditSafely(database, { userId: request.admin.id, action: 'withdrawal_rejected', entityType: 'withdrawal', details: { reason: 'password_mismatch' }, ipAddress: request.ip });
+    return response.status(401).json({ error: 'Withdrawal password is incorrect.' });
+  }
+  try {
+    const result = await new Promise((resolve, reject) => database.run(
+      'INSERT INTO withdrawals (amount) VALUES (?)',
+      [amount],
+      function (insertError) { if (insertError) return reject(insertError); resolve({ id: this.lastID }); }
+    ));
+    recordAuditSafely(database, { userId: request.admin.id, action: 'withdrawal_recorded', entityType: 'withdrawal', entityId: result.id, details: { amount }, ipAddress: request.ip });
+    response.status(201).json({ id: result.id, amount });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Recording the withdrawal failed.', error) });
+  }
 });
 
 router.patch('/admin/reviews/:id/status', sessions.requireAdmin, (request, response) => {

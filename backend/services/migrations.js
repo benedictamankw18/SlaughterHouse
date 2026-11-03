@@ -1,3 +1,5 @@
+const { DEFAULT_LICENSE_RIGHTS } = require('./license-rights');
+
 const migrations = [
   {
     version: 1,
@@ -210,6 +212,50 @@ const migrations = [
       'ALTER TABLE customer_reviews ADD COLUMN user_id INT NULL',
       'ALTER TABLE customer_reviews ADD INDEX idx_customer_reviews_user_id (user_id)'
     ]
+  },
+  {
+    version: 11,
+    statements: [
+      'ALTER TABLE sales ADD COLUMN order_reference VARCHAR(255) NULL',
+      'ALTER TABLE sales ADD COLUMN line_index INT NOT NULL DEFAULT 0',
+      'ALTER TABLE sales ADD UNIQUE KEY uq_sales_order_line (order_reference, line_index)'
+    ]
+  },
+  {
+    version: 12,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS license_rights (
+        license_type VARCHAR(50) PRIMARY KEY,
+        rights_json JSON NOT NULL,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )`,
+      ...Object.entries(DEFAULT_LICENSE_RIGHTS).map(([licenseType, rights]) =>
+        `INSERT IGNORE INTO license_rights (license_type, rights_json) VALUES ('${licenseType}', '${JSON.stringify(rights)}')`
+      ),
+      'ALTER TABLE licenses ADD COLUMN revoked_at TIMESTAMP NULL',
+      'ALTER TABLE licenses ADD COLUMN revoked_reason VARCHAR(255) NULL'
+    ]
+  },
+  {
+    version: 13,
+    statements: [
+      "ALTER TABLE orders ADD COLUMN fulfillment_status VARCHAR(50) NOT NULL DEFAULT 'unfulfilled'",
+      'ALTER TABLE orders ADD COLUMN refunded_amount DECIMAL(12,2) NOT NULL DEFAULT 0',
+      'ALTER TABLE orders ADD COLUMN refunded_at TIMESTAMP NULL',
+      'ALTER TABLE orders ADD INDEX idx_orders_status (status)'
+    ]
+  },
+  {
+    // MariaDB/MySQL with explicit_defaults_for_timestamp=OFF silently adds
+    // DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP to the first
+    // TIMESTAMP NOT NULL column. That made every session usage reset
+    // user_sessions.expires_at to "now", expiring sessions after one request.
+    // DATETIME has no implicit auto-update, so expiry is only ever written by us.
+    version: 14,
+    statements: [
+      'ALTER TABLE user_sessions MODIFY COLUMN expires_at DATETIME NOT NULL',
+      'ALTER TABLE account_tokens MODIFY COLUMN expires_at DATETIME NOT NULL'
+    ]
   }
 ];
 
@@ -233,4 +279,4 @@ async function applyMigrations(pool) {
   }
 }
 
-module.exports = { applyMigrations };
+module.exports = { applyMigrations, migrations };

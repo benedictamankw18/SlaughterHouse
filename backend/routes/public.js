@@ -148,7 +148,7 @@ router.get('/customer/licenses', requireCustomer, async (request, response) => {
        FROM licenses l
        JOIN beats b ON b.id = l.beat_id
        JOIN orders o ON o.id = l.order_id
-       WHERE l.user_id = ?
+       WHERE l.user_id = ? AND l.revoked_at IS NULL AND o.status = 'paid'
        ORDER BY l.purchased_at DESC`,
       [request.customer.id]
     );
@@ -169,7 +169,7 @@ router.get('/customer/licenses/:id/certificate', requireCustomer, async (request
        JOIN beats b ON b.id = l.beat_id
        JOIN orders o ON o.id = l.order_id AND o.status = 'paid'
        JOIN users u ON u.id = l.user_id
-       WHERE l.id = ? AND l.user_id = ?`,
+       WHERE l.id = ? AND l.user_id = ? AND l.revoked_at IS NULL`,
       [Number(request.params.id), request.customer.id]
     );
     if (!license) return response.status(404).json({ error: 'Paid license was not found.' });

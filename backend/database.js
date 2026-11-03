@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const mysql = require('mysql2');
 const { applyMigrations } = require('./services/migrations');
+const { runInTransaction } = require('./services/transaction');
 
 const mysqlConfig = process.env.MYSQL_URL && !process.env.MYSQL_URL.includes('user:password')
   ? process.env.MYSQL_URL
@@ -32,6 +33,17 @@ const database = {
   },
   getConnectionConfig() {
     return mysqlConfig;
+  },
+  transaction(callback) {
+    return initialization
+      .then(() => new Promise((resolve, reject) => pool.getConnection((error, connection) => error ? reject(error) : resolve(connection))))
+      .then(async connection => {
+        try {
+          return await runInTransaction(connection, callback);
+        } finally {
+          connection.release();
+        }
+      });
   },
   initialize() {
     const statements = [

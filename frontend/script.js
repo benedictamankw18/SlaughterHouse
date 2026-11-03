@@ -590,9 +590,6 @@ if (availableLicenses.has(requestedLicense)) {
 updateBeatPrices();
 
 const catalogFilter = document.getElementById('beats-filter');
-const catalogCards = document.querySelectorAll('#beat-list .beat-card');
-const catalogPageButtons = document.querySelectorAll('.beat-pagination:not(.produced-pagination) .beat-page-button');
-const catalogPageSize = 11;
 let currentCatalogPage = 1;
 const requestedGenre = new URLSearchParams(window.location.search).get('genre')?.toLowerCase();
 const requestedSearch = new URLSearchParams(window.location.search).get('search')?.trim().toLowerCase() || '';
@@ -601,73 +598,6 @@ if (requestedGenre && catalogFilter) {
   const genreValue = requestedGenre === 'rap' ? 'hiphop' : requestedGenre;
   const genreSelect = document.getElementById('catalog-genre');
   if ([...genreSelect.options].some(option => option.value === genreValue)) genreSelect.value = genreValue;
-}
-
-function renderCatalogPage() {
-  const matchingCards = Array.from(catalogCards).filter(card => card.dataset.filterMatch !== 'false');
-  const pageCount = Math.max(1, Math.ceil(matchingCards.length / catalogPageSize));
-  const resultCount = document.getElementById('beat-result-count');
-  if (resultCount) {
-    resultCount.textContent = `${matchingCards.length} ${matchingCards.length === 1 ? 'beat' : 'beats'} found`;
-  }
-  const catalogList = document.getElementById('beat-list');
-  let emptyState = document.getElementById('catalog-empty-state');
-  if (!matchingCards.length && catalogList) {
-    if (!emptyState) {
-      emptyState = document.createElement('p');
-      emptyState.id = 'catalog-empty-state';
-      emptyState.className = 'filter-empty-state';
-      emptyState.textContent = 'No beats match those filters. Try broadening your search.';
-      catalogList.appendChild(emptyState);
-    }
-  } else {
-    emptyState?.remove();
-  }
-  currentCatalogPage = Math.min(currentCatalogPage, pageCount);
-  const firstCard = (currentCatalogPage - 1) * catalogPageSize;
-  const lastCard = firstCard + catalogPageSize;
-
-  catalogCards.forEach(card => {
-    const cardIndex = matchingCards.indexOf(card);
-    const shouldHide = cardIndex < firstCard || cardIndex >= lastCard || card.dataset.filterMatch === 'false';
-    card.hidden = shouldHide;
-    card.classList.toggle('is-paginated-hidden', shouldHide);
-  });
-
-  catalogPageButtons.forEach(button => {
-    const page = Number(button.dataset.page);
-    const isActive = page === currentCatalogPage;
-    button.hidden = page > pageCount;
-    button.classList.toggle('active', isActive);
-    button.setAttribute('aria-current', isActive ? 'page' : 'false');
-  });
-}
-
-function applyCatalogFilters() {
-  if (!catalogFilter) {
-    return;
-  }
-
-  const minBpm = Number(document.getElementById('catalog-bpm-min').value) || 0;
-  const maxBpm = Number(document.getElementById('catalog-bpm-max').value) || Infinity;
-  const genre = document.getElementById('catalog-genre').value;
-  const mood = document.getElementById('catalog-mood').value;
-  const search = requestedSearch;
-
-  catalogCards.forEach(card => {
-    const cardBpm = Number(card.dataset.bpm);
-    const matchesBpm = !card.dataset.bpm || (cardBpm >= minBpm && cardBpm <= maxBpm);
-    const matchesGenre = !genre || card.dataset.genre === genre;
-    const matchesKey = !selectedNote || card.dataset.key === selectedNote;
-    const matchesMode = !selectedNote || card.dataset.keyMode === selectedMode;
-    const matchesMood = !mood || card.dataset.mood === mood;
-    const searchableText = card.textContent.toLowerCase();
-    const matchesSearch = !search || searchableText.includes(search);
-    card.dataset.filterMatch = String(matchesBpm && matchesGenre && matchesKey && matchesMode && matchesMood && matchesSearch);
-  });
-
-  currentCatalogPage = 1;
-  renderCatalogPage();
 }
 
 function clearCatalogFilters() {
@@ -684,21 +614,6 @@ function clearCatalogFilters() {
   selectedNote = '';
   keyNotes.forEach(button => button.classList.toggle('active', button.dataset.note === ''));
   updateKeyValue();
-  applyCatalogFilters();
-}
-
-document.getElementById('apply-beat-filters')?.addEventListener('click', applyCatalogFilters);
-document.getElementById('clear-beat-filters')?.addEventListener('click', clearCatalogFilters);
-
-catalogPageButtons.forEach(button => {
-  button.addEventListener('click', () => {
-    currentCatalogPage = Number(button.dataset.page);
-    renderCatalogPage();
-  });
-});
-
-if (catalogFilter) {
-  applyCatalogFilters();
 }
 
 const producedSongCards = Array.from(document.querySelectorAll('.produced-song-card'));
@@ -801,12 +716,35 @@ function convertPrice(price) {
   return `${currencySymbols[currentCurrency]}${converted} ${currentCurrency}`;
 }
 
+function renderCatalogPagination(pagination) {
+  const nav = document.querySelector('.beat-pagination:not(.produced-pagination)');
+  if (!nav) return;
+  const pageCount = Math.max(1, Number(pagination.pages) || 1);
+  nav.replaceChildren(...Array.from({ length: pageCount }, (_, index) => {
+    const page = index + 1;
+    const isActive = page === Number(pagination.page);
+    const button = document.createElement('button');
+    button.className = `beat-page-button${isActive ? ' active' : ''}`;
+    button.type = 'button';
+    button.dataset.page = String(page);
+    button.setAttribute('aria-label', `Beat page ${page}`);
+    button.setAttribute('aria-current', isActive ? 'page' : 'false');
+    button.textContent = String(page);
+    button.addEventListener('click', () => {
+      currentCatalogPage = page;
+      loadDatabaseBeatCatalog();
+      document.getElementById('beat-listing')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    return button;
+  }));
+}
+
 async function loadDatabaseBeatCatalog() {
   const catalogList = document.getElementById('beat-list');
   if (!catalogList || !document.querySelector('.catalog-page')) return;
   const query = new URLSearchParams({
-    page: '1',
-    pageSize: '50',
+    page: String(currentCatalogPage),
+    pageSize: '11',
     search: new URLSearchParams(window.location.search).get('search') || '',
     genre: document.getElementById('catalog-genre')?.value || '',
     mood: document.getElementById('catalog-mood')?.value || '',
@@ -819,7 +757,7 @@ async function loadDatabaseBeatCatalog() {
     const result = await fetch(`${API}/api/beats?${query.toString()}`);
     const data = await result.json();
     if (!result.ok) throw new Error(data.error || 'Could not load beats.');
-    catalogList.replaceChildren(...data.beats.map(beat => {
+    const cards = data.beats.map(beat => {
       const card = document.createElement('article');
       const prices = beat.prices || {};
       const cover = beat.coverArt ? `${API}/api/uploads/${encodeURIComponent(beat.coverArt)}` : 'Images/Logo 2.png';
@@ -834,8 +772,13 @@ async function loadDatabaseBeatCatalog() {
       card.dataset.productId = beat.id;
       setupPreviewCard(card);
       return card;
-    }));
-    document.getElementById('beat-result-count').textContent = `${data.beats.length} ${data.beats.length === 1 ? 'beat' : 'beats'} found`;
+    });
+    if (cards.length) catalogList.replaceChildren(...cards);
+    else catalogList.innerHTML = '<p class="filter-empty-state">No beats match those filters. Try broadening your search.</p>';
+    const pagination = data.pagination || { page: currentCatalogPage, pages: 1, total: data.beats.length };
+    const total = Number(pagination.total || data.beats.length);
+    document.getElementById('beat-result-count').textContent = `${total} ${total === 1 ? 'beat' : 'beats'} found`;
+    renderCatalogPagination(pagination);
     catalogList.querySelectorAll('.license-select').forEach(select => select.addEventListener('change', updateBeatPrices));
     catalogList.querySelectorAll('.beat-cart-button').forEach(button => button.addEventListener('click', () => {
       const card = button.closest('.beat-card');
@@ -891,8 +834,15 @@ async function loadFeaturedBeatCatalog() {
   }
 }
 
-document.getElementById('apply-beat-filters')?.addEventListener('click', loadDatabaseBeatCatalog);
-document.getElementById('clear-beat-filters')?.addEventListener('click', () => setTimeout(loadDatabaseBeatCatalog, 0));
+document.getElementById('apply-beat-filters')?.addEventListener('click', () => {
+  currentCatalogPage = 1;
+  loadDatabaseBeatCatalog();
+});
+document.getElementById('clear-beat-filters')?.addEventListener('click', () => {
+  clearCatalogFilters();
+  currentCatalogPage = 1;
+  loadDatabaseBeatCatalog();
+});
 loadDatabaseBeatCatalog();
 loadFeaturedBeatCatalog();
 

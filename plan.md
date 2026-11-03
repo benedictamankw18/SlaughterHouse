@@ -42,7 +42,7 @@ The existing implementation should be preserved while the SRS features are compl
   - [x] Payments and provider references.
   - [x] Booking availability.
   - [ ] Reviews.
--  - [x] Licenses.
+  - [x] Licenses.
   - [x] Audit logs.
   - [x] Notifications.
   - [x] Wishlists.
@@ -50,7 +50,10 @@ The existing implementation should be preserved while the SRS features are compl
 - [x] Add foreign keys, indexes, unique constraints, and timestamps to the new tables.
 - [x] Add a migration/version table so schema changes are repeatable.
 - [ ] Replace schema-altering startup logic with ordered migrations where practical.
-- [x] Document local MySQL setup, environment variables, and migration commands.
+- [ ] Document local MySQL setup, environment variables, and migration commands.
+  Environment variables, startup, and `schema_migrations` commands are covered in
+  `backend/README.md`; a step-by-step local MySQL install and database-creation guide
+  is still missing.
 
 ### Acceptance
 
@@ -87,7 +90,9 @@ The existing implementation should be preserved while the SRS features are compl
 ### Tasks
 
 - [x] Create database-backed beat listing and detail APIs.
-- [x] Replace the beats catalog page cards with database-loaded results.
+- [x] Replace hardcoded `beats.html` cards with database-loaded results.
+  The catalog markup now ships a loading placeholder and pagination is rendered from
+  the `/api/beats` pagination metadata.
 - [x] Add search, genre, mood, BPM, key, sorting, pagination, and empty-state data.
 - [x] Return per-beat license prices with database defaults as fallback.
 - [x] Add preview metadata including duration and preview-file URL.
@@ -112,7 +117,9 @@ The existing implementation should be preserved while the SRS features are compl
 
 - [x] Add normalized order and order-item records.
 - [x] Add license records linked to customer, beat, order, and license type.
-- [x] Define license rights, formats, usage limits, and distribution rules in data.
+- [ ] Move license rights, formats, usage limits, and distribution rules out of the
+  hardcoded `licenseRights` map in `routes/payments.js` into database-backed,
+  admin-editable definitions (currently copied into `licenses.rights_json` at purchase).
 - [x] Generate a license certificate/PDF after verified payment.
 - [x] Add customer purchase history, license history, and download history.
 - [x] Make download authorization verify:
@@ -137,11 +144,17 @@ The existing implementation should be preserved while the SRS features are compl
 
 - [ ] Keep payment initialization and verification server-side.
 - [x] Add Paystack webhook endpoint with signature verification.
-- [x] Make verification and webhook processing idempotent.
+- [x] Make webhook processing idempotent (`payment_webhook_events` unique key plus the
+  order status guard).
+- [x] Make verification-path writes idempotent — sales rows are keyed by
+  `order_reference` and `line_index` (`uq_sales_order_line`) and written with
+  `ON DUPLICATE KEY UPDATE`, so a retried verify cannot duplicate sales rows.
 - [x] Store provider reference, request status, response status, amount, currency, and timestamps.
 - [x] Reject placeholder or missing Paystack credentials before external requests.
 - [x] Reconcile order amount and currency against the verified transaction.
-- [x] Handle abandoned, failed, reversed, and refunded payments.
+- [ ] Handle abandoned, failed, reversed, and refunded payments.
+  Non-success webhook events only update `payments.status`; there is no order transition,
+  license revocation, stock restore, or `refund.*` event handling.
 - [ ] Send payment events to order, license, booking, analytics, and notification workflows.
 
 ### Acceptance
@@ -176,7 +189,9 @@ The existing implementation should be preserved while the SRS features are compl
 
 - [ ] Move all products to database-backed catalog APIs.
 - [x] Add categories, variants, stock, SKU, shipping status, and product images.
-- [x] Reserve or decrement stock transactionally during paid order completion.
+- [ ] Wrap merchandise stock reservation and order completion in a transaction.
+  Guarded row updates prevent overselling per row, but multi-item orders can partially
+  decrement because there is no transaction around `decrementMerchandiseStock`.
 - [x] Prevent checkout when stock is insufficient.
 - [x] Add admin inventory and fulfillment management.
 - [ ] Add customer order status and fulfillment history.
@@ -287,13 +302,15 @@ The existing implementation should be preserved while the SRS features are compl
 
 ## 15. Testing Strategy
 
-- [ ] Unit-test validators, pricing fallback, booking slot validation, license rights, and token signing.
+- [x] Unit-test validators, pricing fallback, booking slot validation, password hashing, and download token signing.
+- [ ] Unit-test database-backed license rights once they move out of `routes/payments.js`.
 - [ ] Integration-test every route with a test database.
 - [ ] Test customer/admin authorization boundaries.
 - [ ] Test duplicate signup, invalid JSON, malformed uploads, invalid payment methods, and invalid IDs.
 - [ ] Test Paystack success, failure, mismatch, duplicate webhook, and refund scenarios.
 - [ ] Test concurrent booking and inventory operations.
-- [ ] Test protected downloads across licenses and expired tokens.
+- [x] Unit-test download token scoping across orders, products, licenses, formats, and expiry.
+  Route-level authorization against a test database remains covered by the integration item above.
 - [ ] Add browser tests for signup, login, search, cart, checkout, booking, reviews, and admin workflows.
 - [ ] Run accessibility checks and responsive visual checks.
 

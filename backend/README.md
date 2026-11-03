@@ -38,6 +38,16 @@ Database initialization creates the legacy tables required by the current
 application, then applies numbered migrations recorded in `schema_migrations`.
 Run `node database.js` after pulling schema changes; existing rows are preserved.
 
+Automated tests cover the pure service layer (booking rules, download tokens,
+input validation, password hashing, pricing, and migration structure) with
+Node's built-in test runner, so no extra dependency is required:
+
+```powershell
+node --test "test/*.test.js"
+```
+
+Use `npm test` instead when local PowerShell script execution is enabled.
+
 Login sessions, password reset tokens, and email verification tokens are stored
 hashed and are single-use or expiry-controlled. Login responses also set
 HttpOnly, SameSite cookies; bearer tokens remain temporarily supported during
@@ -103,7 +113,9 @@ HMAC, records webhook deliveries idempotently, and reconciles successful
 non-booking orders. Booking payments continue through the slot-reserving
 verification path. Pending provider payments are recorded during initialization,
 and non-success webhook events update their payment status without unlocking
-the order.
+the order. Successful orders write one sales row per order line, keyed by
+`order_reference` and `line_index`, so retried verifications or webhook
+deliveries cannot double-count revenue.
 
 Administrators can transition paid bookings with
 `PATCH /api/admin/bookings/:id/status` using `paid`, `confirmed`, `completed`,
