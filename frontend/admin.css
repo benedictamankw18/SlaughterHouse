@@ -28,6 +28,9 @@
 .admin-metric strong { font-size: 1.3rem; }
 .admin-list-item blockquote { margin: 12px 0 0; color: rgba(255,255,255,.86); white-space: pre-wrap; }
 .admin-list-item ul { display: grid; gap: 6px; padding-left: 20px; color: rgba(255,255,255,.68); }
+.admin-beat-editor { display: grid; gap: 14px; }
+.admin-beat-editor-heading { display: flex; justify-content: space-between; gap: 12px; }
+.admin-beat-editor-heading span { color: rgba(255,255,255,.58); font-size: .8rem; }
 .admin-review-actions { display: flex; gap: 8px; margin-top: 14px; }
 .admin-review-actions button { padding: 8px 12px; border: 1px solid rgba(255,255,255,.25); border-radius: 4px; background: transparent; color: #fff; cursor: pointer; }
 .admin-review-actions button:first-child { border-color: #22c55e; color: #86efac; }

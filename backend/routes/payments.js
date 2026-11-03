@@ -1,0 +1,126 @@
+const express = require('express');
+const crypto = require('node:crypto');
+const database = require('../database');
+const config = require('../config');
+const { getPricing } = require('../services/pricing');
+const { normalizeBookingSlots } = require('../services/booking');
+const { getDownloadItems } = require('../services/downloads');
+const { databaseError } = require('../services/error-messages');
+const validators = require('../services/input-validation');
+
+const router = express.Router();
+const { apiPublicUrl, paymentCallbackUrl, paystackSecretKey, usdToGhsRate, bookingServiceLabels } = config;
+const queryRows = (query, parameters = []) => new Promise((resolve, reject) => database.all(query, parameters, (error, rows) => error ? reject(error) : resolve(rows || [])));
+const queryOne = (query, parameters = []) => new Promise((resolve, reject) => database.get(query, parameters, (error, row) => error ? reject(error) : resolve(row)));
+const run = (query, parameters = []) => new Promise((resolve, reject) => database.run(query, parameters, function (error) { error ? reject(error) : resolve(this); }));
+
+async function hasPaidExclusiveLicense(beatId, excludedReference = null) {
+  const parameters = excludedReference ? ['paid', excludedReference] : ['paid'];
+  const rows = await queryRows(
+    `SELECT reference, items_json FROM orders WHERE status = ?${excludedReference ? ' AND reference <> ?' : ''}`,
+    parameters
+  );
+  return rows.some(order => {
+    let items;
+    try { items = JSON.parse(order.items_json); } catch { return false; }
+    return items.some(item => item.type === 'beat' && Number(item.productId) === Number(beatId) && item.license === 'exclusive');
+  });
+}
+
+router.post('/payments/initialize', async (request, response) => {
+  const { name, email, items, paymentMethod } = request.body;
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const paymentError = validators.text(name, 'Customer name', { required: true, max: 255 }) || validators.email(email);
+  if (paymentError) return response.status(400).json({ error: paymentError });
+  if (!Array.isArray(items) || !items.length || items.length > 100) return response.status(400).json({ error: 'Payment must contain between 1 and 100 items.' });
+  if (!['card', 'mobile_money'].includes(paymentMethod)) return response.status(400).json({ error: 'Choose Card or Mobile Money to continue.' });
+  if (!paystackSecretKey) return response.status(503).json({ error: 'Store payments are unavailable because PAYSTACK_SECRET_KEY is missing or still set to the example placeholder. Add a valid Paystack secret key to backend/.env and restart the server.' });
+  try {
+    const { beatDefaultPrices } = await getPricing(database);
+    const validatedItems = await Promise.all(items.map(item => new Promise((resolve, reject) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return reject(new Error('Each payment item must be an object.'));
+      if (item.type === 'merchandise') {
+        const productId = Number(item.productId);
+        if (!Number.isInteger(productId) || productId < 1) return reject(new Error('Invalid merchandise selected.'));
+        database.get('SELECT id, title, price FROM merchandise WHERE id = ?', [productId], (error, product) => {
+          if (error) return reject(error);
+          if (!product || !Number.isFinite(Number(product.price)) || Number(product.price) <= 0) return reject(new Error(`Merchandise unavailable: ${item.name || 'Unknown item'}.`));
+          resolve({ type: 'merchandise', productId: product.id, name: product.title, priceGhs: Number(product.price) });
+        });
+        return;
+      }
+      const license = String(item.license || '').toLowerCase();
+      if (typeof item.name !== 'string' || !item.name.trim() || item.name.trim().length > 255) return reject(new Error('Each beat item must include a title up to 255 characters.'));
+      const priceColumns = { basic: 'basic_price', premium: 'premium_price', unlimited: 'unlimited_price', exclusive: 'exclusive_price' };
+      if (!priceColumns[license]) return reject(new Error('Invalid license selected.'));
+      database.get('SELECT id, title, cover_art, COALESCE(NULLIF(' + priceColumns[license] + ', 0), ?) AS price FROM beats WHERE lower(title) = lower(?)', [beatDefaultPrices[license], String(item.name || '')], (error, beat) => {
+        if (error) return reject(error);
+        if (!beat || !Number.isFinite(Number(beat.price)) || Number(beat.price) <= 0) return reject(new Error(`Beat unavailable: ${item.name || 'Unknown beat'}.`));
+        if (license !== 'exclusive') return resolve({ type: 'beat', productId: beat.id, name: beat.title, license, priceUsd: Number(beat.price) });
+        hasPaidExclusiveLicense(beat.id)
+          .then(isSold => isSold ? reject(new Error(`The exclusive license for "${beat.title}" has already been sold.`)) : resolve({ type: 'beat', productId: beat.id, name: beat.title, license, priceUsd: Number(beat.price) }))
+          .catch(reject);
+      });
+    })));
+    const amountGhs = validatedItems.reduce((total, item) => total + (item.type === 'merchandise' ? item.priceGhs : item.priceUsd * usdToGhsRate), 0);
+    const reference = `UBB-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+    await run('INSERT INTO orders (reference, customer_name, customer_email, amount, currency, items_json) VALUES (?, ?, ?, ?, ?, ?)', [reference, String(name).trim(), normalizedEmail, amountGhs, 'GHS', JSON.stringify(validatedItems)]);
+    const paystackResponse = await fetch('https://api.paystack.co/transaction/initialize', { method: 'POST', headers: { Authorization: `Bearer ${paystackSecretKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ email: normalizedEmail, amount: Math.round(amountGhs * 100), currency: 'GHS', reference, channels: [paymentMethod], callback_url: paymentCallbackUrl.toString() }) });
+    const payment = await paystackResponse.json();
+    if (!paystackResponse.ok || !payment.status) throw new Error(payment.message || 'Could not start payment.');
+    response.json({ authorizationUrl: payment.data.authorization_url, reference });
+  } catch (error) {
+    response.status(400).json({ error: error.message || 'Store payment initialization failed because the order could not be prepared.' });
+  }
+});
+
+router.get('/payments/verify/:reference', async (request, response) => {
+  if (!paystackSecretKey) return response.status(503).json({ error: 'Payment verification is unavailable because PAYSTACK_SECRET_KEY is missing or still set to the example placeholder. Add a valid Paystack secret key to backend/.env and restart the server.' });
+  try {
+    const paymentResponse = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(request.params.reference)}`, { headers: { Authorization: `Bearer ${paystackSecretKey}` } });
+    const payment = await paymentResponse.json();
+    if (!paymentResponse.ok || payment.data?.status !== 'success' || payment.data?.reference !== request.params.reference) return response.status(400).json({ error: 'Payment was not completed.' });
+    const order = await queryOne('SELECT * FROM orders WHERE reference = ?', [request.params.reference]);
+    if (!order) return response.status(404).json({ error: `No order was found for payment reference ${request.params.reference}.` });
+    let items;
+    try { items = JSON.parse(order.items_json); } catch { return response.status(500).json({ error: 'Order data is invalid.' }); }
+    const bookingItem = items.find(item => item.type === 'booking');
+    const respondWithSuccess = () => response.json({ status: 'success', reference: order.reference, booking: bookingItem ? { service: bookingItem.name, feeGhs: bookingItem.feeGhs } : null, downloads: getDownloadItems(order, apiPublicUrl) });
+    if (order.status === 'paid') return respondWithSuccess();
+    if (Number(payment.data.amount) !== Math.round(order.amount * 100) || payment.data.currency !== order.currency) return response.status(400).json({ error: 'Payment amount could not be verified.' });
+    const exclusiveBeatIds = items.filter(item => item.type === 'beat' && item.license === 'exclusive').map(item => item.productId);
+    for (const beatId of exclusiveBeatIds) {
+      if (await hasPaidExclusiveLicense(beatId, order.reference)) return response.status(409).json({ error: `The exclusive license for beat ${beatId} has already been sold. Payment cannot unlock this order.` });
+    }
+    const markOrderPaid = async () => {
+      const result = await run('UPDATE orders SET status = ? WHERE reference = ? AND status <> ?', ['paid', order.reference, 'paid']);
+      if (!result.changes) return respondWithSuccess();
+      await Promise.all(items.filter(item => item.type !== 'booking').map(item => run('INSERT INTO sales (sale_type, product_id, product_name, buyer_name, buyer_email, amount) VALUES (?, ?, ?, ?, ?, ?)', [item.type || 'beat', item.productId, item.type === 'merchandise' ? item.name : `${item.name} (${item.license})`, order.customer_name, order.customer_email, item.type === 'merchandise' ? item.priceGhs : item.priceUsd * usdToGhsRate])));
+      respondWithSuccess();
+    };
+    if (!bookingItem) return markOrderPaid();
+    const booking = bookingItem.booking;
+    const serviceName = bookingServiceLabels[bookingItem.service] || bookingItem.service;
+    const sessionSlots = normalizeBookingSlots(booking.sessionSlots || (booking.preferredDate && booking.preferredTime ? [{ date: booking.preferredDate, time: booking.preferredTime }] : []));
+    const firstSlot = sessionSlots[0];
+    const reservedSlots = [];
+    try {
+      for (const slot of sessionSlots) {
+        await run('INSERT INTO booking_availability (slot_date, start_time, end_time, status) VALUES (?, ?, ADDTIME(?, "02:20:00"), ?)', [slot.date, slot.time, slot.time, 'booked']);
+        reservedSlots.push(slot);
+      }
+      const bookingResult = await run('INSERT INTO bookings (name, email, phone, service, artist_count, song_count, booking_slots_json, preferred_date, preferred_time, details, payment_reference, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [booking.name, booking.email, booking.phone, serviceName, booking.artistCount, booking.songCount || null, JSON.stringify(sessionSlots), firstSlot?.date || null, firstSlot?.time || null, booking.details, order.reference, 'paid']);
+      for (const slot of reservedSlots) await run('UPDATE booking_availability SET booking_id = ? WHERE slot_date = ? AND start_time = ?', [bookingResult.lastID, slot.date, slot.time]);
+    } catch (error) {
+      await Promise.all(reservedSlots.map(slot => run('DELETE FROM booking_availability WHERE slot_date = ? AND start_time = ? AND booking_id IS NULL', [slot.date, slot.time])));
+      if (error.code === 'ER_DUP_ENTRY') return response.status(409).json({ error: 'This booking could not be completed because one or more selected slots were reserved by another customer.' });
+      throw error;
+    }
+    await markOrderPaid();
+  } catch (error) {
+    console.error('Payment verification failed:', error.code || error.message);
+    response.status(502).json({ error: error.code ? databaseError('Payment verification failed.', error) : `Payment verification failed: ${error.message}` });
+  }
+});
+
+module.exports = router;

@@ -1,5 +1,5 @@
-const API = 'http://localhost:3000';
-const previewMode = true;
+const configuredApiUrl = window.ULTBIGBOY_API_URL || new URLSearchParams(location.search).get('apiBaseUrl');
+const API = configuredApiUrl || `${location.protocol}//${location.hostname}:3000`;
 let adminToken = sessionStorage.getItem('adminToken');
 let dashboardData = { sales: [], requests: [], orders: [], reviews: [], artists: [], withdrawals: [], analytics: {} };
 
@@ -7,8 +7,7 @@ const $ = selector => document.querySelector(selector);
 const message = (id, text, error = false) => { const element = document.getElementById(id); element.textContent = text; element.classList.toggle('error', error); };
 
 async function api(path, options = {}) {
-  if (previewMode) throw new Error('Preview only: API actions are not connected yet.');
-  const response = await fetch(`${API}${path}`, { ...options, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}`, ...(options.headers || {}) } });
+  const response = await fetch(`${API}${path}`, { ...options, credentials: 'include', headers: { 'Content-Type': 'application/json', ...(adminToken ? { Authorization: 'Bearer ' + adminToken } : {}), ...(options.headers || {}) } });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Request failed.');
   return data;
@@ -78,9 +77,39 @@ function renderAnalytics(analytics) {
   $('#analytics-chart').innerHTML = monthlySales.length ? monthlySales.map(month => `<div class="analytics-bar"><div class="analytics-bar-track"><span style="height:${Math.max(4, Number(month.amount) / maximum * 100)}%" title="${formatMoney(month.amount)}"></span></div><strong>${escapeHtml(formatMoney(month.amount))}</strong><small>${escapeHtml(month.month)}</small></div>`).join('') : '<p>No paid orders to chart yet.</p>';
 }
 
+function renderBeatManagement() {
+  const beats = dashboardData.beats || [];
+  const container = $('#beat-management-list');
+  if (!beats.length) {
+    container.innerHTML = '<p>No beats have been added yet.</p>';
+    return;
+  }
+  container.innerHTML = beats.map(beat => `<form class="admin-card admin-beat-editor" data-beat-id="${Number(beat.id)}">
+    <div class="admin-beat-editor-heading"><strong>${escapeHtml(beat.title)}</strong><span>Beat #${Number(beat.id)}</span></div>
+    <div class="admin-grid">
+      <label>Title<input name="title" value="${escapeHtml(beat.title)}" required></label>
+      <label>Status<select name="status"><option value="published" ${beat.catalog_status === 'published' ? 'selected' : ''}>Published</option><option value="unpublished" ${beat.catalog_status === 'unpublished' ? 'selected' : ''}>Unpublished</option><option value="archived" ${beat.catalog_status === 'archived' ? 'selected' : ''}>Archived</option></select></label>
+      <label>BPM<input name="bpm" type="number" min="1" max="400" value="${escapeHtml(beat.bpm)}"></label>
+      <label>Preview seconds<input name="previewDurationSeconds" type="number" min="1" max="3600" value="${escapeHtml(beat.preview_duration_seconds)}"></label>
+      <label>Key<input name="musicalKey" value="${escapeHtml(beat.musical_key)}"></label>
+      <label>Genre<input name="genre" value="${escapeHtml(beat.genre)}"></label>
+      <label>Mood<input name="mood" value="${escapeHtml(beat.mood)}"></label>
+    </div>
+    <div class="admin-grid admin-prices">
+      <label>Basic<input name="basic" type="number" min="0" step="0.01" value="${escapeHtml(beat.basic_price)}"></label>
+      <label>Premium<input name="premium" type="number" min="0" step="0.01" value="${escapeHtml(beat.premium_price)}"></label>
+      <label>Unlimited<input name="unlimited" type="number" min="0" step="0.01" value="${escapeHtml(beat.unlimited_price)}"></label>
+      <label>Exclusive<input name="exclusive" type="number" min="0" step="0.01" value="${escapeHtml(beat.exclusive_price)}"></label>
+    </div>
+    <div class="admin-review-actions"><button type="submit">Save changes</button><button type="button" data-beat-status="${Number(beat.id)}">Apply status</button></div>
+    <p class="admin-message" data-beat-message></p>
+  </form>`).join('');
+}
+
 async function loadDashboard() {
   dashboardData = await api('/api/admin/data');
   renderAnalytics(dashboardData.analytics || {});
+  renderBeatManagement();
   renderList('sales-list', dashboardData.sales.filter(item => item.sale_type === 'beat'), 'sales');
   renderList('requests-list', dashboardData.requests.filter(item => item.request_type === 'beat'), 'requests');
   renderList('bookings-list', dashboardData.bookings || [], 'bookings');
@@ -104,33 +133,13 @@ function filterOrders(type) {
 function showDashboard() {
   $('#admin-login').hidden = true;
   $('#admin-dashboard').hidden = false;
-  if (previewMode) {
-    $('#admin-preview-notice').hidden = false;
-    renderAnalytics(dashboardData.analytics);
-    renderList('sales-list', [], 'sales');
-    renderList('requests-list', [], 'requests');
-    renderList('bookings-list', [], 'bookings');
-    renderList('orders-list', [], 'orders');
-    renderList('overview-orders', [], 'orders');
-    renderList('reviews-list', [], 'reviews');
-    renderList('artists-list', [], 'artists');
-    renderList('withdrawals-list', [], 'withdrawals');
-    return;
-  }
   loadDashboard().catch(error => message('admin-login-message', error.message, true));
 }
-if (previewMode ? sessionStorage.getItem('adminPreviewMode') === 'true' : adminToken) showDashboard();
+if (adminToken) showDashboard();
 
 $('#admin-login-form').addEventListener('submit', async event => {
   event.preventDefault();
   try {
-    if (previewMode) {
-      const username = $('#admin-email').value.trim().toLowerCase();
-      if (username !== 'admin' || $('#admin-password').value !== 'admin') throw new Error('Invalid preview login.');
-      sessionStorage.setItem('adminPreviewMode', 'true');
-      showDashboard();
-      return;
-    }
     const data = await fetch(`${API}/api/admin/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: $('#admin-email').value, password: $('#admin-password').value }) }).then(async response => { const result = await response.json(); if (!response.ok) throw new Error(result.error); return result; });
     adminToken = data.token;
     sessionStorage.setItem('adminToken', adminToken);
@@ -138,7 +147,14 @@ $('#admin-login-form').addEventListener('submit', async event => {
   } catch (error) { message('admin-login-message', error.message, true); }
 });
 
-$('#admin-logout').addEventListener('click', () => { sessionStorage.removeItem('adminToken'); sessionStorage.removeItem('adminPreviewMode'); location.reload(); });
+$('#admin-logout').addEventListener('click', async () => {
+  await api('/api/admin/logout', { method: 'POST' }).catch(error => {
+    console.warn('Admin session could not be invalidated remotely:', error.message);
+  }).finally(() => {
+    sessionStorage.removeItem('adminToken');
+    location.reload();
+  });
+});
 
 document.querySelectorAll('.admin-tab').forEach(button => button.addEventListener('click', () => {
   document.querySelectorAll('.admin-tab').forEach(tab => tab.classList.toggle('active', tab === button));
@@ -178,6 +194,53 @@ $('#beat-form').addEventListener('submit', async event => {
     form.reset(); message('beat-message', 'Beat saved.');
     loadDashboard();
   } catch (error) { message('beat-message', error.message, true); }
+});
+
+$('#beat-management-list').addEventListener('submit', async event => {
+  const form = event.target.closest('.admin-beat-editor');
+  if (!form) return;
+  event.preventDefault();
+  const fields = form.elements;
+  const statusMessage = form.querySelector('[data-beat-message]');
+  const saveButton = form.querySelector('button[type="submit"]');
+  saveButton.disabled = true;
+  try {
+    await api(`/api/admin/beats/${form.dataset.beatId}`, { method: 'PATCH', body: JSON.stringify({
+      title: fields.title.value,
+      bpm: fields.bpm.value,
+      previewDurationSeconds: fields.previewDurationSeconds.value,
+      musicalKey: fields.musicalKey.value,
+      genre: fields.genre.value,
+      mood: fields.mood.value,
+      prices: { basic: fields.basic.value, premium: fields.premium.value, unlimited: fields.unlimited.value, exclusive: fields.exclusive.value }
+    }) });
+    await api(`/api/admin/beats/${form.dataset.beatId}/status`, { method: 'PATCH', body: JSON.stringify({ status: fields.status.value }) });
+    statusMessage.textContent = 'Beat details and status saved.';
+    statusMessage.classList.remove('error');
+    await loadDashboard();
+  } catch (error) {
+    saveButton.disabled = false;
+    statusMessage.textContent = error.message;
+    statusMessage.classList.add('error');
+  }
+});
+
+$('#beat-management-list').addEventListener('click', async event => {
+  const button = event.target.closest('[data-beat-status]');
+  if (!button) return;
+  const form = button.closest('.admin-beat-editor');
+  const statusMessage = form.querySelector('[data-beat-message]');
+  button.disabled = true;
+  try {
+    await api(`/api/admin/beats/${button.dataset.beatStatus}/status`, { method: 'PATCH', body: JSON.stringify({ status: form.elements.status.value }) });
+    statusMessage.textContent = 'Beat status saved.';
+    statusMessage.classList.remove('error');
+    await loadDashboard();
+  } catch (error) {
+    button.disabled = false;
+    statusMessage.textContent = error.message;
+    statusMessage.classList.add('error');
+  }
 });
 
 $('#merchandise-form').addEventListener('submit', async event => {

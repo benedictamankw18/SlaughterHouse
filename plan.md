@@ -1,0 +1,324 @@
+# SlaughterHouse / UltBigBoy Implementation Plan
+
+Source: [SRS](./srs)
+
+## 1. Current Baseline
+
+The project currently has:
+
+- A consolidated static frontend in `frontend/`.
+- An Express backend in `backend/`.
+- MySQL schema initialization in `backend/database.js`.
+- Modular API routers under `backend/routes/`.
+- Modular services for authentication, pricing, bookings, uploads, downloads, and security.
+- Customer and administrator login flows.
+- Database-backed users, beats, merchandise, orders, bookings, reviews, and settings.
+- Paystack payment initialization and verification.
+- Signed download links for paid beat orders.
+
+The existing implementation should be preserved while the SRS features are completed.
+
+## 2. Delivery Principles
+
+- MySQL is the production source of truth; do not hardcode business data.
+- Keep HTTP routes in `backend/routes/`, business logic in `backend/services/`, and schema changes in `backend/database.js` or migrations.
+- Validate every request at the API boundary.
+- Never trust prices, ownership, permissions, payment status, or file names from the browser.
+- Do not expose master audio files through public routes.
+- Keep customer and administrator authorization separate.
+- Prefer incremental migrations and backwards-compatible API changes.
+- Add automated tests before changing payment, download, authentication, or booking behavior.
+- Keep the current frontend functional during each phase.
+
+## 3. Phase 1 — Foundation and Data Model
+
+### Tasks
+
+- [ ] Add explicit database migrations for all SRS entities:
+  - [ ] Users and roles.
+  - [ ] Beats and per-license pricing.
+  - [x] Merchandise variants and categories.
+  - [x] Orders and order items.
+  - [x] Payments and provider references.
+  - [x] Booking availability.
+  - [ ] Reviews.
+-  - [x] Licenses.
+  - [x] Audit logs.
+  - [x] Notifications.
+  - [x] Wishlists.
+  - [x] Password-reset and email-verification token storage.
+- [x] Add foreign keys, indexes, unique constraints, and timestamps to the new tables.
+- [x] Add a migration/version table so schema changes are repeatable.
+- [ ] Replace schema-altering startup logic with ordered migrations where practical.
+- [x] Document local MySQL setup, environment variables, and migration commands.
+
+### Acceptance
+
+- A new database can be initialized from zero.
+- Existing data survives migrations.
+- Database constraints prevent duplicate emails, duplicate order references, invalid relationships, and duplicate booking slots.
+
+## 4. Phase 2 — Authentication and Authorization
+
+### Tasks
+
+- [ ] Keep customer and administrator login routes distinct.
+- [ ] Reject administrator accounts from customer login.
+- [x] Add secure session persistence suitable for multiple backend instances.
+- [x] Add secure, HttpOnly, SameSite session cookies while retaining temporary bearer compatibility.
+- [x] Use a reviewed, memory-hard scrypt implementation for new password hashes while retaining legacy scrypt verification.
+- [x] Add password reset flow with expiring, single-use tokens.
+- [x] Add email verification storage and verification endpoint with expiring, single-use tokens.
+- [x] Add customer profile viewing and editing with field validation.
+- [ ] Add role middleware for visitor, customer, admin, and super-admin permissions.
+- [x] Add rate limiting for login, signup, reset, and sensitive administrator routes.
+- [x] Record login, logout, failed-login, password-reset, and email-verification audit events.
+- [ ] Record role-change audit events when role-management endpoints are added.
+
+### Acceptance
+
+- Customers cannot access administrator endpoints.
+- Administrators cannot authenticate through the customer login route.
+- Passwords and reset tokens are never logged or returned.
+- Expired, reused, and invalid tokens are rejected.
+
+## 5. Phase 3 — Beat Marketplace
+
+### Tasks
+
+- [x] Create database-backed beat listing and detail APIs.
+- [x] Replace the beats catalog page cards with database-loaded results.
+- [x] Add search, genre, mood, BPM, key, sorting, pagination, and empty-state data.
+- [x] Return per-beat license prices with database defaults as fallback.
+- [x] Add preview metadata including duration and preview-file URL.
+- [x] Add persistent audio-player state for preview position and volume.
+- [x] Add wishlist support for authenticated customers.
+- [x] Add exclusive-license locking so an exclusively licensed beat cannot be sold again.
+- [x] Add admin create, publish, unpublish, and archive operations.
+- [x] Add admin beat editing.
+- [x] Add administrator dashboard controls for beat metadata, pricing, and catalog status.
+
+### Acceptance
+
+- Every displayed beat comes from MySQL.
+- Checkout uses server-side prices only.
+- Preview files are accessible, but master files are protected.
+- Exclusive beats cannot be purchased after an exclusive sale.
+
+## 6. Phase 4 — Licensing, Orders, and Downloads
+
+### Tasks
+
+- [ ] Add normalized order and order-item records.
+- [ ] Add license records linked to customer, beat, order, and license type.
+- [ ] Define license rights, formats, usage limits, and distribution rules in data.
+- [ ] Generate a license certificate/PDF after verified payment.
+- [ ] Add customer purchase history, license history, and download history.
+- [ ] Make download authorization verify:
+  - [ ] Signed token.
+  - [ ] Paid order.
+  - [ ] Customer ownership.
+  - [ ] Product and license match.
+  - [ ] Allowed format.
+  - [ ] Token expiry.
+- [ ] Add download audit events and rate limits.
+
+### Acceptance
+
+- Failed or pending payments never unlock downloads.
+- A token cannot be reused for another order, product, license, or format.
+- Customers only receive formats included in their license.
+- License records and certificates are reproducible from database data.
+
+## 7. Phase 5 — Paystack Payments
+
+### Tasks
+
+- [ ] Keep payment initialization and verification server-side.
+- [ ] Add Paystack webhook endpoint with signature verification.
+- [ ] Make verification and webhook processing idempotent.
+- [ ] Store provider reference, request status, response status, amount, currency, and timestamps.
+- [ ] Reject placeholder or missing Paystack credentials before external requests.
+- [ ] Reconcile order amount and currency against the verified transaction.
+- [ ] Handle abandoned, failed, reversed, and refunded payments.
+- [ ] Send payment events to order, license, booking, analytics, and notification workflows.
+
+### Acceptance
+
+- A payment cannot be marked paid from browser input alone.
+- Replaying a webhook does not duplicate orders, licenses, bookings, or sales.
+- Invalid signatures and mismatched amounts are rejected and logged.
+
+## 8. Phase 6 — Studio Booking
+
+### Tasks
+
+- [x] Add database-backed service definitions and booking fees.
+- [ ] Add availability and blocked-slot management for administrators.
+- [x] Add availability API for the frontend calendar.
+- [ ] Validate service, duration, date, time, timezone, artist count, and slot structure.
+- [x] Prevent double booking with a database uniqueness constraint during verified payment.
+- [ ] Add deposit/payment status and booking status transitions.
+- [ ] Add admin confirmation, cancellation, rescheduling, and notes.
+- [ ] Send customer booking confirmations and admin notifications.
+
+### Acceptance
+
+- Two concurrent requests cannot reserve the same slot.
+- Unavailable slots cannot be selected.
+- Paid bookings have a linked order/payment reference.
+- Rescheduling preserves an audit trail.
+
+## 9. Phase 7 — Merchandise Store
+
+### Tasks
+
+- [ ] Move all products to database-backed catalog APIs.
+- [ ] Add categories, variants, stock, SKU, shipping status, and product images.
+- [ ] Reserve or decrement stock transactionally during paid order completion.
+- [ ] Prevent checkout when stock is insufficient.
+- [ ] Add admin inventory and fulfillment management.
+- [ ] Add customer order status and fulfillment history.
+
+### Acceptance
+
+- Product prices and stock are validated server-side.
+- Concurrent orders cannot oversell inventory.
+- Admins can update inventory without editing frontend code.
+
+## 10. Phase 8 — Custom Requests and Reviews
+
+### Tasks
+
+- [ ] Add request status workflow: new, reviewing, quoted, accepted, rejected, completed.
+- [ ] Store reference links, audio samples, preferred license, quote, and admin notes.
+- [ ] Add request ownership for authenticated customers.
+- [ ] Add review moderation workflow including removal.
+- [ ] Restrict public reviews to approved records.
+- [ ] Add spam/rate-limit controls.
+
+### Acceptance
+
+- Uploaded samples remain protected according to their access policy.
+- Customers can view their own requests and statuses.
+- Rejected or removed reviews never appear publicly.
+
+## 11. Phase 9 — Customer Dashboard and Notifications
+
+### Tasks
+
+- [ ] Build customer dashboard sections:
+  - [ ] Profile.
+  - [ ] Purchases.
+  - [ ] Orders.
+  - [ ] Licenses.
+  - [ ] Downloads.
+  - [ ] Bookings.
+  - [ ] Wishlist.
+  - [ ] Notifications.
+- [ ] Add welcome, verification, order, booking, license, and password-reset emails.
+- [ ] Add admin notifications for orders, bookings, reviews, low stock, and failed payments.
+- [ ] Add notification read/unread state and delivery status.
+
+### Acceptance
+
+- Customers only see their own account data.
+- Email failures are logged and do not falsely mark a message delivered.
+- Important payment and booking events have an in-app record.
+
+## 12. Phase 10 — Admin and Super-Admin Operations
+
+### Tasks
+
+- [ ] Complete dashboard overview metrics and charts.
+- [ ] Add beat, license, merchandise, booking, order, customer, review, and settings modules.
+- [ ] Add date-filtered reports and CSV export.
+- [ ] Add super-admin staff management.
+- [ ] Add configurable business settings through the database.
+- [ ] Add audit-log search and administrator action history.
+- [ ] Add confirmation and authorization checks for destructive actions.
+
+### Acceptance
+
+- Admin dashboard uses live database data.
+- Sensitive actions are audited with actor, target, action, and timestamp.
+- Super-admin-only operations cannot be performed by regular admins.
+
+## 13. Phase 11 — Frontend and UX
+
+### Tasks
+
+- [ ] Replace remaining hardcoded catalog and content data with APIs.
+- [ ] Keep dark premium visual language, glass surfaces, typography, and artwork hierarchy.
+- [ ] Add responsive layouts for mobile, tablet, laptop, and desktop.
+- [ ] Add keyboard navigation, visible focus, screen-reader labels, and reduced-motion behavior.
+- [ ] Add loading, empty, retry, and error states to every data-driven section.
+- [ ] Add SEO metadata, Open Graph tags, sitemap, canonical URLs, and structured data.
+- [ ] Optimize images, audio loading, caching, and lazy loading.
+- [ ] Use animation libraries only where they improve usability and performance.
+
+### Acceptance
+
+- No horizontal scrolling at supported viewport sizes.
+- Core pages remain usable with keyboard and reduced motion.
+- Page performance meets the under-three-second target on representative connections.
+- No production page depends on hardcoded localhost URLs.
+
+## 14. Phase 12 — Security, Reliability, and Operations
+
+### Tasks
+
+- [ ] Add centralized request validation and consistent error responses.
+- [ ] Add security headers, strict CORS, CSRF protection where cookies are used, and request limits.
+- [ ] Add structured logging with secret redaction.
+- [ ] Add health, readiness, database, and dependency checks.
+- [ ] Add backups, restore procedures, and migration rollback guidance.
+- [ ] Move production file storage to private object storage.
+- [ ] Add monitoring for payment failures, database errors, upload failures, and suspicious access.
+- [ ] Review all secrets and rotate any credentials exposed during development.
+
+### Acceptance
+
+- Security review finds no unauthenticated admin/data access.
+- Secrets are absent from source control and logs.
+- Production uploads and downloads are private by default.
+- Recovery procedures are documented and tested.
+
+## 15. Testing Strategy
+
+- [ ] Unit-test validators, pricing fallback, booking slot validation, license rights, and token signing.
+- [ ] Integration-test every route with a test database.
+- [ ] Test customer/admin authorization boundaries.
+- [ ] Test duplicate signup, invalid JSON, malformed uploads, invalid payment methods, and invalid IDs.
+- [ ] Test Paystack success, failure, mismatch, duplicate webhook, and refund scenarios.
+- [ ] Test concurrent booking and inventory operations.
+- [ ] Test protected downloads across licenses and expired tokens.
+- [ ] Add browser tests for signup, login, search, cart, checkout, booking, reviews, and admin workflows.
+- [ ] Run accessibility checks and responsive visual checks.
+
+## 16. Recommended Execution Order
+
+1. Database migrations and normalized order/license/payment tables.
+2. Authentication/session hardening and role authorization.
+3. Beat APIs and dynamic frontend catalog.
+4. Payment webhooks, idempotency, orders, and licenses.
+5. Protected downloads and license certificates.
+6. Booking availability and conflict prevention.
+7. Merchandise inventory and fulfillment.
+8. Customer dashboard and notifications.
+9. Admin reports, settings, and super-admin features.
+10. UX, SEO, accessibility, performance, deployment, and final security review.
+
+## 17. Definition of Done
+
+The platform is ready for production when:
+
+- All SRS-in-scope pages and API workflows are implemented.
+- Authentication, authorization, payments, downloads, and bookings pass integration tests.
+- All business data and prices come from MySQL or controlled migrations.
+- The admin dashboard manages real records without hardcoded catalog data.
+- Paystack webhooks are verified and idempotent.
+- Master files are private and downloads verify ownership.
+- Booking conflicts and inventory overselling are prevented transactionally.
+- Accessibility, responsive, performance, and security acceptance checks pass.
+- Deployment, environment, migration, backup, and recovery documentation is complete.

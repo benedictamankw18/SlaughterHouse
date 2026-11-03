@@ -1,0 +1,796 @@
+Below is a production-ready Software Requirements Specification (SRS) for your SlaughterHouse / UltBigBoy platform. It is written so you can give it directly to Claude Code, Cursor, OpenCode, Gemini CLI, or another AI coding agent as the blueprint for implementation.
+
+# Software Requirements Specification (SRS)
+
+Project: SlaughterHouse (UltBigBoy)
+
+Version: 1.0
+
+Prepared for: Benedict Amankwa (N3thunt3r)
+
+Platform Type: Music Production, Beat Marketplace, Studio Booking & Merchandise E-commerce Platform
+
+Target Audience: Music producers, artists, content creators, customers, and administrators.
+
+# Table of Contents
+
+1. Introduction
+2. Project Overview
+3. Objectives
+4. Scope
+5. User Roles
+6. Functional Requirements
+7. Non-Functional Requirements
+8. System Architecture
+9. Database Requirements
+10. API Requirements
+11. User Interface Requirements
+12. Security Requirements
+13. Payment Requirements
+14. Notifications
+15. File Management
+16. Analytics
+17. Future Features
+18. Acceptance Criteria
+
+# 1. Introduction
+
+## Purpose
+
+The purpose of this project is to build a professional digital music business platform that allows artists to:
+
+- Purchase beat licenses.
+- Book studio sessions.
+- Buy merchandise.
+- Download purchased files securely.
+- Interact with the producer's brand.
+
+The system also allows administrators to manage every aspect of the business from a secure dashboard.
+
+# 2. Project Overview
+
+UltBigBoy is a music production brand.
+
+The platform combines:
+
+- Beat marketplace
+- Digital licensing
+- Studio booking
+- Merchandise store
+- Artist portfolio
+- Customer accounts
+- Payment processing
+- Administration dashboard
+
+The platform should compete with modern beat marketplaces while maintaining its own unique identity.
+
+# 3. Objectives
+
+The platform must:
+
+- Sell digital beats securely.
+- Generate licenses automatically.
+- Accept online payments.
+- Prevent unauthorized downloads.
+- Manage studio bookings.
+- Sell physical merchandise.
+- Provide excellent mobile experience.
+- Deliver premium UI/UX with animations.
+- Maintain enterprise-level security.
+
+# 4. Scope
+
+## Included
+
+- Beat store
+- Licensing
+- Customer accounts
+- Admin dashboard
+- Merchandise
+- Bookings
+- Payments
+- Downloads
+- Analytics
+
+## Excluded (Version 1)
+
+- Mobile app
+- Live chat
+- Streaming platform
+- NFT marketplace
+
+# 5. User Roles
+
+## Visitor
+
+Can:
+
+- Browse beats
+- Listen to previews
+- View artists
+- Read blogs
+- View merchandise
+- Book studio
+- Register
+
+Cannot:
+
+- Download purchased files
+- Access dashboard
+
+## Customer
+
+Can:
+
+- Log in
+- Purchase beats
+- Download files
+- View licenses
+- Book sessions
+- Buy merchandise
+- Leave reviews
+- View purchase history
+
+Cannot:
+
+\- Access admin tools
+
+## Admin
+
+Can:
+
+- Manage beats
+- Manage bookings
+- Manage orders
+- Manage customers
+- Upload files
+- Approve reviews
+- View analytics
+- Configure settings
+
+## Super Admin
+
+Has full system access including:
+
+- Staff management
+- Security settings
+- Financial reports
+- System configuration
+
+# 6. Functional Requirements
+
+## 6.1 Homepage
+
+The homepage shall include:
+
+- Animated hero section
+- Featured beats
+- Latest releases
+- Services
+- Merchandise
+- Testimonials
+- Newsletter
+- Footer
+
+## 6.2 Beat Marketplace
+
+Users shall be able to:
+
+- Search beats
+- Filter by genre
+- Filter by mood
+- Filter by BPM
+- Filter by key
+- Sort results
+- Preview beats
+- Purchase licenses
+
+Each beat shall display:
+
+- Artwork
+- BPM
+- Key
+- Genre
+- Duration
+- License pricing
+
+## 6.3 Audio Player
+
+Features:
+
+- Play
+- Pause
+- Seek
+- Volume
+- Waveform
+- Persistent playback
+- Mobile controls
+
+Preview files only.
+
+## 6.4 Beat Licensing
+
+Supported licenses:
+
+- Basic
+- Premium
+- Unlimited
+- Exclusive
+
+Each license shall define:
+
+- Usage rights
+- Download formats
+- Commercial rights
+- Distribution limits
+
+After payment:
+
+- Generate license record
+- Generate PDF certificate
+- Enable downloads
+
+Exclusive licenses shall remove future exclusive purchases automatically.
+
+## 6.5 Customer Accounts
+
+Registration
+
+Required:
+
+- Name
+- Email
+- Phone
+- Password
+
+Features:
+
+- Login
+- Logout
+- Password reset
+- Email verification
+- Profile editing
+
+Dashboard sections:
+
+- Purchases
+- Downloads
+- Licenses
+- Orders
+- Bookings
+- Wishlist
+- Notifications
+
+## 6.6 Shopping Cart
+
+The cart shall:
+
+- Add items
+- Remove items
+- Update quantities
+- Calculate totals
+- Preserve contents
+
+Checkout shall include:
+
+- Customer information
+- Payment
+- Order confirmation
+
+## 6.7 Merchandise Store
+
+Features:
+
+- Categories
+- Product pages
+- Variations
+- Stock
+- Orders
+
+Admins shall manage inventory.
+
+## 6.8 Studio Booking
+
+Customers shall:
+
+- Choose service
+- Choose date
+- Choose time
+- Pay deposit
+- Receive confirmation
+
+The backend shall prevent double bookings.
+
+Admins shall:
+
+- Manage availability
+- Confirm bookings
+- Reschedule sessions
+
+## 6.9 Custom Beat Requests
+
+Customers shall submit:
+
+- Project description
+- Reference links
+- Audio samples
+- Preferred license
+
+Admins shall manage request status.
+
+## 6.10 Reviews
+
+Customers may submit reviews.
+
+Admins shall:
+
+- Approve
+- Reject
+- Remove reviews
+
+Only approved reviews appear publicly.
+
+## 6.11 Artist Portfolio
+
+Includes:
+
+- Producer profile
+- Music placements
+- Albums
+- Singles
+- Videos
+- Streaming links
+
+## 6.12 Admin Dashboard
+
+Dashboard modules:
+
+### Overview
+
+Displays:
+
+- Revenue
+- Orders
+- Customers
+- Bookings
+- Charts
+
+### Beat Management
+
+- Upload beats
+- Upload artwork
+- Upload preview
+- Upload master files
+- Edit pricing
+- Manage licenses
+
+### Merchandise
+
+- Add products
+- Edit products
+- Manage stock
+
+### Bookings
+
+- View calendar
+- Confirm bookings
+- Cancel bookings
+
+### Orders
+
+- View orders
+- Payment status
+- Fulfillment
+
+### Customers
+
+- Customer profiles
+- Purchase history
+
+### Reviews
+
+\- Moderate reviews
+
+### Reports
+
+Generate reports by:
+
+- Date
+- Revenue
+- Sales
+- Bookings
+
+# 7. Non-Functional Requirements
+
+## Performance
+
+- Page load under 3 seconds.
+- Lazy-load images.
+- Optimize audio.
+
+## Reliability
+
+- 99.9% uptime target.
+- Automatic recovery where possible.
+
+## Scalability
+
+Support growth in:
+
+- Customers
+- Beats
+- Orders
+- Bookings
+
+## Accessibility
+
+Must support:
+
+- Keyboard navigation
+- Screen readers
+- Focus indicators
+- Reduced motion
+
+## SEO
+
+- Meta tags
+- Sitemap
+- Open Graph
+- Structured data
+
+# 8. System Architecture
+
+## Frontend
+
+- HTML
+- CSS
+- JavaScript
+
+Future migration may use React.
+
+## Backend
+
+- Node.js
+- Express
+
+## Database
+
+- MySQL (production)
+- SQLite (development)
+
+## Storage
+
+Store:
+
+- Beat files
+- Artwork
+- Merchandise images
+- License PDFs
+
+Master files remain private.
+
+# 9. Database Requirements
+
+## Tables
+
+### Users
+
+- id
+- name
+- email
+- phone
+- password_hash
+- role
+
+### Beats
+
+- id
+- title
+- BPM
+- key
+- genre
+- prices
+- artwork
+- preview_file
+- master_files
+
+### Merchandise
+
+- id
+- title
+- price
+- stock
+
+### Orders
+
+- id
+- reference
+- customer
+- status
+- amount
+
+### Order Items
+
+- order_id
+- product_id
+- license
+
+### Bookings
+
+- id
+- service
+- date
+- time
+- status
+
+### Reviews
+
+- id
+- customer
+- rating
+- status
+
+### Licenses
+
+- id
+- customer
+- beat
+- type
+- purchase_date
+
+### Payments
+
+- reference
+- status
+- provider
+
+### Audit Logs
+
+- user
+- action
+- timestamp
+
+Use:
+
+- Foreign keys
+- Indexes
+- Unique constraints
+
+# 10. API Requirements
+
+## Authentication
+
+- `POST /auth/register`
+- `POST /auth/login`
+- `POST /auth/logout`
+
+## Beats
+
+- `GET /beats`
+- `GET /beats/:id`
+- `POST /admin/beats`
+
+## Merchandise
+
+- `GET /merchandise`
+- `POST /admin/merchandise`
+
+## Payments
+
+- Initialize transaction
+- Verify transaction
+- Webhook endpoint
+
+## Bookings
+
+- Create booking
+- Get availability
+- Manage bookings
+
+## Reviews
+
+- Submit review
+- Approve review
+
+# 11. User Interface Requirements
+
+## Design Language
+
+Style:
+
+- Dark premium theme
+- Glassmorphism
+- Elegant typography
+- Strong spacing
+- High-quality artwork
+
+## Animations
+
+Include:
+
+- GSAP transitions
+- Scroll reveals
+- Hover animations
+- 3D card effects
+- Floating hero elements
+- Parallax
+- Magnetic buttons
+
+Support reduced-motion users.
+
+## Responsive Requirements
+
+Support:
+
+- Mobile
+- Tablet
+- Laptop
+- Desktop
+
+Requirements:
+
+- No horizontal scrolling
+- Touch-friendly controls
+- Responsive typography
+
+# 12. Security Requirements
+
+## Authentication
+
+- Argon2id or secure hashing
+- HttpOnly cookies
+- Secure sessions
+- Session expiration
+
+## Authorization
+
+\- Role-based access control
+
+## API Security
+
+- Rate limiting
+- Input validation
+- CORS
+- CSRF protection where applicable
+
+## File Upload Security
+
+- MIME validation
+- Extension validation
+- Size limits
+- Safe filenames
+
+## Download Security
+
+- Verify ownership
+- Verify payment
+- Signed URLs
+
+## Payment Security
+
+- Server-side pricing
+- Transaction verification
+- Webhook signature verification
+- Idempotency
+
+## Logging
+
+Record:
+
+- Logins
+- Admin actions
+- Payment events
+- Security events
+
+# 13. Payment Requirements
+
+Provider:
+
+\- Paystack
+
+Supported:
+
+- Mobile Money
+- Card
+
+Flow:
+
+1. Initialize payment.
+2. Redirect customer.
+3. Verify payment.
+4. Generate license.
+5. Enable downloads.
+6. Update analytics.
+
+Failed payments shall not create completed orders.
+
+# 14. Notifications
+
+## Customer Emails
+
+- Welcome
+- Verification
+- Order confirmation
+- Booking confirmation
+- License ready
+- Password reset
+
+## Admin Notifications
+
+- New order
+- New booking
+- New review
+- Low stock
+- Failed payment
+
+# 15. File Management
+
+## Uploads
+
+Admins upload:
+
+- Artwork
+- Preview audio
+- MP3
+- WAV
+- Stems
+
+Customers receive only files included in their purchased license.
+
+# 16. Analytics
+
+Dashboard shall display:
+
+- Revenue
+- Monthly sales
+- Top beats
+- Merchandise sales
+- Booking statistics
+- Customer growth
+
+Reports shall be exportable.
+
+# 17. Future Features
+
+Version 2 may include:
+
+- AI beat recommendations
+- Loyalty program
+- Affiliate system
+- Producer collaboration
+- Mobile app
+- UltBigBoy Academy
+- Community features
+
+# 18. Acceptance Criteria
+
+The project is complete only when:
+
+- All pages are responsive.
+- Authentication is secure.
+- Payments are verified.
+- Downloads are protected.
+- Bookings prevent conflicts.
+- Admin dashboard manages real data.
+- Animations are smooth.
+- Accessibility passes testing.
+- No hardcoded localhost URLs remain.
+- No preview-mode authentication remains in production.
+- Documentation and deployment instructions are complete.
+
+## Technology Stack (Recommended)
+
+| Layer          | Technology                                                |
+| -------------- | --------------------------------------------------------- |
+| Frontend       | HTML, CSS, JavaScript                                     |
+| Animation      | GSAP, Three.js (selective), CSS 3D                        |
+| Backend        | Node.js, Express                                          |
+| Database       | MySQL                                                     |
+| Development DB | SQLite                                                    |
+| Payments       | Paystack                                                  |
+| Authentication | Argon2id + Secure Cookies                                 |
+| File Storage   | Cloudinary/S3 (production)                                |
+| Email          | Resend/SendGrid                                           |
+| Deployment     | Vercel (frontend) + Railway/Render (backend) + Neon/MySQL |
+
+This SRS serves as the master implementation blueprint for building SlaughterHouse / UltBigBoy into a production-ready, premium music-commerce platform.

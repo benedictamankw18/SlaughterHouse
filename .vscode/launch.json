@@ -8,7 +8,7 @@
             "type": "chrome",
             "request": "launch",
             "name": "Open index.html",
-            "file": "c:\\Users\\Derry Akyene\\Desktop\\Slaughter House\\index.html"
+            "file": "${workspaceFolder}/frontend/index.html"
         }
     ]
 }

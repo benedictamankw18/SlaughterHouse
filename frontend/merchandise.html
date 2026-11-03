@@ -89,7 +89,7 @@
       event.preventDefault();
       const form = new FormData(customizeForm);
       try {
-        const response = await fetch('http://localhost:3000/api/requests', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestType: 'merchandise', name: form.get('name'), email: form.get('email'), productName: form.get('cap'), details: `${form.get('details')} Color: ${form.get('color')}. Name to print: ${form.get('printName') || 'None'}.` }) });
+        const response = await fetch(`${window.ULTBIGBOY_API_URL}/api/requests`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestType: 'merchandise', name: form.get('name'), email: form.get('email'), productName: form.get('cap'), details: `${form.get('details')} Color: ${form.get('color')}. Name to print: ${form.get('printName') || 'None'}.` }) });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error);
         requestMessage.textContent = 'Request received. We will be in touch soon.';

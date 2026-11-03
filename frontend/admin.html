@@ -50,6 +50,8 @@
           <div class="admin-file-grid"><label>Cover art<input name="cover" type="file" accept="image/*"></label><label>Tagged preview file<input name="preview" type="file" accept="audio/*" required></label><label>Main MP3<input name="mp3" type="file" accept="audio/mpeg" required></label><label>WAV<input name="wav" type="file" accept="audio/wav" required></label><label>Track stems<input name="stems" type="file" required></label></div>
           <button class="auth-primary-button" type="submit">Save beat</button><p id="beat-message" class="admin-message"></p>
         </form>
+        <h2>Manage beats</h2>
+        <div id="beat-management-list" class="admin-list"></div>
         <form id="merchandise-form" class="admin-form admin-card" hidden><h2>Add merchandise</h2><label>Title<input name="title" required></label><label>Description<textarea name="description" rows="4"></textarea></label><label>Price (GHS)<input name="price" type="number" min="0" step="0.01" required></label><label>Photo<input name="photo" type="file" accept="image/*"></label><button class="auth-primary-button" type="submit">Save merchandise</button><p id="merchandise-message" class="admin-message"></p></form>
       </section>
 

@@ -1,7 +1,20 @@
+window.ULTBIGBOY_API_URL = window.ULTBIGBOY_API_URL || new URLSearchParams(location.search).get('apiBaseUrl') || `${location.protocol}//${location.hostname}:3000`;
+const API = window.ULTBIGBOY_API_URL;
 // Toggle menu open/close
 const menuIcon = document.getElementById('menuIcon');
 const dropdownMenu = document.getElementById('dropdownMenu');
 const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+const siteSearch = document.getElementById('site-search');
+
+siteSearch?.closest('.search-form')?.addEventListener('submit', event => {
+  event.preventDefault();
+  const query = siteSearch.value.trim();
+  if (!query) {
+    siteSearch.focus();
+    return;
+  }
+  window.location.href = `beats.html?search=${encodeURIComponent(query)}#beat-listing`;
+});
 
 const loginButton = document.querySelector('.login-button');
 let customerUser = null;
@@ -15,7 +28,7 @@ function refreshReviewAccess() {
   const loginPrompt = document.getElementById('review-login-prompt');
   const submitButton = document.getElementById('review-submit-button');
   if (!loginPrompt || !submitButton) return;
-  const loggedIn = Boolean(customerUser?.name && customerUser?.email);
+  const loggedIn = Boolean(customerUser?.name && customerUser?.email && sessionStorage.getItem('customerToken'));
   loginPrompt.hidden = loggedIn;
   submitButton.disabled = !loggedIn;
 }
@@ -40,6 +53,15 @@ if (loginButton) {
         <button class="auth-link-button" data-auth-switch="signup" type="button">Create an account</button>
         <p class="auth-message" id="login-message" role="status" aria-live="polite"></p>
       </form>
+    </div>
+    <div class="auth-view" data-auth-view="account">
+      <div class="auth-account-summary">
+        <p class="section-kicker">Signed in</p>
+        <h2 id="auth-account-name"></h2>
+        <p id="auth-account-email"></p>
+        <button class="auth-primary-button" id="logout-button" type="button">Log out</button>
+        <p class="auth-message" id="logout-message" role="status" aria-live="polite"></p>
+      </div>
     </div>
     <div class="auth-view" data-auth-view="signup">
       <form class="auth-form" id="signup-form">
@@ -90,10 +112,21 @@ if (loginButton) {
       button.setAttribute('aria-pressed', String(active));
     });
   };
+  const refreshAuthPanel = () => {
+    const loggedIn = Boolean(customerUser?.name && customerUser?.email && sessionStorage.getItem('customerToken'));
+    loginButton.textContent = loggedIn ? 'Account' : 'Login';
+    loginButton.setAttribute('aria-label', loggedIn ? `Open account for ${customerUser.name}` : 'Open login');
+    if (loggedIn) {
+      document.getElementById('auth-account-name').textContent = customerUser.name;
+      document.getElementById('auth-account-email').textContent = customerUser.email;
+    }
+    return loggedIn;
+  };
 
   loginButton.addEventListener('click', () => {
     authPanel.hidden = !authPanel.hidden;
     loginButton.setAttribute('aria-expanded', String(!authPanel.hidden));
+    if (!authPanel.hidden) setAuthView(refreshAuthPanel() ? 'account' : 'login');
   });
   authPanel.querySelector('.auth-close-button').addEventListener('click', () => {
     authPanel.hidden = true;
@@ -102,6 +135,28 @@ if (loginButton) {
   authPanel.querySelectorAll('[data-auth-switch]').forEach(button => button.addEventListener('click', () => setAuthView(button.dataset.authSwitch)));
   authPanel.querySelectorAll('.auth-role-button').forEach(button => button.addEventListener('click', () => setSignupRole(button.dataset.role)));
   authPanel.querySelector('#forgot-password-button').addEventListener('click', () => setAuthMessage('login-message', 'Password reset is not available yet. Please contact the producer.'));
+  authPanel.querySelector('#logout-button').addEventListener('click', async () => {
+    const token = sessionStorage.getItem('customerToken');
+    const logoutMessage = document.getElementById('logout-message');
+    try {
+      if (token) {
+        const response = await fetch(`${API}/api/auth/logout`, { method: 'POST', credentials: 'include', headers: { Authorization: `Bearer ${token}` } });
+        if (!response.ok && response.status !== 401) throw new Error('Could not end the session.');
+      }
+      logoutMessage.textContent = 'You are logged out.';
+      logoutMessage.classList.remove('error');
+    } catch (error) {
+      logoutMessage.textContent = error.message || 'Could not end the session.';
+      logoutMessage.classList.add('error');
+    } finally {
+      customerUser = null;
+      sessionStorage.removeItem('customerUser');
+      sessionStorage.removeItem('customerToken');
+      refreshReviewAccess();
+      refreshAuthPanel();
+      setAuthView('login');
+    }
+  });
 
   authPanel.querySelector('#signup-form').addEventListener('submit', async event => {
     event.preventDefault();
@@ -109,7 +164,7 @@ if (loginButton) {
     if (form.get('password') !== form.get('confirmPassword')) return setAuthMessage('signup-message', 'Passwords do not match.');
     const phone = `${document.getElementById('signup-country-code').value}${String(form.get('phone')).replace(/\D/g, '')}`;
     try {
-      const result = await fetch('http://localhost:3000/api/auth/signup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...Object.fromEntries(form), phone }) });
+      const result = await fetch(`${API}/api/auth/signup`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...Object.fromEntries(form), phone }) });
       const data = await result.json();
       if (!result.ok) throw new Error(data.error);
       setAuthMessage('signup-message', 'Account created. You can now log in.', false);
@@ -124,24 +179,28 @@ if (loginButton) {
     event.preventDefault();
     try {
       const form = Object.fromEntries(new FormData(event.currentTarget));
-      const adminResult = await fetch('http://localhost:3000/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: form.identifier, password: form.password }) });
+      const adminResult = await fetch(`${API}/api/admin/login`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: form.identifier, password: form.password }) });
       if (adminResult.ok) {
         const adminData = await adminResult.json();
         sessionStorage.setItem('adminToken', adminData.token);
         window.location.href = 'admin.html';
         return;
       }
-      const result = await fetch('http://localhost:3000/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
+      const result = await fetch(`${API}/api/auth/login`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
       const data = await result.json();
       if (!result.ok) throw new Error(data.error);
       customerUser = data.user;
       sessionStorage.setItem('customerUser', JSON.stringify(customerUser));
+      sessionStorage.setItem('customerToken', data.token);
+      refreshAuthPanel();
       setAuthMessage('login-message', `Welcome, ${data.user.name}.`, false);
       refreshReviewAccess();
     } catch (error) {
       setAuthMessage('login-message', error.message || 'Could not log in.');
     }
   });
+
+  refreshAuthPanel();
 }
 
 if (menuIcon && dropdownMenu) {
@@ -245,20 +304,48 @@ function applyPreviewFilters() {
     card.hidden = !(matchesBpm && matchesGenre && matchesMood && matchesKey && matchesMode);
   });
 
+  const visibleCards = Array.from(previewCards).some(card => !card.hidden);
+  let emptyState = document.getElementById('preview-empty-state');
+  if (!visibleCards && previewCards.length) {
+    if (!emptyState) {
+      emptyState = document.createElement('p');
+      emptyState.id = 'preview-empty-state';
+      emptyState.className = 'filter-empty-state';
+      emptyState.textContent = 'No featured beats match those filters.';
+      document.getElementById('beat-list')?.appendChild(emptyState);
+    }
+  } else {
+    emptyState?.remove();
+  }
+
   document.getElementById('beat-listing')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 previewBrowseButton?.addEventListener('click', applyPreviewFilters);
 
-// Beat cover previews
-document.querySelectorAll('.beat-card').forEach(card => {
+const previewStateKey = 'ultbigboyPreviewState';
+const previewVolumeKey = 'ultbigboyPreviewVolume';
+
+function setupPreviewCard(card) {
   const coverButton = card.querySelector('.beat-cover');
   const audio = card.querySelector('.beat-audio');
   const playIcon = card.querySelector('.play-icon');
-
-  if (!coverButton || !audio || !playIcon) {
-    return;
-  }
+  if (!coverButton || !audio || !playIcon) return;
+  const beatKey = card.dataset.productId || card.querySelector('h3')?.textContent?.trim().toLowerCase();
+  const savedVolume = Number(localStorage.getItem(previewVolumeKey));
+  if (Number.isFinite(savedVolume) && savedVolume >= 0 && savedVolume <= 1) audio.volume = savedVolume;
+  audio.addEventListener('loadedmetadata', () => {
+    try {
+      const state = JSON.parse(localStorage.getItem(previewStateKey) || 'null');
+      if (state?.beatKey === beatKey && Number.isFinite(state.currentTime) && state.currentTime < audio.duration) audio.currentTime = state.currentTime;
+    } catch {}
+  });
+  audio.addEventListener('timeupdate', () => {
+    try { localStorage.setItem(previewStateKey, JSON.stringify({ beatKey, currentTime: audio.currentTime })); } catch {}
+  });
+  audio.addEventListener('volumechange', () => {
+    try { localStorage.setItem(previewVolumeKey, String(audio.volume)); } catch {}
+  });
 
   coverButton.addEventListener('click', () => {
     document.querySelectorAll('.beat-audio').forEach(otherAudio => {
@@ -269,18 +356,28 @@ document.querySelectorAll('.beat-card').forEach(card => {
     });
 
     if (audio.paused) {
-      audio.play();
-      playIcon.textContent = '\u275A\u275A';
+      audio.play().then(() => {
+        playIcon.textContent = '\u275A\u275A';
+        coverButton.setAttribute('aria-label', `Pause ${card.querySelector('h3')?.textContent || 'beat'} preview`);
+      }).catch(() => {
+        playIcon.textContent = '\u25B6';
+        showCartToast('Preview could not be played.');
+      });
     } else {
       audio.pause();
       playIcon.textContent = '\u25B6';
+      coverButton.setAttribute('aria-label', `Play ${card.querySelector('h3')?.textContent || 'beat'} preview`);
     }
   });
 
   audio.addEventListener('ended', () => {
+    try { localStorage.removeItem(previewStateKey); } catch {}
     playIcon.textContent = '\u25B6';
+    coverButton.setAttribute('aria-label', `Play ${card.querySelector('h3')?.textContent || 'beat'} preview`);
   });
-});
+}
+
+document.querySelectorAll('.beat-card').forEach(setupPreviewCard);
 
 // Beat prices use USD as the base currency.
 const rates = {
@@ -353,6 +450,8 @@ const catalogPageButtons = document.querySelectorAll('.beat-pagination:not(.prod
 const catalogPageSize = 11;
 let currentCatalogPage = 1;
 const requestedGenre = new URLSearchParams(window.location.search).get('genre')?.toLowerCase();
+const requestedSearch = new URLSearchParams(window.location.search).get('search')?.trim().toLowerCase() || '';
+if (siteSearch && requestedSearch) siteSearch.value = requestedSearch;
 if (requestedGenre && catalogFilter) {
   const genreValue = requestedGenre === 'rap' ? 'hiphop' : requestedGenre;
   const genreSelect = document.getElementById('catalog-genre');
@@ -365,6 +464,19 @@ function renderCatalogPage() {
   const resultCount = document.getElementById('beat-result-count');
   if (resultCount) {
     resultCount.textContent = `${matchingCards.length} ${matchingCards.length === 1 ? 'beat' : 'beats'} found`;
+  }
+  const catalogList = document.getElementById('beat-list');
+  let emptyState = document.getElementById('catalog-empty-state');
+  if (!matchingCards.length && catalogList) {
+    if (!emptyState) {
+      emptyState = document.createElement('p');
+      emptyState.id = 'catalog-empty-state';
+      emptyState.className = 'filter-empty-state';
+      emptyState.textContent = 'No beats match those filters. Try broadening your search.';
+      catalogList.appendChild(emptyState);
+    }
+  } else {
+    emptyState?.remove();
   }
   currentCatalogPage = Math.min(currentCatalogPage, pageCount);
   const firstCard = (currentCatalogPage - 1) * catalogPageSize;
@@ -395,6 +507,7 @@ function applyCatalogFilters() {
   const maxBpm = Number(document.getElementById('catalog-bpm-max').value) || Infinity;
   const genre = document.getElementById('catalog-genre').value;
   const mood = document.getElementById('catalog-mood').value;
+  const search = requestedSearch;
 
   catalogCards.forEach(card => {
     const cardBpm = Number(card.dataset.bpm);
@@ -403,7 +516,9 @@ function applyCatalogFilters() {
     const matchesKey = !selectedNote || card.dataset.key === selectedNote;
     const matchesMode = !selectedNote || card.dataset.keyMode === selectedMode;
     const matchesMood = !mood || card.dataset.mood === mood;
-    card.dataset.filterMatch = String(matchesBpm && matchesGenre && matchesKey && matchesMode && matchesMood);
+    const searchableText = card.textContent.toLowerCase();
+    const matchesSearch = !search || searchableText.includes(search);
+    card.dataset.filterMatch = String(matchesBpm && matchesGenre && matchesKey && matchesMode && matchesMood && matchesSearch);
   });
 
   currentCatalogPage = 1;
@@ -541,6 +656,59 @@ function convertPrice(price) {
   return `${currencySymbols[currentCurrency]}${converted} ${currentCurrency}`;
 }
 
+async function loadDatabaseBeatCatalog() {
+  const catalogList = document.getElementById('beat-list');
+  if (!catalogList || !document.querySelector('.catalog-page')) return;
+  const query = new URLSearchParams({
+    page: '1',
+    pageSize: '50',
+    search: new URLSearchParams(window.location.search).get('search') || '',
+    genre: document.getElementById('catalog-genre')?.value || '',
+    mood: document.getElementById('catalog-mood')?.value || '',
+    key: selectedNote ? `${selectedNote} ${selectedMode === 'major' ? 'Major' : 'Minor'}` : '',
+    minBpm: document.getElementById('catalog-bpm-min')?.value || '',
+    maxBpm: document.getElementById('catalog-bpm-max')?.value || ''
+  });
+  [...query.keys()].forEach(key => { if (!query.get(key)) query.delete(key); });
+  try {
+    const result = await fetch(`${API}/api/beats?${query.toString()}`);
+    const data = await result.json();
+    if (!result.ok) throw new Error(data.error || 'Could not load beats.');
+    catalogList.replaceChildren(...data.beats.map(beat => {
+      const card = document.createElement('article');
+      const prices = beat.prices || {};
+      const cover = beat.coverArt ? `${API}/api/uploads/${encodeURIComponent(beat.coverArt)}` : 'Images/Logo 2.png';
+      const preview = beat.previewUrl || (beat.previewFile ? `${API}/api/uploads/${encodeURIComponent(beat.previewFile)}` : '');
+      card.className = 'beat-card';
+      card.dataset.bpm = beat.bpm || '';
+      card.dataset.key = String(beat.musicalKey || '').toLowerCase();
+      card.dataset.genre = String(beat.genre || '').toLowerCase();
+      card.dataset.mood = String(beat.mood || '').toLowerCase();
+      const duration = beat.previewDurationSeconds ? ` • ${Math.floor(beat.previewDurationSeconds / 60)}:${String(beat.previewDurationSeconds % 60).padStart(2, '0')}` : '';
+      card.innerHTML = `<button class="beat-cover" type="button" aria-label="Play ${escapeHTML(beat.title)} preview"><img src="${escapeHTML(cover)}" alt="${escapeHTML(beat.title)} cover art"><span class="play-icon" aria-hidden="true">&#9654;</span></button><div class="beat-details"><h3>${escapeHTML(beat.title)}</h3><p class="beat-meta"><span class="meta-item">${escapeHTML(beat.bpm || '—')} BPM</span><span class="meta-item">${escapeHTML(beat.musicalKey || 'Key not set')}</span><span class="meta-item">${escapeHTML(beat.genre || 'Genre not set')}</span><span class="meta-item">${escapeHTML(beat.mood || 'Mood not set')}</span><span class="meta-item">${duration}</span></p><audio class="beat-audio" src="${escapeHTML(preview)}" preload="none"></audio><label class="license-label">License Type</label><select class="license-select">${Object.entries(prices).map(([license, price]) => `<option value="${license}" data-price="${Number(price)}">${license[0].toUpperCase() + license.slice(1)}</option>`).join('')}</select></div><div class="beat-purchase"><strong class="beat-price"></strong><button class="beat-cart-button" type="button" aria-label="Add ${escapeHTML(beat.title)} to cart"><span aria-hidden="true">&#128722;</span></button></div>`;
+      card.dataset.productId = beat.id;
+      setupPreviewCard(card);
+      return card;
+    }));
+    document.getElementById('beat-result-count').textContent = `${data.beats.length} ${data.beats.length === 1 ? 'beat' : 'beats'} found`;
+    catalogList.querySelectorAll('.license-select').forEach(select => select.addEventListener('change', updateBeatPrices));
+    catalogList.querySelectorAll('.beat-cart-button').forEach(button => button.addEventListener('click', () => {
+      const card = button.closest('.beat-card');
+      const select = card.querySelector('.license-select');
+      const option = select.options[select.selectedIndex];
+      addToCart({ type: 'beat', productId: Number(card.dataset.productId), name: card.querySelector('h3').textContent, license: option.value, price: Number(option.dataset.price), cover: card.querySelector('img')?.src || '', selected: true });
+      showCartToast('Beat added to cart.');
+    }));
+    updateBeatPrices();
+  } catch (error) {
+    catalogList.innerHTML = `<p class="filter-empty-state">${escapeHTML(error.message)}</p>`;
+  }
+}
+
+document.getElementById('apply-beat-filters')?.addEventListener('click', loadDatabaseBeatCatalog);
+document.getElementById('clear-beat-filters')?.addEventListener('click', () => setTimeout(loadDatabaseBeatCatalog, 0));
+loadDatabaseBeatCatalog();
+
 const cartButton = document.getElementById('cart-button');
 const cartDrawer = document.getElementById('cart-drawer');
 const cartCloseButton = document.getElementById('cart-close-button');
@@ -621,7 +789,7 @@ function openCheckoutForm() {
     message.textContent = 'Connecting to secure payment...';
     submitButton.disabled = true;
     try {
-      const response = await fetch('http://localhost:3000/api/payments/initialize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: customerUser?.name || 'Guest Customer', email: paymentEmail, items: currentSelectedItems, paymentMethod }) });
+      const response = await fetch(`${API}/api/payments/initialize`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: customerUser?.name || 'Guest Customer', email: paymentEmail, items: currentSelectedItems, paymentMethod }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not start payment.');
       window.location.href = data.authorizationUrl;
@@ -684,7 +852,7 @@ updateCart();
 
 const merchandiseList = document.getElementById('public-merchandise-list');
 if (merchandiseList) {
-  fetch('http://localhost:3000/api/merchandise').then(async response => {
+  fetch(`${API}/api/merchandise`).then(async response => {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Could not load merchandise.');
     merchandiseList.replaceChildren();
@@ -692,7 +860,7 @@ if (merchandiseList) {
       const card = document.createElement('article');
       card.className = 'storefront-merchandise-item';
       const image = document.createElement('img');
-      image.src = product.photo ? `http://localhost:3000/api/uploads/${encodeURIComponent(product.photo)}` : 'Images/Logo 2.png';
+      image.src = product.photo ? `${API}/api/uploads/${encodeURIComponent(product.photo)}` : 'Images/Logo 2.png';
       image.alt = `${product.title} merchandise`;
       const details = document.createElement('div');
       details.className = 'storefront-merchandise-details';
@@ -733,7 +901,7 @@ function updateBeatRequestLicensePrice() {
 
 if (beatRequestLicense && beatRequestLicensePrice) {
   beatRequestLicense.addEventListener('change', updateBeatRequestLicensePrice);
-  fetch('http://localhost:3000/api/requests/beat-license-prices')
+  fetch(`${API}/api/requests/beat-license-prices`)
     .then(async response => {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not load license prices.');
@@ -767,7 +935,7 @@ beatRequestForm?.addEventListener('submit', async event => {
         reader.readAsDataURL(audioFile);
       });
     }
-    const response = await fetch('http://localhost:3000/api/requests', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...payload, requestType: 'beat' }) });
+    const response = await fetch(`${API}/api/requests`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...payload, requestType: 'beat' }) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error);
     message.textContent = 'Beat request received. We will be in touch soon.';
@@ -804,7 +972,7 @@ if (reviewsSection) {
   }));
   document.getElementById('review-login-button').addEventListener('click', () => loginButton?.click());
   refreshReviewAccess();
-  fetch('http://localhost:3000/api/reviews').then(response => response.json()).then(data => {
+  fetch(`${API}/api/reviews`).then(response => response.json()).then(data => {
     const reviewList = document.getElementById('public-review-list');
     reviewList.replaceChildren();
     if (!data.reviews?.length) {
@@ -836,7 +1004,7 @@ if (reviewsSection) {
     }
     reviewMessage.classList.remove('error');
     try {
-      const response = await fetch('http://localhost:3000/api/reviews', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: customerUser.name, email: customerUser.email, rating: Number(reviewRating.value), review: document.getElementById('public-review-text').value }) });
+      const response = await fetch(`${API}/api/reviews`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionStorage.getItem('customerToken') || ''}` }, body: JSON.stringify({ rating: Number(reviewRating.value), review: document.getElementById('public-review-text').value }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not submit review.');
       reviewMessage.textContent = data.message;
@@ -1125,4 +1293,3 @@ if (heroSection) {
   changeBackground();
   setInterval(changeBackground, 5000);
 }
-
