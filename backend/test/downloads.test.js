@@ -2,10 +2,19 @@ process.env.DOWNLOAD_SIGNING_SECRET = 'test-download-signing-secret';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createDownloadToken, verifyDownloadToken, getDownloadItems } = require('../services/downloads');
+const { DOWNLOADABLE_ORDER_STATUSES, isDownloadableOrderStatus, createDownloadToken, verifyDownloadToken, getDownloadItems } = require('../services/downloads');
 
 const reference = 'UBB-123-abc';
 const productId = 42;
+
+test('partial refunds keep downloads available while full refunds do not', () => {
+  assert.deepEqual([...DOWNLOADABLE_ORDER_STATUSES], ['paid', 'partially_refunded']);
+  assert.equal(isDownloadableOrderStatus('paid'), true);
+  assert.equal(isDownloadableOrderStatus('PARTIALLY_REFUNDED'), true);
+  assert.equal(isDownloadableOrderStatus('refunded'), false);
+  assert.equal(isDownloadableOrderStatus('pending'), false);
+  assert.equal(isDownloadableOrderStatus(undefined), false);
+});
 
 test('a freshly created download token verifies for its own parameters', () => {
   const token = createDownloadToken(reference, productId, 'premium', 'wav');

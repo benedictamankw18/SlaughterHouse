@@ -3,7 +3,7 @@ const path = require('node:path');
 const database = require('../database');
 const config = require('../config');
 const { requireCustomer } = require('../session-store');
-const { verifyDownloadToken } = require('../services/downloads');
+const { verifyDownloadToken, isDownloadableOrderStatus } = require('../services/downloads');
 const { databaseError } = require('../services/error-messages');
 const { rateLimit } = require('../services/rate-limit');
 const { DEFAULT_LICENSE_RIGHTS, parseRights, rightsFor, allowedFormats } = require('../services/license-rights');
@@ -17,8 +17,10 @@ router.get('/orders/:reference/downloads/:productId', rateLimit({ windowMs: 60 *
   const format = String(request.query.format || 'mp3').toLowerCase();
   if (!verifyDownloadToken(request.query.token, request.params.reference, request.params.productId, license, format)) return response.status(403).json({ error: 'This download link is invalid or expired.' });
   try {
-    const order = await queryOne('SELECT * FROM orders WHERE reference = ? AND status = ?', [request.params.reference, 'paid']);
-    if (!order) return response.status(404).json({ error: `No paid order was found for reference ${request.params.reference}.` });
+    const order = await queryOne('SELECT * FROM orders WHERE reference = ?', [request.params.reference]);
+    if (!order) return response.status(404).json({ error: `No order was found for reference ${request.params.reference}.` });
+    if (order.status === 'refunded') return response.status(403).json({ error: 'This order was refunded, so its downloads are no longer available.' });
+    if (!isDownloadableOrderStatus(order.status)) return response.status(404).json({ error: `No paid order was found for reference ${request.params.reference}.` });
     if (request.customer.id === undefined || request.customer.email.toLowerCase() !== String(order.customer_email).toLowerCase()) return response.status(403).json({ error: 'This download belongs to a different customer account.' });
     let items;
     try { items = JSON.parse(order.items_json); } catch { return response.status(500).json({ error: 'Order data is invalid.' }); }

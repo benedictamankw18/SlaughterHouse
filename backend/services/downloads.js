@@ -3,6 +3,15 @@ const path = require('node:path');
 const config = require('../config');
 const { DEFAULT_LICENSE_RIGHTS, rightsFor, allowedFormats } = require('./license-rights');
 
+// A partial refund deliberately keeps the customer's entitlements, so those
+// orders must remain downloadable. Only a full refund (status "refunded")
+// removes access.
+const DOWNLOADABLE_ORDER_STATUSES = Object.freeze(['paid', 'partially_refunded']);
+
+function isDownloadableOrderStatus(status) {
+  return DOWNLOADABLE_ORDER_STATUSES.includes(String(status || '').toLowerCase());
+}
+
 function createDownloadToken(reference, productId, license, format, expiresAt = Date.now() + 15 * 60 * 1000) {
   if (!config.downloadSigningSecret) throw new Error('Download signing is not configured.');
   const payload = `${reference}:${productId}:${license}:${format}:${expiresAt}`;
@@ -35,4 +44,4 @@ function getDownloadItems(order, apiPublicUrl, licenseRights = null) {
   }));
 }
 
-module.exports = { createDownloadToken, verifyDownloadToken, getDownloadItems };
+module.exports = { DOWNLOADABLE_ORDER_STATUSES, isDownloadableOrderStatus, createDownloadToken, verifyDownloadToken, getDownloadItems };
