@@ -58,6 +58,17 @@ test('migration 19 replaces legacy startup column alterations with ordered guard
   assert.ok(ensuredColumns.some(column => column.table === 'customization_requests' && column.column === 'sample_audio_file'));
 });
 
+test('migration 20 moves the curated stream catalog into the database', () => {
+  const migration = migrations.find(candidate => candidate.version === 20);
+  assert.ok(migration, 'migration 20 must exist');
+  const sql = migration.statements.join('\n');
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS stream_releases/);
+  assert.match(sql, /credits_json JSON NOT NULL/);
+  assert.match(sql, /links_json JSON NOT NULL/);
+  assert.match(sql, /status VARCHAR\(20\) NOT NULL DEFAULT 'published'/);
+  assert.equal(migration.statements.filter(statement => statement.startsWith('INSERT IGNORE INTO stream_releases')).length, 15);
+});
+
 test('migration 11 adds an idempotent per-order-line key to sales', () => {
   const migration = migrations.find(candidate => candidate.version === 11);
   assert.ok(migration, 'migration 11 must exist');
@@ -164,16 +175,16 @@ test('applyMigrations resumes from the last recorded version', async () => {
   await applyMigrations(pool);
   const expected = migrations.find(migration => migration.version === 19).statements.map(({ ensureColumn: { table, column, definition } }) =>
     `ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`
-  );
+  ).concat(migrations.find(migration => migration.version === 20).statements);
   assert.deepEqual(pool.statements, expected);
 });
 
-test('applyMigrations skips guarded legacy columns that already exist', async () => {
+test('applyMigrations skips existing legacy columns and applies the next migration', async () => {
   const applied = new Set(migrations.filter(migration => migration.version <= 18).map(migration => migration.version));
   const existingColumns = new Set(migrations.find(migration => migration.version === 19).statements.map(({ ensureColumn }) =>
     `${ensureColumn.table}.${ensureColumn.column}`
   ));
   const pool = fakePool(applied, existingColumns);
   await applyMigrations(pool);
-  assert.equal(pool.statements.length, 0);
+  assert.deepEqual(pool.statements, migrations.find(migration => migration.version === 20).statements);
 });

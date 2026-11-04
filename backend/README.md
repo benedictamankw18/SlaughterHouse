@@ -9,7 +9,7 @@ The backend is organized by responsibility:
 - `session-store.js` - database-backed session creation and authorization middleware
 - `services/roles.js` - visitor, customer, administrator, and super-administrator permissions
 - `routes/auth.js` - customer and administrator authentication
-- `routes/public.js` - health, reviews, merchandise, user count, and public uploads
+- `routes/public.js` - health, beats, stream releases, reviews, merchandise, user count, and public uploads
 - `routes/admin.js` - administrator dashboard, catalog, withdrawal, and review routes
 - `routes/requests.js` - custom beat/merchandise requests and license pricing
 - `routes/bookings.js` - booking fees, availability, and booking payment initialization
@@ -42,6 +42,8 @@ users and roles, beats and per-license prices, orders, bookings, merchandise,
 and requests. Later migrations add the marketplace features and constraints.
 `database.js` only runs pending migrations; it no longer creates tables or
 alters columns outside the migration history. Existing rows are preserved.
+Migration 20 seeds the existing curated stream releases into `stream_releases`;
+the public catalog is served by `GET /api/stream-releases`.
 
 ## Local MySQL setup
 
@@ -100,11 +102,13 @@ the frontend migration.
 Authorization middleware distinguishes visitors, customers (`artist` and
 `non_artist` accounts), administrators, and super-administrators. Existing
 administrator routes permit both admin roles; license-definition changes
-require the `admin:manage_license_rights` permission, currently held only by
-super-administrators. Public health and catalog routes identify anonymous
-requests as visitors. Promote a trusted account to `super_admin` through a
-controlled database administration process; public signup cannot create
-administrator roles.
+require the `admin:manage_license_rights` permission, and staff-role and
+business-price changes require super-admin permissions. Public health and
+catalog routes identify anonymous requests as visitors. Bootstrap the first
+trusted `super_admin` through a controlled database administration process;
+public signup cannot create administrator roles. Super-admin staff changes
+are audited, cannot change the active super-admin's own role or demote the last
+super-admin, and revoke the target user's existing sessions.
 
 Transactional email uses Resend over HTTPS without an additional package. Set
 `EMAIL_API_KEY` and a Resend-verified `EMAIL_FROM` address in `backend/.env`.
@@ -208,6 +212,20 @@ limited to 100 records.
 
 Administrators can export up to 5,000 orders as CSV through the protected
 `GET /api/admin/orders.csv` endpoint.
+
+The admin dashboard includes customer and staff views, database-backed business
+pricing settings, and date-filtered reports. `GET /api/admin/reports` and
+`GET /api/admin/reports.csv` accept optional `from` and `to` dates in
+`YYYY-MM-DD` format (maximum 366 days when both are supplied); CSV exports
+contain up to 5,000 orders. Super-admins manage user roles through
+`GET /api/admin/staff` and `PATCH /api/admin/staff/:id/role`. Business settings
+are read through `GET /api/admin/settings` and edited by super-admins with
+`PUT /api/admin/settings`; only the known booking fees, custom-beat license
+prices, and default beat license prices are writable. Audit history supports
+exact action, text, and date filters through `GET /api/admin/audit-logs`.
+Destructive review removal, beat archival, booking cancellation, slot removal,
+role changes, and business-price edits prompt for confirmation in the admin UI;
+the API independently enforces role permissions and validates each change.
 
 Customers can view payment and fulfillment status in `GET
 /api/customer/orders`. Each order includes its line items and fulfillment

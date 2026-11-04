@@ -73,7 +73,7 @@ The existing implementation should be preserved while the SRS features are compl
 - [x] Add role and permission middleware for visitor, customer, admin, and super-admin access.
 - [x] Add rate limiting for login, signup, reset, and sensitive administrator routes.
 - [x] Record login, logout, failed-login, password-reset, and email-verification audit events.
-- [ ] Record role-change audit events when role-management endpoints are added.
+- [x] Record role-change audit events when role-management endpoints are added.
 
 ### Acceptance
 
@@ -247,13 +247,13 @@ The existing implementation should be preserved while the SRS features are compl
 
 ### Tasks
 
-- [ ] Complete dashboard overview metrics and charts.
-- [ ] Add beat, license, merchandise, booking, order, customer, review, and settings modules.
-- [ ] Add date-filtered reports and CSV export.
-- [ ] Add super-admin staff management.
-- [ ] Add configurable business settings through the database.
-- [ ] Add audit-log search and administrator action history.
-- [ ] Add confirmation and authorization checks for destructive actions.
+- [x] Complete dashboard overview metrics and charts.
+- [x] Add beat, license, merchandise, booking, order, customer, review, and settings modules.
+- [x] Add date-filtered reports and CSV export.
+- [x] Add super-admin staff management.
+- [x] Add configurable business settings through the database.
+- [x] Add audit-log search and administrator action history.
+- [x] Add confirmation and authorization checks for destructive actions.
 
 ### Acceptance
 
@@ -266,11 +266,14 @@ The existing implementation should be preserved while the SRS features are compl
 ### Tasks
 
 - [ ] Replace remaining hardcoded catalog and content data with APIs.
+- [x] Move the existing curated stream-release catalog into the database and serve it from `GET /api/stream-releases`.
 - [ ] Keep dark premium visual language, glass surfaces, typography, and artwork hierarchy.
 - [ ] Add responsive layouts for mobile, tablet, laptop, and desktop.
+- [x] Fix the produced-page horizontal overflow found during narrow viewport checks.
 - [ ] Add keyboard navigation, visible focus, screen-reader labels, and reduced-motion behavior.
 - [ ] Add loading, empty, retry, and error states to every data-driven section.
 - [ ] Add SEO metadata, Open Graph tags, sitemap, canonical URLs, and structured data.
+- [x] Add page descriptions and basic Open Graph title/description metadata to the storefront catalog, stream, booking, and merchandise pages.
 - [ ] Optimize images, audio loading, caching, and lazy loading.
 - [ ] Use animation libraries only where they improve usability and performance.
 

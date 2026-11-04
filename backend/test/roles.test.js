@@ -21,6 +21,10 @@ test('role access keeps super-admin-only permissions separate from admin access'
   assert.equal(hasPermission('admin', 'admin:write'), true);
   assert.equal(hasPermission('admin', 'admin:manage_license_rights'), false);
   assert.equal(hasPermission('super_admin', 'admin:manage_license_rights'), true);
+  assert.equal(hasPermission('admin', 'admin:manage_roles'), false);
+  assert.equal(hasPermission('super_admin', 'admin:manage_roles'), true);
+  assert.equal(hasPermission('admin', 'admin:manage_settings'), false);
+  assert.equal(hasPermission('super_admin', 'admin:manage_settings'), true);
   assert.equal(hasPermission('customer', 'customer:self'), true);
   assert.equal(hasPermission('visitor', 'customer:self'), false);
 });

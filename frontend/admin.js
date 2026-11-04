@@ -54,6 +54,7 @@ function renderList(elementId, items, type) {
       return `<article class="admin-list-item"><strong>${escapeHtml(item.reference)} · ${escapeHtml(item.status)}</strong><p>${escapeHtml(item.customer_name)} · ${escapeHtml(item.customer_email)}<br>${escapeHtml(itemsText)}<br>${formatMoney(item.amount)} · ${escapeHtml(item.created_at || '')}</p></article>`;
     }
     if (type === 'reviews') return `<article class="admin-list-item"><strong>${escapeHtml(item.customer_name)} · ${'★'.repeat(Number(item.rating) || 0)}${'☆'.repeat(Math.max(0, 5 - Number(item.rating || 0)))}</strong><p>${escapeHtml(item.customer_email)} · ${escapeHtml(item.status)} · ${escapeHtml(item.created_at || '')}</p><blockquote>${escapeHtml(item.review_text)}</blockquote><div class="admin-review-actions">${item.status === 'pending' ? '<button type="button" data-review-status="approved">Approve</button><button type="button" data-review-status="rejected">Reject</button>' : ''}${item.status !== 'removed' ? '<button type="button" data-review-status="removed">Remove</button>' : ''}</div><p class="admin-message" data-review-message></p><span data-review-id="${Number(item.id)}" hidden></span></article>`;
+    if (type === 'customers') return `<article class="admin-list-item"><strong>${escapeHtml(item.name || item.artist_name || 'Customer')}</strong><p>${escapeHtml(item.email)} · ${escapeHtml(item.role)} · joined ${escapeHtml(item.created_at || '')} · email ${item.email_verified_at ? 'verified' : 'unverified'}</p></article>`;
     if (type === 'artists') {
       const purchases = item.purchases.length ? item.purchases.map(purchase => `<li>${escapeHtml(purchase.beat_title)} · ${escapeHtml(purchase.license)} license · ${formatMoney(Number(purchase.amount) * 10)} · ${escapeHtml(purchase.purchased_at || '')}</li>`).join('') : '<li>No beat purchases yet.</li>';
       return `<article class="admin-list-item"><strong>${escapeHtml(item.artist_name || item.name)}</strong><p>${escapeHtml(item.email)} · ${item.purchases.length} license purchase(s)</p><ul>${purchases}</ul></article>`;
@@ -76,6 +77,30 @@ function renderAnalytics(analytics) {
   const monthlySales = analytics.monthlySales || [];
   const maximum = Math.max(1, ...monthlySales.map(month => Number(month.amount) || 0));
   $('#analytics-chart').innerHTML = monthlySales.length ? monthlySales.map(month => `<div class="analytics-bar"><div class="analytics-bar-track"><span style="height:${Math.max(4, Number(month.amount) / maximum * 100)}%" title="${formatMoney(month.amount)}"></span></div><strong>${escapeHtml(formatMoney(month.amount))}</strong><small>${escapeHtml(month.month)}</small></div>`).join('') : '<p>No paid orders to chart yet.</p>';
+}
+
+function dateInputValue(date) {
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10);
+}
+
+function renderReport(report) {
+  const months = report.revenueByMonth || [];
+  const maximum = Math.max(1, ...months.map(month => Number(month.revenue) || 0));
+  $('#analytics-chart').innerHTML = months.length ? months.map(month => `<div class="analytics-bar"><div class="analytics-bar-track"><span style="height:${Math.max(4, Number(month.revenue) / maximum * 100)}%" title="${formatMoney(month.revenue)}"></span></div><strong>${escapeHtml(formatMoney(month.revenue))}</strong><small>${escapeHtml(month.month)}</small></div>`).join('') : '<p>No paid orders in this date range.</p>';
+  const summary = report.summary || {};
+  $('#report-summary').innerHTML = `<article class="admin-metric"><span>Orders in range</span><strong>${Number(summary.orderCount || 0)}</strong></article><article class="admin-metric"><span>Paid / partially refunded</span><strong>${Number(summary.paidOrderCount || 0)}</strong></article><article class="admin-metric"><span>Net order amount</span><strong>${escapeHtml(formatMoney(summary.netRevenue))}</strong></article>`;
+  $('#booking-report-summary').textContent = `Bookings in range: ${(report.bookingCounts || []).map(item => `${item.status}: ${item.count}`).join(' · ') || 'none'}`;
+}
+
+function renderBusinessSettings(settings, canEdit) {
+  const form = $('#business-settings-form');
+  form.innerHTML = `${settings.map(setting => `<label>${escapeHtml(setting.label)}<input name="${escapeHtml(setting.key)}" type="number" min="0" max="100000000" step="0.01" value="${escapeHtml(setting.value)}" ${canEdit ? 'required' : 'disabled'}></label>`).join('')}${canEdit ? '<button class="auth-primary-button" type="submit">Save business settings</button>' : '<p>Only a super-admin can edit business settings.</p>'}`;
+}
+
+function renderStaff(staff) {
+  const container = $('#staff-list');
+  container.innerHTML = staff.length ? staff.map(user => `<form class="admin-list-item admin-staff-form" data-staff-id="${Number(user.id)}"><strong>${escapeHtml(user.name)} · ${escapeHtml(user.email)}</strong><p>Current role: ${escapeHtml(user.role)} · added ${escapeHtml(user.created_at || '')}</p><label>New role<select name="role"><option value="customer" ${user.role === 'customer' ? 'selected' : ''}>Customer</option><option value="artist" ${user.role === 'artist' ? 'selected' : ''}>Artist (legacy customer role)</option><option value="non_artist" ${user.role === 'non_artist' ? 'selected' : ''}>Non-artist customer (legacy role)</option><option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Admin</option><option value="super_admin" ${user.role === 'super_admin' ? 'selected' : ''}>Super-admin</option></select></label><button type="submit">Update role</button><p class="admin-message" data-staff-message></p></form>`).join('') : '<p>No user accounts found.</p>';
 }
 
 function renderBeatManagement() {
@@ -193,10 +218,65 @@ async function loadAdminAlerts() {
   }
 }
 
+async function loadReports() {
+  const form = $('#report-filter');
+  const query = new URLSearchParams();
+  if (form.elements.from.value) query.set('from', form.elements.from.value);
+  if (form.elements.to.value) query.set('to', form.elements.to.value);
+  try {
+    const report = await api(`/api/admin/reports?${query}`);
+    renderReport(report);
+    $('#report-message').textContent = '';
+  } catch (error) {
+    message('report-message', error.message || 'Could not load reports.', true);
+  }
+}
+
+async function loadAuditLogs() {
+  const form = $('#audit-filter');
+  const query = new URLSearchParams();
+  for (const field of ['search', 'action', 'from', 'to']) {
+    const value = form.elements[field].value.trim();
+    if (value) query.set(field, value);
+  }
+  try {
+    const data = await api(`/api/admin/audit-logs?${query}&limit=100`);
+    renderList('audit-list', data.logs || [], 'audit');
+    $('#audit-message').textContent = '';
+  } catch (error) {
+    message('audit-message', error.message || 'Could not load audit logs.', true);
+  }
+}
+
+async function loadBusinessSettings() {
+  try {
+    const data = await api('/api/admin/settings');
+    renderBusinessSettings(data.settings || [], Boolean(data.canEdit));
+    $('#business-settings-message').textContent = '';
+  } catch (error) {
+    message('business-settings-message', error.message || 'Could not load business settings.', true);
+  }
+}
+
+async function loadStaff() {
+  if (dashboardData.role !== 'super_admin') return;
+  try {
+    const data = await api('/api/admin/staff');
+    renderStaff(data.staff || []);
+    $('#staff-message').textContent = '';
+  } catch (error) {
+    message('staff-message', error.message || 'Could not load staff accounts.', true);
+  }
+}
+
 async function loadDashboard() {
   dashboardData = await api('/api/admin/data');
   document.querySelector('[data-section="license-rights"]').hidden = false;
   document.querySelector('[data-admin-section="license-rights"]').hidden = false;
+  document.querySelector('[data-section="settings"]').hidden = false;
+  document.querySelector('[data-admin-section="settings"]').hidden = false;
+  document.querySelector('[data-section="staff"]').hidden = dashboardData.role !== 'super_admin';
+  document.querySelector('[data-admin-section="staff"]').hidden = dashboardData.role !== 'super_admin';
   renderAnalytics(dashboardData.analytics || {});
   renderBeatManagement();
   renderMerchandiseManagement();
@@ -206,11 +286,22 @@ async function loadDashboard() {
   renderList('orders-list', dashboardData.orders || [], 'orders');
   renderList('overview-orders', (dashboardData.orders || []).slice(0, 5), 'orders');
   renderList('reviews-list', dashboardData.reviews || [], 'reviews');
+  renderList('customers-list', dashboardData.customers || [], 'customers');
   renderList('artists-list', dashboardData.artists || [], 'artists');
   renderList('withdrawals-list', dashboardData.withdrawals || [], 'withdrawals');
   loadAdminAlerts();
   loadLicenseRights();
-  api('/api/admin/audit-logs?limit=50').then(data => renderList('audit-list', data.logs || [], 'audit')).catch(error => message('admin-login-message', error.message, true));
+  loadBusinessSettings();
+  loadStaff();
+  if (!$('#report-filter').elements.from.value || !$('#report-filter').elements.to.value) {
+    const today = new Date();
+    $('#report-filter').elements.to.value = dateInputValue(today);
+    const monthAgo = new Date(today);
+    monthAgo.setDate(monthAgo.getDate() - 29);
+    $('#report-filter').elements.from.value = dateInputValue(monthAgo);
+  }
+  loadReports();
+  loadAuditLogs();
   document.querySelectorAll('[data-sale-type]').forEach(button => {
     const type = button.dataset.saleType;
     if (button.classList.contains('active')) renderList('sales-list', dashboardData.sales.filter(item => item.sale_type === type), 'sales');
@@ -253,6 +344,82 @@ document.querySelectorAll('.admin-tab').forEach(button => button.addEventListene
   document.querySelectorAll('.admin-tab').forEach(tab => tab.classList.toggle('active', tab === button));
   document.querySelectorAll('.admin-section').forEach(section => section.classList.toggle('active', section.dataset.adminSection === button.dataset.section));
 }));
+
+$('#report-filter').addEventListener('submit', event => {
+  event.preventDefault();
+  loadReports();
+});
+
+$('#export-report').addEventListener('click', async event => {
+  const button = event.currentTarget;
+  const form = $('#report-filter');
+  const query = new URLSearchParams();
+  if (form.elements.from.value) query.set('from', form.elements.from.value);
+  if (form.elements.to.value) query.set('to', form.elements.to.value);
+  button.disabled = true;
+  try {
+    const response = await fetch(`${API}/api/admin/reports.csv?${query}`, {
+      credentials: 'include',
+      headers: adminToken ? { Authorization: `Bearer ${adminToken}` } : {}
+    });
+    if (!response.ok) {
+      const result = await response.json();
+      throw new Error(result.error || 'Could not export the filtered report.');
+    }
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(await response.blob());
+    link.download = 'ultbigboy-report.csv';
+    link.click();
+    URL.revokeObjectURL(link.href);
+  } catch (error) {
+    message('report-message', error.message || 'Could not export the filtered report.', true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('#audit-filter').addEventListener('submit', event => {
+  event.preventDefault();
+  loadAuditLogs();
+});
+
+$('#business-settings-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const settings = Object.fromEntries([...form.elements].filter(element => element.name && element.type === 'number').map(element => [element.name, element.value]));
+  if (!window.confirm('Save these business price changes? They affect future checkouts and requests.')) return;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await api('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ settings }) });
+    message('business-settings-message', 'Business settings saved.');
+    await loadBusinessSettings();
+  } catch (error) {
+    message('business-settings-message', error.message || 'Could not save business settings.', true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('#staff-list').addEventListener('submit', async event => {
+  const form = event.target.closest('[data-staff-id]');
+  if (!form) return;
+  event.preventDefault();
+  const role = form.elements.role.value;
+  if (!window.confirm(`Change this user's role to ${role}? Their active sessions will be revoked.`)) return;
+  const button = form.querySelector('button[type="submit"]');
+  const status = form.querySelector('[data-staff-message]');
+  button.disabled = true;
+  try {
+    await api(`/api/admin/staff/${form.dataset.staffId}/role`, { method: 'PATCH', body: JSON.stringify({ role }) });
+    await loadStaff();
+    message('staff-message', 'Staff role updated and active sessions revoked.');
+  } catch (error) {
+    status.textContent = error.message || 'Could not update this role.';
+    status.classList.add('error');
+    button.disabled = false;
+  }
+});
 
 $('#admin-notifications-list').addEventListener('click', async event => {
   const button = event.target.closest('[data-admin-notification-state]');
@@ -299,7 +466,6 @@ document.querySelectorAll('[data-content-type]').forEach(button => button.addEve
   $('#merchandise-management').hidden = button.dataset.contentType !== 'merchandise';
 }));
 
-document.querySelectorAll('[data-sale-type]').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('[data-sale-type]').forEach(item => item.classList.toggle('active', item === button)); renderList('sales-list', dashboardData.sales.filter(item => item.sale_type === button.dataset.saleType), 'sales'); }));
 document.querySelectorAll('[data-request-type]').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('[data-request-type]').forEach(item => item.classList.toggle('active', item === button)); renderList('requests-list', dashboardData.requests.filter(item => item.request_type === button.dataset.requestType), 'requests'); }));
 document.querySelectorAll('[data-sale-type]').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('[data-sale-type]').forEach(item => item.classList.toggle('active', item === button)); renderList('sales-list', dashboardData.sales.filter(item => item.sale_type === button.dataset.saleType), 'sales'); }));
 document.querySelectorAll('[data-order-type]').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('[data-order-type]').forEach(item => item.classList.toggle('active', item === button)); renderList('orders-list', filterOrders(button.dataset.orderType), 'orders'); }));
@@ -328,6 +494,7 @@ $('#export-orders').addEventListener('click', async event => {
 $('#reviews-list').addEventListener('click', async event => {
   const button = event.target.closest('[data-review-status]');
   if (!button) return;
+  if (button.dataset.reviewStatus === 'removed' && !window.confirm('Remove this review from public listings?')) return;
   const card = button.closest('.admin-list-item');
   const reviewId = card.querySelector('[data-review-id]').dataset.reviewId;
   button.disabled = true;
@@ -348,6 +515,7 @@ $('#bookings-list').addEventListener('click', async event => {
   const select = card.querySelector(`[data-booking-status="${button.dataset.saveBookingStatus}"]`);
   const notes = card.querySelector(`[data-booking-notes="${button.dataset.saveBookingStatus}"]`);
   const statusMessage = card.querySelector('[data-booking-message]');
+  if (select.value === 'cancelled' && !window.confirm('Cancel this booking? This sends a cancellation notice to the customer.')) return;
   button.disabled = true;
   try {
     await api(`/api/admin/bookings/${button.dataset.saveBookingStatus}/status`, { method: 'PATCH', body: JSON.stringify({ status: select.value, notes: notes.value }) });
@@ -358,6 +526,41 @@ $('#bookings-list').addEventListener('click', async event => {
     button.disabled = false;
     statusMessage.textContent = error.message;
     statusMessage.classList.add('error');
+  }
+});
+
+$('#booking-availability-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const result = await api('/api/admin/bookings/availability', {
+      method: 'POST',
+      body: JSON.stringify({ date: form.elements.date.value, time: form.elements.time.value, status: form.elements.status.value })
+    });
+    message('booking-availability-message', `Slot ${result.date} ${result.time} is ${result.status}.`);
+  } catch (error) {
+    message('booking-availability-message', error.message || 'Could not update booking availability.', true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('#remove-booking-slot').addEventListener('click', async () => {
+  const form = $('#booking-availability-form');
+  if (!form.reportValidity()) return;
+  if (!window.confirm(`Remove the availability override for ${form.elements.date.value} at ${form.elements.time.value}?`)) return;
+  const button = $('#remove-booking-slot');
+  button.disabled = true;
+  try {
+    const query = new URLSearchParams({ date: form.elements.date.value, time: form.elements.time.value });
+    await api(`/api/admin/bookings/availability?${query}`, { method: 'DELETE' });
+    message('booking-availability-message', 'Booking slot override removed.');
+  } catch (error) {
+    message('booking-availability-message', error.message || 'Could not remove booking availability.', true);
+  } finally {
+    button.disabled = false;
   }
 });
 
@@ -379,6 +582,7 @@ $('#beat-management-list').addEventListener('submit', async event => {
   const fields = form.elements;
   const statusMessage = form.querySelector('[data-beat-message]');
   const saveButton = form.querySelector('button[type="submit"]');
+  if (fields.status.value === 'archived' && !window.confirm('Archive this beat from the catalog?')) return;
   saveButton.disabled = true;
   try {
     await api(`/api/admin/beats/${form.dataset.beatId}`, { method: 'PATCH', body: JSON.stringify({
@@ -406,6 +610,7 @@ $('#beat-management-list').addEventListener('click', async event => {
   if (!button) return;
   const form = button.closest('.admin-beat-editor');
   const statusMessage = form.querySelector('[data-beat-message]');
+  if (form.elements.status.value === 'archived' && !window.confirm('Archive this beat from the catalog?')) return;
   button.disabled = true;
   try {
     await api(`/api/admin/beats/${button.dataset.beatStatus}/status`, { method: 'PATCH', body: JSON.stringify({ status: form.elements.status.value }) });
@@ -481,5 +686,6 @@ $('#merchandise-management-list').addEventListener('submit', async event => {
 $('#withdrawal-form').addEventListener('submit', async event => {
   event.preventDefault();
   const form = event.currentTarget;
+  if (!window.confirm(`Record a withdrawal of ${formatMoney(form.elements.amount.value)}?`)) return;
   try { await api('/api/admin/withdraw', { method: 'POST', body: JSON.stringify({ amount: form.elements.amount.value, password: form.elements.password.value }) }); form.reset(); message('withdrawal-message', 'Withdrawal recorded.'); } catch (error) { message('withdrawal-message', error.message, true); }
 });

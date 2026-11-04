@@ -1,9 +1,26 @@
-window.ULTBIGBOY_API_URL = window.ULTBIGBOY_API_URL || new URLSearchParams(location.search).get('apiBaseUrl') || `${location.protocol}//${location.hostname}:3000`;
+const configuredApiUrl = new URLSearchParams(location.search).get('apiBaseUrl');
+const defaultApiUrl = location.protocol === 'file:'
+  ? 'http://localhost:3000'
+  : ['localhost', '127.0.0.1'].includes(location.hostname)
+    ? `${location.protocol}//${location.hostname}:3000`
+    : location.origin;
+window.ULTBIGBOY_API_URL = window.ULTBIGBOY_API_URL || configuredApiUrl || defaultApiUrl;
 const API = window.ULTBIGBOY_API_URL;
 // Toggle menu open/close
 const menuIcon = document.getElementById('menuIcon');
 const dropdownMenu = document.getElementById('dropdownMenu');
 const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+function showRetryState(container, message, retry) {
+  const error = document.createElement('p');
+  error.setAttribute('role', 'alert');
+  error.textContent = message;
+  const button = document.createElement('button');
+  button.className = 'catalog-retry-button';
+  button.type = 'button';
+  button.textContent = 'Try again';
+  button.addEventListener('click', retry, { once: true });
+  container.replaceChildren(error, button);
+}
 const siteSearch = document.getElementById('site-search');
 
 siteSearch?.closest('.search-form')?.addEventListener('submit', event => {
@@ -741,34 +758,115 @@ function clearCatalogFilters() {
   updateKeyValue();
 }
 
-const producedSongCards = Array.from(document.querySelectorAll('.produced-song-card'));
+const producedList = document.querySelector('.produced-song-list');
 const producedPagination = document.querySelector('.produced-pagination');
 const producedPageSize = 10;
-if (producedPagination && producedSongCards.length) {
-  let currentProducedPage = 1;
-  const producedPageCount = Math.ceil(producedSongCards.length / producedPageSize);
-  const renderProducedPage = page => {
-    currentProducedPage = Math.min(Math.max(1, page), producedPageCount);
-    const firstSong = (currentProducedPage - 1) * producedPageSize;
-    producedSongCards.forEach((card, index) => {
-      card.hidden = index < firstSong || index >= firstSong + producedPageSize;
+function renderProducedPage(releases, page) {
+  const pageCount = Math.ceil(releases.length / producedPageSize);
+  const currentPage = Math.min(Math.max(1, page), pageCount);
+  const firstRelease = (currentPage - 1) * producedPageSize;
+  const cards = releases.slice(firstRelease, firstRelease + producedPageSize).map(release => {
+    const article = document.createElement('article');
+    article.className = 'beat-card produced-song-card';
+    const cover = document.createElement('div');
+    cover.className = 'beat-cover song-cover';
+    const image = document.createElement('img');
+    const coverUrl = new URL(release.coverUrl, window.location.href);
+    if (coverUrl.protocol !== 'https:' && coverUrl.origin !== window.location.origin) {
+      throw new Error('A stream release has an invalid cover image.');
+    }
+    image.src = coverUrl.href;
+    image.alt = `${release.title} cover artwork`;
+    image.loading = 'lazy';
+    image.decoding = 'async';
+    const coverLabel = document.createElement('span');
+    coverLabel.className = 'song-cover-label';
+    coverLabel.textContent = release.title;
+    cover.append(image, coverLabel);
+
+    const details = document.createElement('div');
+    details.className = 'beat-details';
+    const copy = document.createElement('div');
+    copy.className = 'song-copy';
+    const title = document.createElement('h3');
+    title.textContent = release.title;
+    const metadata = document.createElement('p');
+    metadata.className = 'beat-meta';
+    [ `Artist: ${release.artist}`, ...(release.credits || []) ].forEach(value => {
+      const item = document.createElement('span');
+      item.textContent = value;
+      metadata.append(item);
     });
-    const pageButtons = Array.from({ length: producedPageCount }, (_, index) => {
+    copy.append(title, metadata);
+    const listenLinks = document.createElement('div');
+    listenLinks.className = 'song-listen-links';
+    (release.links || []).forEach(link => {
+      const url = new URL(link.url);
+      if (url.protocol !== 'https:') throw new Error('A stream release has an invalid listening link.');
+      const anchor = document.createElement('a');
+      anchor.className = `song-listen-button${link.platform === 'Audiomack' ? ' audiomack-listen-button' : ''}`;
+      anchor.href = url.href;
+      anchor.target = '_blank';
+      anchor.rel = 'noopener noreferrer';
+      anchor.setAttribute('aria-label', link.label);
+      anchor.title = `Listen on ${link.platform}`;
+      if (link.platform === 'Spotify') {
+        const platformIcon = document.createElement('img');
+        platformIcon.src = 'Images/spotify.svg';
+        platformIcon.alt = '';
+        platformIcon.setAttribute('aria-hidden', 'true');
+        anchor.append(platformIcon);
+      } else {
+        const platformIcon = document.createElement('span');
+        platformIcon.setAttribute('aria-hidden', 'true');
+        platformIcon.textContent = '♫';
+        anchor.append(platformIcon);
+      }
+      const platformName = document.createElement('span');
+      platformName.textContent = link.platform;
+      anchor.append(platformName);
+      listenLinks.append(anchor);
+    });
+    details.append(copy, listenLinks);
+    article.append(cover, details);
+    return article;
+  });
+  producedList.replaceChildren(...cards);
+  const pageButtons = Array.from({ length: pageCount }, (_, index) => {
       const button = document.createElement('button');
       const pageNumber = index + 1;
-      const isActive = pageNumber === currentProducedPage;
+      const isActive = pageNumber === currentPage;
       button.className = `beat-page-button${isActive ? ' active' : ''}`;
       button.type = 'button';
       button.textContent = String(pageNumber);
       button.setAttribute('aria-label', `Production songs page ${pageNumber}`);
-      button.setAttribute('aria-current', isActive ? 'page' : 'false');
-      button.addEventListener('click', () => renderProducedPage(pageNumber));
+      if (isActive) button.setAttribute('aria-current', 'page');
+      button.addEventListener('click', () => renderProducedPage(releases, pageNumber));
       return button;
     });
-    producedPagination.replaceChildren(...pageButtons);
-  };
-  renderProducedPage(1);
+  producedPagination.replaceChildren(...pageButtons);
 }
+
+async function loadProducedReleases() {
+  if (!producedList) return;
+  producedList.setAttribute('aria-busy', 'true');
+  try {
+    const response = await fetch(`${API}/api/stream-releases`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not load stream releases.');
+    if (!data.releases?.length) {
+      producedList.innerHTML = '<p class="filter-empty-state">No stream releases are published yet.</p>';
+      producedPagination.replaceChildren();
+      return;
+    }
+    renderProducedPage(data.releases, 1);
+  } catch (error) {
+    showRetryState(producedList, error.message || 'Could not load stream releases.', loadProducedReleases);
+  } finally {
+    producedList.setAttribute('aria-busy', 'false');
+  }
+}
+loadProducedReleases();
 
 function addToCart(item) {
   cart.push(item);
@@ -894,6 +992,8 @@ async function loadDatabaseBeatCatalog() {
       card.dataset.mood = String(beat.mood || '').toLowerCase();
       const duration = beat.previewDurationSeconds ? ` • ${Math.floor(beat.previewDurationSeconds / 60)}:${String(beat.previewDurationSeconds % 60).padStart(2, '0')}` : '';
       card.innerHTML = `<button class="beat-cover" type="button" aria-label="Play ${escapeHTML(beat.title)} preview"><img src="${escapeHTML(cover)}" alt="${escapeHTML(beat.title)} cover art"><span class="play-icon" aria-hidden="true">&#9654;</span></button><div class="beat-details"><h3>${escapeHTML(beat.title)}</h3><p class="beat-meta"><span class="meta-item">${escapeHTML(beat.bpm || '—')} BPM</span><span class="meta-item">${escapeHTML(beat.musicalKey || 'Key not set')}</span><span class="meta-item">${escapeHTML(beat.genre || 'Genre not set')}</span><span class="meta-item">${escapeHTML(beat.mood || 'Mood not set')}</span><span class="meta-item">${duration}</span></p><audio class="beat-audio" src="${escapeHTML(preview)}" preload="none"></audio><label class="license-label">License Type</label><select class="license-select">${Object.entries(prices).map(([license, price]) => `<option value="${license}" data-price="${Number(price)}">${license[0].toUpperCase() + license.slice(1)}</option>`).join('')}</select></div><div class="beat-purchase"><strong class="beat-price"></strong><button class="beat-cart-button" type="button" aria-label="Add ${escapeHTML(beat.title)} to cart"><span aria-hidden="true">&#128722;</span></button></div>`;
+      card.querySelector('.beat-cover img').loading = 'lazy';
+      card.querySelector('.beat-cover img').decoding = 'async';
       card.dataset.productId = beat.id;
       setupPreviewCard(card);
       return card;
@@ -914,7 +1014,7 @@ async function loadDatabaseBeatCatalog() {
     }));
     updateBeatPrices();
   } catch (error) {
-    catalogList.innerHTML = `<p class="filter-empty-state">${escapeHTML(error.message)}</p>`;
+    showRetryState(catalogList, error.message || 'Could not load beats.', loadDatabaseBeatCatalog);
   }
 }
 
@@ -941,6 +1041,8 @@ async function loadFeaturedBeatCatalog() {
       card.dataset.genre = String(beat.genre || '').toLowerCase();
       card.dataset.mood = String(beat.mood || '').toLowerCase();
       card.innerHTML = `<button class="beat-cover" type="button" aria-label="Play ${escapeHTML(beat.title)} preview"><img src="${escapeHTML(cover)}" alt="${escapeHTML(beat.title)} cover art"><span class="play-icon" aria-hidden="true">&#9654;</span></button><div class="beat-details"><h3>${escapeHTML(beat.title)}</h3><p class="beat-meta"><span class="meta-item">${escapeHTML(beat.bpm || '—')} BPM</span><span class="meta-item">${escapeHTML(beat.musicalKey || 'Key not set')}</span><span class="meta-item">${escapeHTML(beat.genre || 'Genre not set')}</span><span class="meta-item">${escapeHTML(beat.mood || 'Mood not set')}</span><span class="meta-item">${duration}</span></p><audio class="beat-audio" src="${escapeHTML(preview)}" preload="none"></audio><label class="license-label">License Type</label><select class="license-select">${Object.entries(prices).map(([license, price]) => `<option value="${license}" data-price="${Number(price)}">${license[0].toUpperCase() + license.slice(1)}</option>`).join('')}</select></div><div class="beat-purchase"><strong class="beat-price"></strong><button class="beat-cart-button" type="button" aria-label="Add ${escapeHTML(beat.title)} to cart"><span aria-hidden="true">&#128722;</span></button></div>`;
+      card.querySelector('.beat-cover img').loading = 'lazy';
+      card.querySelector('.beat-cover img').decoding = 'async';
       setupPreviewCard(card);
       return card;
     }));
@@ -955,7 +1057,7 @@ async function loadFeaturedBeatCatalog() {
     }));
     updateBeatPrices();
   } catch (error) {
-    catalogList.innerHTML = `<p class="filter-empty-state">${escapeHTML(error.message)}</p>`;
+    showRetryState(catalogList, error.message || 'Could not load featured beats.', loadFeaturedBeatCatalog);
   }
 }
 
@@ -1114,7 +1216,7 @@ updateCart();
 
 const merchandiseList = document.getElementById('public-merchandise-list');
 if (merchandiseList) {
-  fetch(`${API}/api/merchandise`).then(async response => {
+  const loadMerchandise = () => fetch(`${API}/api/merchandise`).then(async response => {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Could not load merchandise.');
     merchandiseList.replaceChildren();
@@ -1124,6 +1226,8 @@ if (merchandiseList) {
       const image = document.createElement('img');
       image.src = product.photo ? `${API}/api/uploads/${encodeURIComponent(product.photo)}` : 'Images/Logo 2.png';
       image.alt = `${product.title} merchandise`;
+      image.loading = 'lazy';
+      image.decoding = 'async';
       const details = document.createElement('div');
       details.className = 'storefront-merchandise-details';
       const title = document.createElement('h3');
@@ -1150,7 +1254,10 @@ if (merchandiseList) {
       merchandiseList.append(card);
     });
     if (!data.merchandise.length) merchandiseList.innerHTML = '<p>No merchandise is available to order yet.</p>';
-  }).catch(() => { merchandiseList.innerHTML = '<p>Merchandise could not be loaded right now.</p>'; });
+  }).catch(error => {
+    showRetryState(merchandiseList, error.message || 'Merchandise could not be loaded right now.', loadMerchandise);
+  });
+  loadMerchandise();
 }
 
 const beatRequestForm = document.getElementById('beat-request-form');
@@ -1238,24 +1345,32 @@ if (reviewsSection) {
   }));
   document.getElementById('review-login-button').addEventListener('click', () => loginButton?.click());
   refreshReviewAccess();
-  fetch(`${API}/api/reviews`).then(response => response.json()).then(data => {
+  const loadPublicReviews = async () => {
     const reviewList = document.getElementById('public-review-list');
-    reviewList.replaceChildren();
-    if (!data.reviews?.length) {
-      reviewList.innerHTML = '<p>No reviews yet. Be the first to share your thoughts.</p>';
-      return;
+    try {
+      const response = await fetch(`${API}/api/reviews`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Reviews are unavailable right now.');
+      reviewList.replaceChildren();
+      if (!data.reviews?.length) {
+        reviewList.innerHTML = '<p>No reviews yet. Be the first to share your thoughts.</p>';
+        return;
+      }
+      data.reviews.forEach(review => {
+        const article = document.createElement('article');
+        article.className = 'public-review-item';
+        const heading = document.createElement('strong');
+        heading.textContent = `${review.customer_name} · ${'★'.repeat(Number(review.rating) || 0)}`;
+        const text = document.createElement('p');
+        text.textContent = review.review_text;
+        article.append(heading, text);
+        reviewList.append(article);
+      });
+    } catch (error) {
+      showRetryState(reviewList, error.message || 'Reviews are unavailable right now.', loadPublicReviews);
     }
-    data.reviews.forEach(review => {
-      const article = document.createElement('article');
-      article.className = 'public-review-item';
-      const heading = document.createElement('strong');
-      heading.textContent = `${review.customer_name} · ${'★'.repeat(Number(review.rating) || 0)}`;
-      const text = document.createElement('p');
-      text.textContent = review.review_text;
-      article.append(heading, text);
-      reviewList.append(article);
-    });
-  }).catch(() => { document.getElementById('public-review-list').innerHTML = '<p>Reviews are unavailable right now.</p>'; });
+  };
+  loadPublicReviews();
   reviewForm.addEventListener('submit', async event => {
     event.preventDefault();
     if (!customerUser?.name || !customerUser?.email) {
@@ -1539,11 +1654,11 @@ updateMerchandiseSlide(0);
 
 // Replace these with your uploaded image paths
 const images = [
-  "images/Hero1.png",
-  "images/Hero2.png",
-  "images/Hero3.png",
-  "images/Hero4.png",
-  "images/Hero5.png",
+  "Images/Hero1.png",
+  "Images/Hero2.png",
+  "Images/Hero3.png",
+  "Images/Hero4.png",
+  "Images/Hero5.png",
 ];
 
 let currentIndex = 0;

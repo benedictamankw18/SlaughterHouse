@@ -89,6 +89,28 @@ router.get('/beats/:id', sessions.allowVisitor, async (request, response) => {
   }
 });
 
+router.get('/stream-releases', sessions.allowVisitor, async (request, response) => {
+  try {
+    const rows = await queryRows(
+      `SELECT id, title, artist, credits_json AS creditsJson, cover_url AS coverUrl,
+              links_json AS linksJson
+       FROM stream_releases
+       WHERE status = 'published'
+       ORDER BY sort_order ASC, id ASC`
+    );
+    const parseJson = value => typeof value === 'string' ? JSON.parse(value) : value;
+    response.json({
+      releases: rows.map(release => ({
+        ...release,
+        credits: parseJson(release.creditsJson),
+        links: parseJson(release.linksJson)
+      }))
+    });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Loading stream releases failed.', error) });
+  }
+});
+
 router.get('/wishlists', requireCustomer, (request, response) => {
   queryRows(
     `SELECT b.id, b.title, b.bpm, b.musical_key AS musicalKey, b.genre, b.mood,

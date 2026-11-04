@@ -4,7 +4,7 @@ const ROLE_PERMISSIONS = Object.freeze({
   visitor: Object.freeze(['public:read']),
   customer: Object.freeze(['public:read', 'customer:self']),
   admin: Object.freeze(['public:read', 'customer:self', 'admin:read', 'admin:write']),
-  super_admin: Object.freeze(['public:read', 'customer:self', 'admin:read', 'admin:write', 'admin:manage_roles', 'admin:manage_license_rights'])
+  super_admin: Object.freeze(['public:read', 'customer:self', 'admin:read', 'admin:write', 'admin:manage_roles', 'admin:manage_license_rights', 'admin:manage_settings'])
 });
 
 function normalizeRole(role) {

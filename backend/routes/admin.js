@@ -12,11 +12,16 @@ const { queueEmailSafely } = require('../services/email/outbox');
 const { isAvailableBookingSlot } = require('../services/booking');
 const { loadLicenseRights, saveLicenseRights } = require('../services/license-rights');
 const { FULFILLMENT_STATUSES, updateFulfillmentStatus } = require('../services/fulfillment');
+const { BUSINESS_SETTINGS, validateDateRange, validateSettingUpdates } = require('../services/admin-controls');
 
 const router = express.Router();
 router.use(rateLimit({ windowMs: 60 * 1000, max: 60, message: 'Too many administrator requests. Try again shortly.' }));
 const queryRows = (query, parameters = []) => new Promise((resolve, reject) => database.all(query, parameters, (error, rows) => error ? reject(error) : resolve(rows || [])));
-const csvCell = value => `"${String(value ?? '').replace(/"/g, '""')}"`;
+const csvCell = value => {
+  const raw = String(value ?? '');
+  const safe = typeof value === 'string' && /^[\t\r ]*[=+\-@]/.test(value) ? `'${raw}` : raw;
+  return `"${safe.replace(/"/g, '""')}"`;
+};
 
 router.get('/admin/data', sessions.requireAdmin, (request, response) => {
   Promise.all([
@@ -28,14 +33,15 @@ router.get('/admin/data', sessions.requireAdmin, (request, response) => {
     queryRows('SELECT * FROM orders ORDER BY created_at DESC'),
     queryRows('SELECT * FROM withdrawals ORDER BY created_at DESC'),
     queryRows('SELECT * FROM customer_reviews ORDER BY created_at DESC'),
-    queryRows("SELECT id, name, artist_name, email FROM users WHERE role = 'artist' ORDER BY name")
-  ]).then(([beats, merchandise, sales, requests, bookings, rawOrders, withdrawals, reviews, artists]) => {
+    queryRows("SELECT id, name, artist_name, email FROM users WHERE role = 'artist' ORDER BY name"),
+    queryRows("SELECT id, name, artist_name, email, role, created_at, email_verified_at FROM users WHERE role NOT IN ('admin', 'super_admin') ORDER BY created_at DESC LIMIT 1000")
+  ]).then(([beats, merchandise, sales, requests, bookings, rawOrders, withdrawals, reviews, artists, customers]) => {
     const orders = rawOrders.map(order => {
       let items = [];
       try { items = JSON.parse(order.items_json).map(item => ({ ...item, type: item.type || 'beat' })); } catch {}
       return { ...order, items };
     });
-    const paidOrders = orders.filter(order => order.status === 'paid');
+    const paidOrders = orders.filter(order => ['paid', 'partially_refunded'].includes(order.status));
     const purchases = paidOrders.flatMap(order => order.items.filter(item => item.type === 'beat').map(item => ({
       order_reference: order.reference, customer_name: order.customer_name, customer_email: order.customer_email,
       beat_title: item.name, license: item.license, amount: item.priceUsd, purchased_at: order.created_at
@@ -51,21 +57,108 @@ router.get('/admin/data', sessions.requireAdmin, (request, response) => {
     const monthlySales = paidOrders.reduce((months, order) => {
       const date = new Date(order.created_at);
       const month = Number.isNaN(date.getTime()) ? 'Unknown' : date.toISOString().slice(0, 7);
-      months[month] = (months[month] || 0) + Number(order.amount || 0);
+      months[month] = (months[month] || 0) + Number(order.amount || 0) - Number(order.refunded_amount || 0);
       return months;
     }, {});
     const analytics = {
-      revenue: paidOrders.reduce((sum, order) => sum + Number(order.amount || 0), 0),
+      revenue: paidOrders.reduce((sum, order) => sum + Number(order.amount || 0) - Number(order.refunded_amount || 0), 0),
       paidOrders: paidOrders.length,
-      pendingOrders: orders.filter(order => order.status !== 'paid').length,
+      pendingOrders: orders.filter(order => order.status === 'pending').length,
       beatLicenses: purchases.length,
       merchandiseOrders: merchandiseOrders.length,
       pendingReviews: reviews.filter(review => review.status === 'pending').length,
       withdrawals: withdrawals.reduce((sum, withdrawal) => sum + Number(withdrawal.amount || 0), 0),
       monthlySales: Object.entries(monthlySales).sort(([left], [right]) => left.localeCompare(right)).slice(-6).map(([month, amount]) => ({ month, amount }))
     };
-    response.json({ role: request.role, beats, merchandise, sales, requests, bookings, orders, merchandiseOrders, reviews, artists: artistsWithPurchases, withdrawals, analytics });
+    response.json({ role: request.role, beats, merchandise, sales, requests, bookings, orders, merchandiseOrders, reviews, artists: artistsWithPurchases, customers, withdrawals, analytics });
   }).catch(error => response.status(500).json({ error: databaseError('Loading administrator data failed.', error) }));
+});
+
+router.get('/admin/settings', sessions.requireAdmin, async (request, response) => {
+  try {
+    const keys = Object.keys(BUSINESS_SETTINGS);
+    const rows = await queryRows(
+      `SELECT setting_key, setting_value FROM settings WHERE setting_key IN (${keys.map(() => '?').join(', ')})`,
+      keys
+    );
+    const values = Object.fromEntries(rows.map(row => [row.setting_key, row.setting_value]));
+    response.json({
+      settings: keys.map(key => ({ key, label: BUSINESS_SETTINGS[key], value: values[key] ?? '' })),
+      canEdit: request.role === 'super_admin'
+    });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Loading business settings failed.', error) });
+  }
+});
+
+router.put('/admin/settings', sessions.requirePermission('admin:manage_settings'), async (request, response) => {
+  const validation = validateSettingUpdates(request.body?.settings);
+  if (validation.error) return response.status(400).json({ error: validation.error });
+  try {
+    await database.transaction(async tx => {
+      for (const [key, value] of validation.value) {
+        await tx.run(
+          'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)',
+          [key, value]
+        );
+      }
+    });
+    recordAuditSafely(database, {
+      userId: request.admin.id,
+      action: 'business_settings_updated',
+      entityType: 'settings',
+      details: Object.fromEntries(validation.value),
+      ipAddress: request.ip
+    });
+    response.json({ settings: validation.value.map(([key, value]) => ({ key, value })) });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Updating business settings failed.', error) });
+  }
+});
+
+router.get('/admin/staff', sessions.requirePermission('admin:manage_roles'), async (request, response) => {
+  try {
+    const staff = await queryRows(
+      `SELECT id, name, email, role, created_at
+       FROM users ORDER BY FIELD(role, 'super_admin', 'admin'), name LIMIT 1000`
+    );
+    response.json({ staff });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Loading staff accounts failed.', error) });
+  }
+});
+
+router.patch('/admin/staff/:id/role', sessions.requirePermission('admin:manage_roles'), async (request, response) => {
+  if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) return response.status(400).json({ error: 'Staff ID must be a positive whole number.' });
+  const userId = Number(request.params.id);
+  const role = String(request.body?.role || '').trim().toLowerCase();
+  if (!['customer', 'artist', 'non_artist', 'admin', 'super_admin'].includes(role)) return response.status(400).json({ error: 'Role must be customer, artist, non_artist, admin, or super_admin.' });
+  if (userId === Number(request.admin.id)) return response.status(400).json({ error: 'You cannot change your own role.' });
+  try {
+    const result = await database.transaction(async tx => {
+      const superAdmins = await tx.all("SELECT id FROM users WHERE role = 'super_admin' FOR UPDATE");
+      const target = await tx.get('SELECT id, role FROM users WHERE id = ? FOR UPDATE', [userId]);
+      if (!target) return { notFound: true };
+      if (target.role === 'super_admin' && role !== 'super_admin' && superAdmins.length <= 1) return { lastSuperAdmin: true };
+      if (target.role === role) return { unchanged: true, previousRole: target.role };
+      await tx.run('UPDATE users SET role = ? WHERE id = ?', [role, userId]);
+      await tx.run('DELETE FROM user_sessions WHERE user_id = ?', [userId]);
+      return { previousRole: target.role };
+    });
+    if (result.notFound) return response.status(404).json({ error: 'User was not found.' });
+    if (result.lastSuperAdmin) return response.status(409).json({ error: 'The last super-admin cannot be demoted.' });
+    if (!result.unchanged) recordAuditSafely(database, {
+      userId: request.admin.id,
+      action: 'user_role_changed',
+      entityType: 'user',
+      entityId: userId,
+      details: { previousRole: result.previousRole, role },
+      ipAddress: request.ip
+    });
+    response.json({ id: userId, role, changed: !result.unchanged });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Updating the user role failed.', error) });
+  }
 });
 
 router.get('/admin/license-rights', sessions.requireAdmin, async (request, response) => {
@@ -158,13 +251,29 @@ router.get('/admin/email-deliveries', sessions.requireAdmin, async (request, res
 
 router.get('/admin/audit-logs', sessions.requireAdmin, (request, response) => {
   const action = String(request.query.action || '').trim();
+  const search = String(request.query.search || '').trim();
   const limit = Math.min(100, Math.max(1, Number.parseInt(request.query.limit, 10) || 50));
+  const dateRange = validateDateRange(String(request.query.from || ''), String(request.query.to || ''));
+  if (dateRange.error) return response.status(400).json({ error: dateRange.error });
+  if (search.length > 100) return response.status(400).json({ error: 'Audit search must be 100 characters or fewer.' });
   const parameters = [];
   const conditions = [];
   if (action) {
     if (!/^[a-z0-9_]{1,100}$/i.test(action)) return response.status(400).json({ error: 'Audit action filter is invalid.' });
     conditions.push('a.action = ?');
     parameters.push(action);
+  }
+  if (search) {
+    conditions.push('(a.action LIKE ? OR a.entity_type LIKE ? OR a.details_json LIKE ? OR u.email LIKE ?)');
+    parameters.push(...Array(4).fill(`%${search}%`));
+  }
+  if (dateRange.value.from) {
+    conditions.push('a.created_at >= ?');
+    parameters.push(`${dateRange.value.from} 00:00:00`);
+  }
+  if (dateRange.value.to) {
+    conditions.push('a.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+    parameters.push(`${dateRange.value.to} 00:00:00`);
   }
   parameters.push(limit);
   queryRows(
@@ -177,6 +286,97 @@ router.get('/admin/audit-logs', sessions.requireAdmin, (request, response) => {
     parameters
   ).then(logs => response.json({ logs }))
     .catch(error => response.status(500).json({ error: databaseError('Loading audit logs failed.', error) }));
+});
+
+router.get('/admin/reports', sessions.requireAdmin, async (request, response) => {
+  const dateRange = validateDateRange(String(request.query.from || ''), String(request.query.to || ''));
+  if (dateRange.error) return response.status(400).json({ error: dateRange.error });
+  const conditions = [];
+  const parameters = [];
+  if (dateRange.value.from) {
+    conditions.push('created_at >= ?');
+    parameters.push(`${dateRange.value.from} 00:00:00`);
+  }
+  if (dateRange.value.to) {
+    conditions.push('created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+    parameters.push(`${dateRange.value.to} 00:00:00`);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  try {
+    const [orders, revenueByMonth, bookings, summaryRows] = await Promise.all([
+      queryRows(
+        `SELECT reference, customer_name, customer_email, status, amount, currency, refunded_amount, created_at
+         FROM orders ${where} ORDER BY created_at DESC LIMIT 5000`,
+        parameters
+      ),
+      queryRows(
+        `SELECT month, order_count, revenue FROM (
+           SELECT DATE_FORMAT(created_at, '%Y-%m') AS month, COUNT(*) AS order_count,
+                  SUM(amount - COALESCE(refunded_amount, 0)) AS revenue
+           FROM orders ${conditions.length ? `${where} AND` : 'WHERE'} status IN ('paid', 'partially_refunded')
+           GROUP BY DATE_FORMAT(created_at, '%Y-%m') ORDER BY month DESC LIMIT 24
+         ) AS monthly_revenue ORDER BY month`,
+        parameters
+      ),
+      queryRows(
+        `SELECT status, COUNT(*) AS count FROM bookings ${where} GROUP BY status ORDER BY status`,
+        parameters
+      ),
+      queryRows(
+        `SELECT COUNT(*) AS order_count,
+                SUM(status IN ('paid', 'partially_refunded')) AS paid_order_count,
+                SUM(CASE WHEN status IN ('paid', 'partially_refunded') THEN amount - COALESCE(refunded_amount, 0) ELSE 0 END) AS net_revenue
+         FROM orders ${where}`,
+        parameters
+      )
+    ]);
+    response.json({
+      from: dateRange.value.from,
+      to: dateRange.value.to,
+      orders,
+      revenueByMonth,
+      bookingCounts: bookings.map(row => ({ status: row.status, count: Number(row.count) })),
+      summary: {
+        orderCount: Number(summaryRows[0]?.order_count || 0),
+        paidOrderCount: Number(summaryRows[0]?.paid_order_count || 0),
+        netRevenue: Number(summaryRows[0]?.net_revenue || 0)
+      }
+    });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Loading date-filtered reports failed.', error) });
+  }
+});
+
+router.get('/admin/reports.csv', sessions.requireAdmin, async (request, response) => {
+  const dateRange = validateDateRange(String(request.query.from || ''), String(request.query.to || ''));
+  if (dateRange.error) return response.status(400).json({ error: dateRange.error });
+  const conditions = [];
+  const parameters = [];
+  if (dateRange.value.from) {
+    conditions.push('created_at >= ?');
+    parameters.push(`${dateRange.value.from} 00:00:00`);
+  }
+  if (dateRange.value.to) {
+    conditions.push('created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+    parameters.push(`${dateRange.value.to} 00:00:00`);
+  }
+  try {
+    const orders = await queryRows(
+      `SELECT reference, customer_name, customer_email, status, amount, currency, refunded_amount, created_at
+       FROM orders ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
+       ORDER BY created_at DESC LIMIT 5000`,
+      parameters
+    );
+    const rows = [
+      ['Reference', 'Customer', 'Email', 'Status', 'Amount', 'Refunded amount', 'Currency', 'Created at'],
+      ...orders.map(order => [order.reference, order.customer_name, order.customer_email, order.status, order.amount, order.refunded_amount, order.currency, order.created_at])
+    ];
+    response.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    response.setHeader('Content-Disposition', 'attachment; filename="ultbigboy-report.csv"');
+    response.send(`\uFEFF${rows.map(row => row.map(csvCell).join(',')).join('\r\n')}\r\n`);
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Exporting the date-filtered report failed.', error) });
+  }
 });
 
 router.get('/admin/orders.csv', sessions.requireAdmin, (request, response) => {
@@ -243,6 +443,7 @@ router.post('/admin/beats', sessions.requireAdmin, (request, response) => {
     };
     database.run('INSERT INTO beats (title, bpm, musical_key, genre, mood, cover_art, preview_file, preview_duration_seconds, mp3_file, wav_file, stems_file, basic_price, premium_price, unlimited_price, exclusive_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [title.trim(), bpm || null, musicalKey || null, genre || null, mood || null, savedFiles.cover_art, savedFiles.preview_file, previewDurationSeconds || null, savedFiles.mp3_file, savedFiles.wav_file, savedFiles.stems_file, prices?.basic || 0, prices?.premium || 0, prices?.unlimited || 0, prices?.exclusive || 0], function (error) {
       if (error) return response.status(500).json({ error: databaseError('Saving the beat failed.', error) });
+      recordAuditSafely(database, { userId: request.admin.id, action: 'beat_created', entityType: 'beat', entityId: this.lastID, ipAddress: request.ip });
       response.status(201).json({ id: this.lastID, title: title.trim() });
     });
 
@@ -294,6 +495,7 @@ router.post('/admin/merchandise', sessions.requireAdmin, (request, response) => 
     const photoFile = saveUpload(photo, 'merchandise', 'image');
     database.run('INSERT INTO merchandise (title, description, price, photo) VALUES (?, ?, ?, ?)', [title.trim(), description || '', Number(price), photoFile], function (error) {
       if (error) return response.status(500).json({ error: databaseError('Saving the merchandise failed.', error) });
+      recordAuditSafely(database, { userId: request.admin.id, action: 'merchandise_created', entityType: 'merchandise', entityId: this.lastID, ipAddress: request.ip });
       response.status(201).json({ id: this.lastID, title: title.trim() });
     });
 

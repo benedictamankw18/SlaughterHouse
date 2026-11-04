@@ -5,6 +5,9 @@
 .admin-login-panel h1, .admin-header h1 { margin: 0 0 20px; }
 .admin-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 28px; }
 .admin-tabs, .admin-toggle { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+.admin-toggle label { display: grid; gap: 6px; color: rgba(255,255,255,.72); font-size: .75rem; text-transform: uppercase; }
+.admin-toggle input, .admin-toggle select, .admin-staff-form select { min-width: 150px; padding: 9px; border: 1px solid rgba(255,255,255,.22); border-radius: 6px; background: #0b0b0b; color: #fff; font: inherit; }
+.admin-staff-form { display: grid; gap: 10px; }
 .admin-tab, .admin-toggle button, .admin-secondary-button { padding: 10px 14px; border: 1px solid rgba(255,255,255,.24); border-radius: 6px; background: transparent; color: #fff; cursor: pointer; font: inherit; }
 .admin-tab.active, .admin-toggle button.active, .admin-secondary-button:hover { border-color: #22c55e; background: #22c55e; color: #07130a; }
 .admin-alert-count { display: inline-grid; min-width: 20px; height: 20px; align-items: center; justify-items: center; margin-left: 5px; border-radius: 999px; background: #ef4444; color: #fff; font-size: .72rem; }

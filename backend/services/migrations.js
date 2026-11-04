@@ -1,5 +1,24 @@
 const { DEFAULT_LICENSE_RIGHTS } = require('./license-rights');
 
+const initialStreamReleases = [
+  ['AMUSEMENT', 'Derry J', ['Producer: Derry J99'], 'Images/Amusement.jpg', [['Spotify', 'https://open.spotify.com/track/3w3RsTz1UFWInx1Okfuf0v?si=8f939c7aef0348e8', 'Listen to Amusement on Spotify'], ['Audiomack', 'https://audiomack.com/derry_j99/song/amusement', 'Listen to Amusement on Audiomack']]],
+  ['ANTISOCIAL (REMIX)', 'Kwasi Morgan ft. 39/40', ['Producer: Derry J99'], 'Images/Antisocial.jpg', [['Spotify', 'https://open.spotify.com/track/66LM0ycdBfhNLgfde7bjeB?si=3fa5d579fdaa45d5', 'Listen to Antisocial Remix on Spotify'], ['Audiomack', 'https://audiomack.com/kwasi-morgan/song/antisocial-remix', 'Listen to Antisocial Remix on Audiomack']]],
+  ['ABOM', 'Kwasi Morgan ft. 39/40', ['Producer: Derry J99'], 'Images/Abom.jpg', [['Spotify', 'https://open.spotify.com/track/6c9zYOHkuv8KCTv2ka47AG?si=deecddd9163c4910', 'Listen to Abom on Spotify'], ['Audiomack', 'https://audiomack.com/kwasi-morgan/song/abom', 'Listen to Abom on Audiomack']]],
+  ['NOT AGAIN', 'Yaw Wazinga', ['Producer: Derry J99'], 'Images/Not Again.jpg', [['Spotify', 'https://open.spotify.com/track/1m3xcixV4v7U3pWFaqufBt?si=6e537d21430d439f', 'Listen to Not Again on Spotify'], ['Audiomack', 'https://audiomack.com/yaw-wazinga/song/not-again', 'Listen to Not Again on Audiomack']]],
+  ['LOW', 'Ypee ft. Lami Jnr, Droplord SAS and Chief Kay', ['Recording Engineer: Derry J99'], 'Images/Low.jpg', [['Spotify', 'https://open.spotify.com/track/70IsI3YHceS3z7Ezg5JYV0?si=f7c90b244a134476', 'Listen to Low on Spotify'], ['Audiomack', 'https://audiomack.com/ypee-4/song/low', 'Listen to Low on Audiomack']]],
+  ['ADWUMA', 'Oseikrom Sikani ft. King Paluta', ['Synth, Brass and Guitar: Derry J99'], 'Images/Adwuma.jpg', [['Spotify', 'https://open.spotify.com/track/0O7qfw4nmcPwAOENrPoGcq?si=e877824de3c54fa0', 'Listen to Adwuma on Spotify'], ['Audiomack', 'https://audiomack.com/sikaniioseikrom/song/adwuma', 'Listen to Adwuma on Audiomack']]],
+  ['ENCHI PARTY', 'Lil Twitch', ['Producer: Derry J99'], 'Images/Enchi Party.webp', [['Audiomack', 'https://audiomack.com/lil_twitch101/song/enchi-party', 'Listen to Enchi Party by Lil Twitch on Audiomack']]],
+  ['PROPOSAL', 'Yhung King ft. Okese 1', ['Producer: Derry J99'], 'Images/Proposal.jpg', [['Spotify', 'https://open.spotify.com/track/09dlwAfnDPYAfP3FdopAYH?si=5a5e1db19f6042dc', 'Listen to Proposal by Yhung King featuring Okese 1 on Spotify'], ['Audiomack', 'https://audiomack.com/search?q=Proposal%20Yhung%20King%20Okese%201', 'Search Audiomack for Proposal by Yhung King featuring Okese 1']]],
+  ['OPUEH', 'Yhung King', ['Producer: Derry J99'], 'https://i.audiomack.com/yhung-king/d77c236054.webp?width=416', [['Spotify', 'https://open.spotify.com/track/2hUJSgNctjSjfZreUuazJp?si=db570daedd334da7', 'Listen to Opueh by Yhung King on Spotify'], ['Audiomack', 'https://audiomack.com/yhung-king/song/6949d342cbbc0', 'Listen to Opueh by Yhung King on Audiomack']]],
+  ['NEVER LET GO', 'Yamel ft. Jidthagr8', ['Producer: Derry J99'], 'Images/Never Let Go.jpg', [['Spotify', 'https://open.spotify.com/track/3PmpUrLx9WIobkRNjDECzT?si=bfad8a8297fb4172', 'Listen to Never Let Go by Yamel featuring Jidthagr8 on Spotify'], ['Audiomack', 'https://audiomack.com/search?q=Never%20Let%20Go%20Yamel%20Jidthagr8', 'Search Audiomack for Never Let Go by Yamel featuring Jidthagr8']]],
+  ['PILOLO', 'PCEE GH', ['Producer: Derry J99'], 'https://i.audiomack.com/pcee1993/da74f4e5f3.webp?width=416', [['Audiomack', 'https://audiomack.com/pcee1993/song/p-cee-pilolo', 'Listen to PILOLO on Audiomack']]],
+  ['JEALOUS', 'BELLOBOY', ['Producer: Derry J99'], 'https://i.audiomack.com/belloboy-68de971da9672/194b775d09.webp?width=416', [['Audiomack', 'https://audiomack.com/belloboy-68de971da9672/song/jealous-1', 'Listen to Jealous on Audiomack']]],
+  ['NANA', 'YAW WAZINGA', ['Producer: Derry J99'], 'https://i.audiomack.com/yaw-wazinga/e298803320.webp?width=416', [['Audiomack', 'https://audiomack.com/yaw-wazinga/song/nana', 'Listen to NANA on Audiomack']]],
+  ['STILL I RISE', 'YAW WAZINGA', ['Producer: Derry J99'], 'https://i.audiomack.com/yaw-wazinga/7661842ba7.webp?width=416', [['Audiomack', 'https://audiomack.com/yaw-wazinga/song/still-i-rise', 'Listen to STILL I RISE on Audiomack']]],
+  ['GRACE', 'Jidthagr8 ft. Yamel', ['Producer: Derry J99'], 'https://i.audiomack.com/-Jidthagr8/552638b1df.webp?width=416', [['Audiomack', 'https://audiomack.com/-Jidthagr8/song/68c0f74fe7b40', 'Listen to Grace by Jid Tha Gr8 featuring Yamel on Audiomack']]]
+];
+const migrationSqlLiteral = value => `'${String(value).replace(/'/g, "''")}'`;
+
 const migrations = [
   {
     version: 0,
@@ -456,6 +475,25 @@ const migrations = [
       { ensureColumn: { table: 'customization_requests', column: 'requested_license', definition: 'VARCHAR(50)' } },
       { ensureColumn: { table: 'customization_requests', column: 'license_price_gsh', definition: 'DECIMAL(12,2)' } },
       { ensureColumn: { table: 'customization_requests', column: 'sample_link', definition: 'TEXT' } }
+    ]
+  },
+  {
+    version: 20,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS stream_releases (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        title VARCHAR(255) NOT NULL UNIQUE,
+        artist VARCHAR(500) NOT NULL,
+        credits_json JSON NOT NULL,
+        cover_url VARCHAR(1000) NOT NULL,
+        links_json JSON NOT NULL,
+        sort_order INT NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'published',
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+      ...initialStreamReleases.map(([title, artist, credits, coverUrl, links], index) =>
+        `INSERT IGNORE INTO stream_releases (title, artist, credits_json, cover_url, links_json, sort_order) VALUES (${migrationSqlLiteral(title)}, ${migrationSqlLiteral(artist)}, ${migrationSqlLiteral(JSON.stringify(credits))}, ${migrationSqlLiteral(coverUrl)}, ${migrationSqlLiteral(JSON.stringify(links.map(([platform, url, label]) => ({ platform, url, label }))))}, ${index + 1})`
+      )
     ]
   }
 ];
