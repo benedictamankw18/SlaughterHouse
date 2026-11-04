@@ -34,14 +34,14 @@ The existing implementation should be preserved while the SRS features are compl
 
 ### Tasks
 
-- [ ] Add explicit database migrations for all SRS entities:
-  - [ ] Users and roles.
-  - [ ] Beats and per-license pricing.
+- [x] Add explicit database migrations for all SRS entities:
+  - [x] Users and roles.
+  - [x] Beats and per-license pricing.
   - [x] Merchandise variants and categories.
   - [x] Orders and order items.
   - [x] Payments and provider references.
   - [x] Booking availability.
-  - [ ] Reviews.
+  - [x] Reviews.
   - [x] Licenses.
   - [x] Audit logs.
   - [x] Notifications.
@@ -49,11 +49,8 @@ The existing implementation should be preserved while the SRS features are compl
   - [x] Password-reset and email-verification token storage.
 - [x] Add foreign keys, indexes, unique constraints, and timestamps to the new tables.
 - [x] Add a migration/version table so schema changes are repeatable.
-- [ ] Replace schema-altering startup logic with ordered migrations where practical.
-- [ ] Document local MySQL setup, environment variables, and migration commands.
-  Environment variables, startup, and `schema_migrations` commands are covered in
-  `backend/README.md`; a step-by-step local MySQL install and database-creation guide
-  is still missing.
+- [x] Replace schema-altering startup logic with ordered migrations where practical.
+- [x] Document local MySQL setup, environment variables, and migration commands.
 
 ### Acceptance
 
@@ -65,15 +62,15 @@ The existing implementation should be preserved while the SRS features are compl
 
 ### Tasks
 
-- [ ] Keep customer and administrator login routes distinct.
-- [ ] Reject administrator accounts from customer login.
+- [x] Keep customer and administrator login routes distinct.
+- [x] Reject administrator accounts from customer login.
 - [x] Add secure session persistence suitable for multiple backend instances.
 - [x] Add secure, HttpOnly, SameSite session cookies while retaining temporary bearer compatibility.
 - [x] Use a reviewed, memory-hard scrypt implementation for new password hashes while retaining legacy scrypt verification.
 - [x] Add password reset flow with expiring, single-use tokens.
 - [x] Add email verification storage and verification endpoint with expiring, single-use tokens.
 - [x] Add customer profile viewing and editing with field validation.
-- [ ] Add role middleware for visitor, customer, admin, and super-admin permissions.
+- [x] Add role and permission middleware for visitor, customer, admin, and super-admin access.
 - [x] Add rate limiting for login, signup, reset, and sensitive administrator routes.
 - [x] Record login, logout, failed-login, password-reset, and email-verification audit events.
 - [ ] Record role-change audit events when role-management endpoints are added.
@@ -117,9 +114,10 @@ The existing implementation should be preserved while the SRS features are compl
 
 - [x] Add normalized order and order-item records.
 - [x] Add license records linked to customer, beat, order, and license type.
-- [ ] Move license rights, formats, usage limits, and distribution rules out of the
+- [x] Move license rights, formats, usage limits, and distribution rules out of the
   hardcoded `licenseRights` map in `routes/payments.js` into database-backed,
-  admin-editable definitions (currently copied into `licenses.rights_json` at purchase).
+  super-admin-editable definitions. Purchased definitions remain snapshotted in
+  `licenses.rights_json`.
 - [x] Generate a license certificate/PDF after verified payment.
 - [x] Add customer purchase history, license history, and download history.
 - [x] Make download authorization verify:
@@ -142,7 +140,7 @@ The existing implementation should be preserved while the SRS features are compl
 
 ### Tasks
 
-- [ ] Keep payment initialization and verification server-side.
+- [x] Keep payment initialization and verification server-side.
 - [x] Add Paystack webhook endpoint with signature verification.
 - [x] Make webhook processing idempotent (`payment_webhook_events` unique key plus the
   order status guard).
@@ -152,10 +150,11 @@ The existing implementation should be preserved while the SRS features are compl
 - [x] Store provider reference, request status, response status, amount, currency, and timestamps.
 - [x] Reject placeholder or missing Paystack credentials before external requests.
 - [x] Reconcile order amount and currency against the verified transaction.
-- [ ] Handle abandoned, failed, reversed, and refunded payments.
-  Non-success webhook events only update `payments.status`; there is no order transition,
-  license revocation, stock restore, or `refund.*` event handling.
-- [ ] Send payment events to order, license, booking, analytics, and notification workflows.
+- [x] Handle abandoned, failed, reversed, and refunded payments.
+  Failed and abandoned events update pending order/payment state; processed
+  refunds and reversals update refund totals and revoke access/restore eligible
+  stock/free booking slots on full reversal. Partial refunds retain entitlements.
+- [x] Send payment events to order, license, booking, analytics, and notification workflows.
 
 ### Acceptance
 
@@ -174,7 +173,7 @@ The existing implementation should be preserved while the SRS features are compl
 - [x] Prevent double booking with a database uniqueness constraint during verified payment.
 - [x] Add deposit/payment status and booking status transitions.
 - [x] Add admin confirmation, cancellation, rescheduling, and notes.
-- [ ] Send customer booking confirmations and admin notifications.
+- [x] Send customer booking confirmations and admin notifications.
 
 ### Acceptance
 
@@ -187,14 +186,15 @@ The existing implementation should be preserved while the SRS features are compl
 
 ### Tasks
 
-- [ ] Move all products to database-backed catalog APIs.
+- [x] Move purchasable merchandise catalog items to the database-backed catalog API.
 - [x] Add categories, variants, stock, SKU, shipping status, and product images.
-- [ ] Wrap merchandise stock reservation and order completion in a transaction.
-  Guarded row updates prevent overselling per row, but multi-item orders can partially
-  decrement because there is no transaction around `decrementMerchandiseStock`.
+- [x] Wrap merchandise stock reservation and order completion in a transaction.
+  Payment verification and webhooks call order completion through the
+  connection-scoped transaction runner, so stock, order, sales, payment, and
+  entitlement writes roll back together on failure.
 - [x] Prevent checkout when stock is insufficient.
 - [x] Add admin inventory and fulfillment management.
-- [ ] Add customer order status and fulfillment history.
+- [x] Add customer order status and fulfillment history.
 
 ### Acceptance
 
@@ -223,7 +223,7 @@ The existing implementation should be preserved while the SRS features are compl
 
 ### Tasks
 
-- [ ] Build customer dashboard sections:
+- [x] Build customer dashboard sections:
   - [x] Profile.
   - [x] Purchases.
   - [x] Orders.
@@ -232,9 +232,10 @@ The existing implementation should be preserved while the SRS features are compl
   - [x] Bookings.
   - [x] Wishlist.
   - [x] Notifications.
-- [ ] Add welcome, verification, order, booking, license, and password-reset emails.
-- [ ] Add admin notifications for orders, bookings, reviews, low stock, and failed payments.
-- [ ] Add notification read/unread state and delivery status.
+- [x] Add verification, password-reset, order receipt, booking confirmation, refund/cancellation, and refund-review admin emails through a retryable Resend outbox.
+- [x] Add separate welcome and license-issued emails.
+- [x] Add admin notifications for orders, bookings, reviews, low stock, and failed payments.
+- [x] Add notification read/unread state and admin email-delivery status.
 
 ### Acceptance
 
@@ -303,9 +304,9 @@ The existing implementation should be preserved while the SRS features are compl
 ## 15. Testing Strategy
 
 - [x] Unit-test validators, pricing fallback, booking slot validation, password hashing, and download token signing.
-- [ ] Unit-test database-backed license rights once they move out of `routes/payments.js`.
+- [x] Unit-test database-backed license rights, editable definitions, and purchase snapshots.
 - [ ] Integration-test every route with a test database.
-- [ ] Test customer/admin authorization boundaries.
+- [x] Unit-test customer/admin/super-admin permission boundaries.
 - [ ] Test duplicate signup, invalid JSON, malformed uploads, invalid payment methods, and invalid IDs.
 - [ ] Test Paystack success, failure, mismatch, duplicate webhook, and refund scenarios.
 - [ ] Test concurrent booking and inventory operations.

@@ -8,12 +8,15 @@ const { getDownloadItems } = require('../services/downloads');
 const { databaseError } = require('../services/error-messages');
 const validators = require('../services/input-validation');
 const { recordAuditSafely } = require('../services/audit');
-const { createNotificationSafely } = require('../services/notifications');
+const { createNotificationSafely, notifyAdminsSafely } = require('../services/notifications');
 const { loadLicenseRights, rightsFor } = require('../services/license-rights');
-const { refundEventDetails, refundEventKey, applyRefund } = require('../services/refunds');
+const { refundEventDetails, refundEventKey, applyRefund, applyPaymentReversal } = require('../services/refunds');
+const { paymentFailureStatus, isRefundEvent, recordNonSuccessPayment } = require('../services/payment-events');
+const { queueEmailSafely } = require('../services/email/outbox');
 
 const router = express.Router();
 const { apiPublicUrl, paymentCallbackUrl, paystackSecretKey, usdToGhsRate, bookingServiceLabels } = config;
+const LOW_STOCK_THRESHOLD = 5;
 const queryRows = (query, parameters = []) => new Promise((resolve, reject) => database.all(query, parameters, (error, rows) => error ? reject(error) : resolve(rows || [])));
 const run = (query, parameters = []) => new Promise((resolve, reject) => database.run(query, parameters, function (error) { error ? reject(error) : resolve(this); }));
 
@@ -30,10 +33,20 @@ async function hasPaidExclusiveLicense(queryAll, beatId, excludedReference = nul
   });
 }
 
-async function decrementMerchandiseStock(db, items) {
+async function decrementMerchandiseStock(db, items, orderReference) {
   for (const item of items.filter(candidate => candidate.type === 'merchandise')) {
+    const inventory = await db.get('SELECT title, stock_quantity FROM merchandise WHERE id = ? FOR UPDATE', [item.productId]);
     const result = await db.run('UPDATE merchandise SET stock_quantity = stock_quantity - 1 WHERE id = ? AND (stock_quantity IS NULL OR stock_quantity > 0)', [item.productId]);
     if (!result.changes) throw Object.assign(new Error(`${item.name} is out of stock.`), { code: 'OUT_OF_STOCK' });
+    const remaining = inventory?.stock_quantity === null ? null : Number(inventory?.stock_quantity) - 1;
+    if (remaining !== null && remaining >= 0 && remaining <= LOW_STOCK_THRESHOLD && Number(inventory?.stock_quantity) > LOW_STOCK_THRESHOLD) {
+      await notifyAdminsSafely(db, {
+        type: 'low_stock',
+        title: 'Merchandise stock is low',
+        message: `${inventory.title || item.name} has ${remaining} item${remaining === 1 ? '' : 's'} remaining.`,
+        dedupeKey: `low-stock:${item.productId}:${orderReference}`
+      });
+    }
   }
 }
 
@@ -84,7 +97,7 @@ async function normalizePaidOrder(db, order, items, paymentData) {
     [order.id, 'paystack', paymentData.reference, 'paid', Number(paymentData.amount) / 100, paymentData.currency, JSON.stringify(paymentData)]
   );
 
-  const customer = await db.get('SELECT id FROM users WHERE lower(email) = lower(?) AND role <> ?', [order.customer_email, 'admin']);
+  const customer = await db.get("SELECT id FROM users WHERE lower(email) = lower(?) AND role NOT IN ('admin', 'super_admin')", [order.customer_email]);
   if (!customer) return;
   const licenseRights = await loadLicenseRights(db);
   for (const item of items.filter(candidate => candidate.type === 'beat')) {
@@ -103,19 +116,56 @@ async function normalizePaidOrder(db, order, items, paymentData) {
     message: `Order ${order.reference} was paid successfully.`
   });
   const licenseCount = items.filter(item => item.type === 'beat').length;
-  if (licenseCount) await createNotificationSafely(db, {
-    userId: customer.id,
-    type: 'license_created',
-    title: 'License ready',
-    message: `${licenseCount} beat license${licenseCount === 1 ? '' : 's'} is now available in your account.`
-  });
+  if (licenseCount) {
+    await createNotificationSafely(db, {
+      userId: customer.id,
+      type: 'license_created',
+      title: 'License ready',
+      message: `${licenseCount} beat license${licenseCount === 1 ? '' : 's'} is now available in your account.`
+    });
+    await queueEmailSafely(db, {
+      to: order.customer_email,
+      template: 'license_issued',
+      idempotencyKey: `license-issued:${order.reference}`,
+      data: {
+        name: order.customer_name,
+        licenses: items
+          .filter(item => item.type === 'beat')
+          .map(item => ({ name: item.name, license: item.license })),
+        accountUrl: new URL('/', config.frontendOrigin).toString()
+      }
+    });
+  }
 }
 
 async function completePaidOrder(db, order, items, paymentData) {
-  await decrementMerchandiseStock(db, items);
+  await decrementMerchandiseStock(db, items, order.reference);
   await db.run('UPDATE orders SET status = ? WHERE reference = ? AND status <> ?', ['paid', order.reference, 'paid']);
   await recordOrderSales(db, order, items);
   await normalizePaidOrder(db, order, items, paymentData);
+  if (!items.some(item => item.type === 'booking')) await notifyAdminsSafely(db, {
+    type: 'order_paid',
+    title: 'Order paid',
+    message: `Order ${order.reference} from ${order.customer_name} was paid for ${Number(order.amount).toFixed(2)} ${order.currency}.`,
+    dedupeKey: `order-paid:${order.reference}`
+  });
+  await queueEmailSafely(db, {
+    to: order.customer_email,
+    template: 'order_receipt',
+    idempotencyKey: `order-receipt:${order.reference}`,
+    data: {
+      name: order.customer_name,
+      reference: order.reference,
+      currency: order.currency,
+      total: order.amount,
+      items: items.map(item => ({
+        name: item.name,
+        license: item.license,
+        amount: item.type === 'booking' ? item.feeGhs : saleAmount(item)
+      })),
+      orderUrl: new URL('/', config.frontendOrigin).toString()
+    }
+  });
 }
 
 async function lockExclusiveBeats(db, items) {
@@ -149,12 +199,32 @@ async function reserveBookingSlots(db, order, bookingItem) {
   for (const slot of sessionSlots) {
     await db.run('UPDATE booking_availability SET booking_id = ? WHERE slot_date = ? AND start_time = ?', [bookingResult.lastID, slot.date, slot.time]);
   }
-  const customer = await db.get('SELECT id FROM users WHERE lower(email) = lower(?) AND role <> ?', [order.customer_email, 'admin']);
+  const customer = await db.get("SELECT id FROM users WHERE lower(email) = lower(?) AND role NOT IN ('admin', 'super_admin')", [order.customer_email]);
   if (customer?.id) await createNotificationSafely(db, {
     userId: customer.id,
     type: 'booking_paid',
     title: 'Booking confirmed',
     message: `${serviceName} booking ${order.reference} is paid and awaiting studio confirmation.`
+  });
+  await notifyAdminsSafely(db, {
+    type: 'booking_paid',
+    title: 'Booking payment received',
+    message: `${serviceName} booking ${order.reference} from ${booking.name || order.customer_name} was paid.`,
+    dedupeKey: `booking-paid:${order.reference}`
+  });
+  await queueEmailSafely(db, {
+    to: booking.email || order.customer_email,
+    template: 'booking_confirmation',
+    idempotencyKey: `booking-confirmation:${order.reference}`,
+    data: {
+      name: booking.name || order.customer_name,
+      reference: order.reference,
+      service: bookingItem.name,
+      feeGhs: bookingItem.feeGhs,
+      currency: order.currency,
+      slots: sessionSlots,
+      bookingUrl: new URL('/', config.frontendOrigin).toString()
+    }
   });
   return bookingResult.lastID;
 }
@@ -167,9 +237,16 @@ router.post('/payments/webhook', async (request, response) => {
   if (!signature || signature.length !== expectedSignature.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) return response.status(401).json({ error: 'Invalid payment webhook signature.' });
   let event;
   try { event = JSON.parse(rawBody.toString('utf8')); } catch { return response.status(400).json({ error: 'Payment webhook payload is invalid JSON.' }); }
-  const eventType = String(event.event || '');
-  const isRefund = eventType.startsWith('refund.');
-  const eventReference = isRefund ? refundEventKey(event) : String(event.data?.reference || event.data?.id || '');
+  const eventType = String(event.event || '').toLowerCase();
+  const isRefund = isRefundEvent(eventType);
+  const failureStatus = paymentFailureStatus(eventType, event.data?.status);
+  const isReversal = !isRefund && failureStatus === 'reversed';
+  const refund = isRefund || isReversal ? refundEventDetails(event) : null;
+  const eventReference = isRefund
+    ? refundEventKey(event)
+    : isReversal
+      ? String(refund.reference || event.data?.id || '')
+      : String(event.data?.reference || event.data?.id || '');
   if (!eventReference || !eventType) return response.status(400).json({ error: 'Payment webhook is missing its event reference or type.' });
   try {
     const outcome = await database.transaction(async tx => {
@@ -178,32 +255,46 @@ router.post('/payments/webhook', async (request, response) => {
         ['paystack', eventReference, eventType, JSON.stringify(event)]
       ).catch(error => error?.code === 'ER_DUP_ENTRY' ? null : Promise.reject(error));
       if (!stored) return { duplicate: true };
-      if (isRefund) {
-        const refund = refundEventDetails(event);
+      if (isRefund || isReversal) {
         if (!refund.reference) return { httpStatus: 400, body: { error: 'Refund webhook is missing its transaction reference.' } };
-        if (eventType !== 'refund.processed') {
+        if (isRefund && eventType !== 'refund.processed') {
           return { processed: true, audit: { action: 'refund_event_ignored', details: { reference: refund.reference, event: eventType } } };
         }
         const order = await tx.get('SELECT * FROM orders WHERE reference = ? FOR UPDATE', [refund.reference]);
         if (!order) return { httpStatus: 404, body: { error: `No order was found for refund reference ${refund.reference}.` } };
         if (refund.currency && refund.currency !== order.currency) return { httpStatus: 400, body: { error: 'Refund currency does not match the order currency.' } };
-        if (!Number.isFinite(refund.amountGhs) || refund.amountGhs <= 0) return { httpStatus: 400, body: { error: 'Refund amount could not be validated.' } };
-        const result = await applyRefund(tx, order, { amountGhs: refund.amountGhs, reference: refund.reference, reason: refund.reason });
+        const reversalAmount = isReversal && !Number.isFinite(refund.amountGhs) ? Number(order.amount) : refund.amountGhs;
+        if (!Number.isFinite(reversalAmount) || reversalAmount <= 0) return { httpStatus: 400, body: { error: 'Refund amount could not be validated.' } };
+        if (isReversal) {
+          const result = await applyPaymentReversal(tx, order, {
+            reference: refund.reference,
+            paymentData: { ...event.data, amount: Number.isFinite(refund.amountGhs) ? Number(event.data?.amount) : Number(order.amount) * 100, currency: refund.currency || order.currency }
+          });
+          return { processed: true, orderId: order.id, refund: result, eventType };
+        }
+        const result = await applyRefund(tx, order, {
+          amountGhs: reversalAmount,
+          reference: refund.reference,
+          reason: refund.reason || (isReversal ? 'Payment reversed by provider' : null)
+        });
         return { processed: true, orderId: order.id, refund: result, eventType };
       }
       const order = await tx.get('SELECT * FROM orders WHERE reference = ? FOR UPDATE', [eventReference]);
       if (eventType !== 'charge.success' || event.data?.status !== 'success') {
-        if (order) {
-          await tx.run(
-            `INSERT INTO payments (order_id, provider, provider_reference, status, amount, currency, provider_payload)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE order_id = VALUES(order_id), status = VALUES(status), amount = VALUES(amount), currency = VALUES(currency), provider_payload = VALUES(provider_payload)`,
-            [order.id, 'paystack', eventReference, String(event.data?.status || eventType).toLowerCase(), Number(event.data?.amount || 0) / 100, event.data?.currency || 'GHS', JSON.stringify(event.data || event)]
-          );
-        }
+        await recordNonSuccessPayment(tx, order, {
+          reference: eventReference,
+          status: failureStatus || String(event.data?.status || eventType).toLowerCase(),
+          paymentData: event.data || event
+        });
         return { processed: true };
       }
       if (!order) return { httpStatus: 404, body: { error: `No order was found for payment reference ${eventReference}.` } };
+      if (order.status === 'paid' || order.status === 'partially_refunded') return { processed: true, orderId: order.id };
+      if (order.status === 'refunded') return {
+        processed: true,
+        orderId: order.id,
+        conflict: { reason: 'order_already_refunded', reference: eventReference }
+      };
       if (Number(event.data.amount) !== Math.round(Number(order.amount) * 100) || event.data.currency !== order.currency) return { httpStatus: 400, body: { error: 'Payment webhook amount could not be reconciled.' } };
       let items;
       try { items = JSON.parse(order.items_json); } catch { return { httpStatus: 500, body: { error: 'Order data is invalid.' } }; }
@@ -312,7 +403,35 @@ router.get('/payments/verify/:reference', async (request, response) => {
   try {
     const paymentResponse = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(request.params.reference)}`, { headers: { Authorization: `Bearer ${paystackSecretKey}` } });
     const payment = await paymentResponse.json();
-    if (!paymentResponse.ok || payment.data?.status !== 'success' || payment.data?.reference !== request.params.reference) return response.status(400).json({ error: 'Payment was not completed.' });
+    if (!paymentResponse.ok || payment.data?.reference !== request.params.reference) return response.status(400).json({ error: 'Payment was not completed.' });
+    if (payment.data?.status !== 'success') {
+      const failureStatus = paymentFailureStatus('', payment.data?.status);
+      if (failureStatus) {
+        const failureOutcome = await database.transaction(async tx => {
+          const order = await tx.get('SELECT * FROM orders WHERE reference = ? FOR UPDATE', [request.params.reference]);
+          if (!order) return { httpStatus: 404, body: { error: `No order was found for payment reference ${request.params.reference}.` } };
+          if (failureStatus === 'reversed') {
+            if (payment.data.currency !== order.currency) return { httpStatus: 400, body: { error: 'Payment currency could not be verified.' } };
+            const result = await applyPaymentReversal(tx, order, { reference: request.params.reference, paymentData: payment.data });
+            return { orderId: order.id, refund: result };
+          }
+          await recordNonSuccessPayment(tx, order, {
+            reference: request.params.reference,
+            status: failureStatus,
+            paymentData: payment.data
+          });
+          return { orderId: order.id };
+        });
+        if (failureOutcome.httpStatus) return response.status(failureOutcome.httpStatus).json(failureOutcome.body);
+        if (failureOutcome.orderId) recordAuditSafely(database, {
+          action: failureStatus === 'reversed' ? 'payment_reversed' : `payment_${failureStatus}`,
+          entityType: 'order',
+          entityId: failureOutcome.orderId,
+          details: { reference: request.params.reference, status: failureStatus }
+        });
+      }
+      return response.status(400).json({ error: 'Payment was not completed.' });
+    }
     const outcome = await database.transaction(async tx => {
       const order = await tx.get('SELECT * FROM orders WHERE reference = ? FOR UPDATE', [request.params.reference]);
       if (!order) return { httpStatus: 404, body: { error: `No order was found for payment reference ${request.params.reference}.` } };
@@ -329,7 +448,8 @@ router.get('/payments/verify/:reference', async (request, response) => {
           downloads: getDownloadItems(order, apiPublicUrl, licenseRights)
         }
       });
-      if (order.status === 'paid') return success();
+      if (order.status === 'paid' || order.status === 'partially_refunded') return success();
+      if (order.status === 'refunded') return { httpStatus: 409, body: { error: 'This order was refunded and cannot be marked paid again.' } };
       if (Number(payment.data.amount) !== Math.round(order.amount * 100) || payment.data.currency !== order.currency) return { httpStatus: 400, body: { error: 'Payment amount could not be verified.' } };
       await lockExclusiveBeats(tx, items);
       const conflictingBeatId = await hasConflictingExclusiveSale(tx, items, order.reference);

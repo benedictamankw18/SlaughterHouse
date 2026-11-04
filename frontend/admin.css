@@ -7,6 +7,7 @@
 .admin-tabs, .admin-toggle { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
 .admin-tab, .admin-toggle button, .admin-secondary-button { padding: 10px 14px; border: 1px solid rgba(255,255,255,.24); border-radius: 6px; background: transparent; color: #fff; cursor: pointer; font: inherit; }
 .admin-tab.active, .admin-toggle button.active, .admin-secondary-button:hover { border-color: #22c55e; background: #22c55e; color: #07130a; }
+.admin-alert-count { display: inline-grid; min-width: 20px; height: 20px; align-items: center; justify-items: center; margin-left: 5px; border-radius: 999px; background: #ef4444; color: #fff; font-size: .72rem; }
 .admin-section { display: none; }
 .admin-section.active { display: block; }
 .admin-form { display: grid; gap: 10px; }
@@ -47,6 +48,8 @@
 .admin-review-actions button { padding: 8px 12px; border: 1px solid rgba(255,255,255,.25); border-radius: 4px; background: transparent; color: #fff; cursor: pointer; }
 .admin-review-actions button:first-child { border-color: #22c55e; color: #86efac; }
 .admin-review-actions button:disabled { opacity: .55; cursor: wait; }
+.admin-notification-unread { border-left-color: #f59e0b; }
+.admin-delivery-status { display: inline-block; margin-left: 8px; padding: 2px 7px; border: 1px solid rgba(255,255,255,.25); border-radius: 999px; font-size: .72rem; text-transform: uppercase; }
 .analytics-chart { display: grid; min-height: 230px; grid-template-columns: repeat(6, minmax(0, 1fr)); align-items: end; gap: 12px; padding: 16px 0; border-bottom: 1px solid rgba(255,255,255,.2); }
 .analytics-bar { display: grid; height: 210px; grid-template-rows: 1fr auto auto; align-items: end; justify-items: center; gap: 7px; min-width: 0; }
 .analytics-bar-track { display: flex; width: min(48px, 75%); height: 100%; align-items: end; background: #202020; }

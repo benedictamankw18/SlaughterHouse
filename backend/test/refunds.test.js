@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { refundEventDetails, refundEventKey, applyRefund } = require('../services/refunds');
+const { refundEventDetails, refundEventKey, applyRefund, applyPaymentReversal } = require('../services/refunds');
 
 function createFakeDb({ booking = null, customer = { id: 5 }, admins = [] } = {}) {
   const calls = [];
@@ -22,7 +22,7 @@ function createFakeDb({ booking = null, customer = { id: 5 }, admins = [] } = {}
       return null;
     },
     async all(query) {
-      return /FROM users WHERE role = 'admin'/.test(query) ? admins : [];
+      return /FROM users WHERE role IN \('admin', 'super_admin'\)/.test(query) ? admins : [];
     }
   };
   return database;
@@ -111,6 +111,33 @@ test('a full booking refund cancels the booking and frees its slots', async () =
   assert.match(sql, /UPDATE bookings SET status = \?/);
   assert.match(sql, /UPDATE booking_availability SET status = \?, booking_id = NULL/);
   assert.deepEqual(result.manualReview, ['booking_session_in_past']);
+});
+
+test('payment reversal applies full-refund side effects to a settled order', async () => {
+  const db = createFakeDb({ admins: [{ id: 1 }] });
+  const result = await applyPaymentReversal(db, order(), {
+    reference: 'UBB-REFUND-1',
+    paymentData: { amount: 80000, currency: 'GHS' }
+  });
+  assert.equal(result.status, 'refunded');
+  assert.equal(result.full, true);
+  const sql = db.calls.map(call => call.query).join('\n');
+  assert.match(sql, /INSERT INTO payments .*status, amount, currency/s);
+  assert.match(sql, /UPDATE licenses SET revoked_at/);
+  assert.match(sql, /UPDATE merchandise SET stock_quantity = stock_quantity \+ 1/);
+});
+
+test('payment reversal closes an unsettled order without creating entitlements', async () => {
+  const db = createFakeDb({ admins: [{ id: 1 }] });
+  const result = await applyPaymentReversal(db, order({ status: 'pending' }), {
+    reference: 'UBB-REFUND-1',
+    paymentData: { amount: 80000, currency: 'GHS' }
+  });
+  assert.equal(result.status, 'refunded');
+  assert.equal(result.full, true);
+  const sql = db.calls.map(call => call.query).join('\n');
+  assert.match(sql, /UPDATE orders SET status = \?, refunded_amount = amount/);
+  assert.doesNotMatch(sql, /UPDATE licenses SET revoked_at/);
 });
 
 test('successive partial refunds cap at the order total and become a full refund', async () => {

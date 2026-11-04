@@ -121,8 +121,82 @@ function renderMerchandiseManagement() {
   }).join('');
 }
 
+function renderAdminNotifications(notifications, unreadCount) {
+  const badge = $('#admin-unread-count');
+  badge.textContent = unreadCount ? String(unreadCount) : '';
+  badge.hidden = !unreadCount;
+  const container = $('#admin-notifications-list');
+  if (!notifications.length) {
+    container.innerHTML = '<p>No administrator notifications yet.</p>';
+    return;
+  }
+  container.innerHTML = notifications.map(item => `<article class="admin-list-item ${item.read_at ? '' : 'admin-notification-unread'}">
+    <strong>${escapeHtml(item.title)}</strong><span class="admin-delivery-status">${item.read_at ? 'Read' : 'Unread'}</span>
+    <p>${escapeHtml(item.message)}<br>${escapeHtml(item.type)} · ${escapeHtml(item.created_at || '')}</p>
+    <div class="admin-review-actions"><button type="button" data-admin-notification-state="${item.read_at ? 'unread' : 'read'}" data-notification-id="${Number(item.id)}">Mark ${item.read_at ? 'unread' : 'read'}</button></div>
+  </article>`).join('');
+}
+
+function renderEmailDeliveries({ deliveries, counts }) {
+  $('#email-delivery-counts').innerHTML = ['pending', 'processing', 'sent', 'failed'].map(status => `<article class="admin-metric"><span>${status} email</span><strong>${Number(counts[status] || 0)}</strong></article>`).join('');
+  const container = $('#email-deliveries-list');
+  if (!deliveries.length) {
+    container.innerHTML = '<p>No email delivery records yet.</p>';
+    return;
+  }
+  container.innerHTML = deliveries.map(item => `<article class="admin-list-item">
+    <strong>${escapeHtml(item.template)}<span class="admin-delivery-status">${escapeHtml(item.status)}</span></strong>
+    <p>${escapeHtml(item.recipient)} · ${Number(item.attempts)} attempt(s) · queued ${escapeHtml(item.created_at || '')}${item.sent_at ? `<br>Sent ${escapeHtml(item.sent_at)}` : ''}${item.last_error ? `<br>Error: ${escapeHtml(item.last_error)}` : ''}</p>
+  </article>`).join('');
+}
+
+function renderLicenseRights(licenseRights) {
+  const canEdit = dashboardData.role === 'super_admin';
+  $('#license-rights-list').innerHTML = Object.entries(licenseRights).map(([type, rights]) => `<form class="admin-form admin-card license-rights-form" data-license-type="${escapeHtml(type)}">
+    <h3>${escapeHtml(type[0].toUpperCase() + type.slice(1))} license</h3>
+    <label>Download formats (comma-separated)<input name="formats" value="${escapeHtml((rights.formats || []).join(', '))}" ${canEdit ? '' : 'disabled'}></label>
+    <label><input name="commercialUse" type="checkbox" ${rights.commercialUse ? 'checked' : ''} ${canEdit ? '' : 'disabled'}> Commercial use</label>
+    <label><input name="distribution" type="checkbox" ${rights.distribution ? 'checked' : ''} ${canEdit ? '' : 'disabled'}> Distribution allowed</label>
+    <label><input name="resaleProhibited" type="checkbox" ${rights.resaleProhibited ? 'checked' : ''} ${canEdit ? '' : 'disabled'}> Resale prohibited</label>
+    <label>Usage limits (JSON; use null for unlimited)<textarea name="usageLimits" rows="3" ${canEdit ? '' : 'disabled'}>${escapeHtml(JSON.stringify(rights.usageLimits || {}, null, 2))}</textarea></label>
+    <label>Distribution rules (one per line)<textarea name="distributionRules" rows="4" ${canEdit ? '' : 'disabled'}>${escapeHtml((rights.distributionRules || []).join('\n'))}</textarea></label>
+    ${canEdit ? '<button type="submit">Save definition</button>' : ''}
+    <p class="admin-message" data-license-message></p>
+  </form>`).join('');
+  if (!canEdit) $('#license-rights-list').insertAdjacentHTML('afterbegin', '<p>Only a super-admin can edit license definitions.</p>');
+}
+
+async function loadLicenseRights() {
+  try {
+    const data = await api('/api/admin/license-rights');
+    renderLicenseRights(data.licenseRights || {});
+    message('license-rights-message', '');
+  } catch (error) {
+    message('license-rights-message', error.message || 'Could not load license definitions.', true);
+  }
+}
+
+async function loadAdminAlerts() {
+  try {
+    const [notifications, deliveries] = await Promise.all([
+      api('/api/admin/notifications'),
+      api('/api/admin/email-deliveries')
+    ]);
+    renderAdminNotifications(notifications.notifications || [], Number(notifications.unreadCount || 0));
+    renderEmailDeliveries({
+      deliveries: deliveries.deliveries || [],
+      counts: deliveries.counts || {}
+    });
+    $('#admin-alert-message').textContent = '';
+  } catch (error) {
+    message('admin-alert-message', error.message || 'Could not load administrator alerts.', true);
+  }
+}
+
 async function loadDashboard() {
   dashboardData = await api('/api/admin/data');
+  document.querySelector('[data-section="license-rights"]').hidden = false;
+  document.querySelector('[data-admin-section="license-rights"]').hidden = false;
   renderAnalytics(dashboardData.analytics || {});
   renderBeatManagement();
   renderMerchandiseManagement();
@@ -134,6 +208,8 @@ async function loadDashboard() {
   renderList('reviews-list', dashboardData.reviews || [], 'reviews');
   renderList('artists-list', dashboardData.artists || [], 'artists');
   renderList('withdrawals-list', dashboardData.withdrawals || [], 'withdrawals');
+  loadAdminAlerts();
+  loadLicenseRights();
   api('/api/admin/audit-logs?limit=50').then(data => renderList('audit-list', data.logs || [], 'audit')).catch(error => message('admin-login-message', error.message, true));
   document.querySelectorAll('[data-sale-type]').forEach(button => {
     const type = button.dataset.saleType;
@@ -177,6 +253,44 @@ document.querySelectorAll('.admin-tab').forEach(button => button.addEventListene
   document.querySelectorAll('.admin-tab').forEach(tab => tab.classList.toggle('active', tab === button));
   document.querySelectorAll('.admin-section').forEach(section => section.classList.toggle('active', section.dataset.adminSection === button.dataset.section));
 }));
+
+$('#admin-notifications-list').addEventListener('click', async event => {
+  const button = event.target.closest('[data-admin-notification-state]');
+  if (!button) return;
+  button.disabled = true;
+  try {
+    await api(`/api/admin/notifications/${button.dataset.notificationId}/${button.dataset.adminNotificationState}`, { method: 'PATCH' });
+    await loadAdminAlerts();
+  } catch (error) {
+    button.disabled = false;
+    message('admin-alert-message', error.message, true);
+  }
+});
+
+$('#license-rights-list').addEventListener('submit', async event => {
+  const form = event.target.closest('[data-license-type]');
+  if (!form) return;
+  event.preventDefault();
+  const status = form.querySelector('[data-license-message]');
+  try {
+    let usageLimits;
+    try { usageLimits = JSON.parse(form.elements.usageLimits.value); } catch { throw new Error('Usage limits must be valid JSON.'); }
+    const definition = {
+      formats: form.elements.formats.value.split(',').map(format => format.trim()).filter(Boolean),
+      commercialUse: form.elements.commercialUse.checked,
+      distribution: form.elements.distribution.checked,
+      resaleProhibited: form.elements.resaleProhibited.checked,
+      usageLimits,
+      distributionRules: form.elements.distributionRules.value.split(/\r?\n/).map(rule => rule.trim()).filter(Boolean)
+    };
+    await api(`/api/admin/license-rights/${encodeURIComponent(form.dataset.licenseType)}`, { method: 'PUT', body: JSON.stringify(definition) });
+    status.textContent = 'License definition saved. New purchases will use this version.';
+    status.classList.remove('error');
+  } catch (error) {
+    status.textContent = error.message || 'Could not save this license definition.';
+    status.classList.add('error');
+  }
+});
 
 document.querySelectorAll('[data-content-type]').forEach(button => button.addEventListener('click', () => {
   document.querySelectorAll('[data-content-type]').forEach(item => item.classList.toggle('active', item === button));

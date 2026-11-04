@@ -6,7 +6,7 @@ const { requireCustomer } = require('../session-store');
 const { verifyDownloadToken, isDownloadableOrderStatus } = require('../services/downloads');
 const { databaseError } = require('../services/error-messages');
 const { rateLimit } = require('../services/rate-limit');
-const { DEFAULT_LICENSE_RIGHTS, parseRights, rightsFor, allowedFormats } = require('../services/license-rights');
+const { rightsForPurchasedLicense, allowedFormats } = require('../services/license-rights');
 
 const router = express.Router();
 const queryOne = (query, parameters = []) => new Promise((resolve, reject) => database.get(query, parameters, (error, row) => error ? reject(error) : resolve(row)));
@@ -34,7 +34,7 @@ router.get('/orders/:reference/downloads/:productId', rateLimit({ windowMs: 60 *
     if (licenseRow?.revoked_at) return response.status(403).json({ error: 'This license has been revoked, so the download is no longer available.' });
 
     const rightsRow = await queryOne('SELECT rights_json FROM license_rights WHERE license_type = ?', [license]);
-    const rights = parseRights(rightsRow?.rights_json) || parseRights(licenseRow?.rights_json) || rightsFor(DEFAULT_LICENSE_RIGHTS, license);
+    const rights = rightsForPurchasedLicense(licenseRow?.rights_json, rightsRow?.rights_json, license);
     if (!allowedFormats(rights).has(format)) return response.status(403).json({ error: 'This format is not included in your license.' });
 
     const beat = await queryOne('SELECT mp3_file, wav_file, stems_file FROM beats WHERE id = ?', [item.productId]);

@@ -3,11 +3,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const database = require('../database');
 const config = require('../config');
-const { requireCustomer } = require('../session-store');
+const sessions = require('../session-store');
+const { requireCustomer } = sessions;
 const { databaseError } = require('../services/error-messages');
 const { createLicenseCertificatePdf } = require('../services/license-certificate');
 const validators = require('../services/input-validation');
 const { rateLimit } = require('../services/rate-limit');
+const { notifyAdminsSafely } = require('../services/notifications');
 
 const router = express.Router();
 const queryRows = (query, parameters = []) => new Promise((resolve, reject) => database.all(query, parameters, (error, rows) => error ? reject(error) : resolve(rows || [])));
@@ -36,9 +38,9 @@ function mapBeat(beat, defaults) {
   };
 }
 
-router.get('/health', (request, response) => response.json({ status: 'ok' }));
+router.get('/health', sessions.allowVisitor, (request, response) => response.json({ status: 'ok' }));
 
-router.get('/beats', async (request, response) => {
+router.get('/beats', sessions.allowVisitor, async (request, response) => {
   const page = Math.max(1, Number.parseInt(request.query.page, 10) || 1);
   const pageSize = Math.min(50, Math.max(1, Number.parseInt(request.query.pageSize, 10) || 12));
   const search = String(request.query.search || '').trim();
@@ -73,7 +75,7 @@ router.get('/beats', async (request, response) => {
   }
 });
 
-router.get('/beats/:id', async (request, response) => {
+router.get('/beats/:id', sessions.allowVisitor, async (request, response) => {
   if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) return response.status(400).json({ error: 'Beat ID must be a positive whole number.' });
   try {
     const [beat, defaults] = await Promise.all([
@@ -120,20 +122,27 @@ router.get('/customer/purchases', requireCustomer, async (request, response) => 
 router.get('/customer/orders', requireCustomer, async (request, response) => {
   try {
     const orders = await queryRows(
-      `SELECT id, reference, status, amount, currency, created_at
+      `SELECT id, reference, status, fulfillment_status, amount, currency, created_at
        FROM orders
        WHERE lower(customer_email) = lower(?)
        ORDER BY created_at DESC`,
       [request.customer.email]
     );
-    const ordersWithItems = await Promise.all(orders.map(async order => ({
-      ...order,
-      items: await queryRows(
-        `SELECT product_type, product_name, license_type, unit_amount, quantity
-         FROM order_items WHERE order_id = ? ORDER BY id`,
-        [order.id]
-      )
-    })));
+    const ordersWithItems = await Promise.all(orders.map(async order => {
+      const [items, fulfillmentHistory] = await Promise.all([
+        queryRows(
+          `SELECT product_type, product_name, license_type, unit_amount, quantity
+           FROM order_items WHERE order_id = ? ORDER BY id`,
+          [order.id]
+        ),
+        queryRows(
+          `SELECT status, created_at
+           FROM order_fulfillment_history WHERE order_id = ? ORDER BY created_at, id`,
+          [order.id]
+        )
+      ]);
+      return { ...order, items, fulfillmentHistory };
+    }));
     response.json({ orders: ordersWithItems });
   } catch (error) {
     response.status(500).json({ error: databaseError('Loading your orders failed.', error) });
@@ -221,7 +230,7 @@ router.get('/customer/bookings', requireCustomer, async (request, response) => {
 router.get('/customer/notifications', requireCustomer, async (request, response) => {
   try {
     const notifications = await queryRows(
-      `SELECT id, type, title, message, read_at, created_at
+      `SELECT id, type, title, message, read_at, read_at IS NOT NULL AS is_read, created_at
        FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 100`,
       [request.customer.id]
     );
@@ -239,8 +248,29 @@ router.patch('/customer/notifications/:id/read', requireCustomer, async (request
       [Number(request.params.id), request.customer.id],
       function (error) { if (error) reject(error); else resolve(this); }
     ));
-    if (!result.changes) return response.status(404).json({ error: 'Notification was not found.' });
+    if (!result.changes) {
+      const notification = await queryOne('SELECT id FROM notifications WHERE id = ? AND user_id = ?', [Number(request.params.id), request.customer.id]);
+      if (!notification) return response.status(404).json({ error: 'Notification was not found.' });
+    }
     response.json({ id: Number(request.params.id), read: true });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Updating the notification failed.', error) });
+  }
+});
+
+router.patch('/customer/notifications/:id/unread', requireCustomer, async (request, response) => {
+  if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) return response.status(400).json({ error: 'Notification ID must be a positive whole number.' });
+  try {
+    const result = await new Promise((resolve, reject) => database.run(
+      'UPDATE notifications SET read_at = NULL WHERE id = ? AND user_id = ?',
+      [Number(request.params.id), request.customer.id],
+      function (error) { if (error) reject(error); else resolve(this); }
+    ));
+    if (!result.changes) {
+      const notification = await queryOne('SELECT id FROM notifications WHERE id = ? AND user_id = ?', [Number(request.params.id), request.customer.id]);
+      if (!notification) return response.status(404).json({ error: 'Notification was not found.' });
+    }
+    response.json({ id: Number(request.params.id), read: false });
   } catch (error) {
     response.status(500).json({ error: databaseError('Updating the notification failed.', error) });
   }
@@ -284,12 +314,18 @@ router.post('/reviews', requireCustomer, rateLimit({ windowMs: 60 * 60 * 1000, m
   if (validationError) return response.status(400).json({ error: validationError });
   database.run('INSERT INTO customer_reviews (user_id, customer_name, customer_email, rating, review_text) VALUES (?, ?, ?, ?, ?)', [request.customer.id, name, email, rating, review], function (error) {
     if (error) return response.status(500).json({ error: databaseError('Submitting your review failed.', error) });
+    notifyAdminsSafely(database, {
+      type: 'review_submitted',
+      title: 'Review awaiting moderation',
+      message: `${name} submitted a ${rating}-star review awaiting approval.`,
+      dedupeKey: `review-submitted:${this.lastID}`
+    });
     response.status(201).json({ id: this.lastID, message: 'Thanks. Your review is waiting for approval.' });
   });
 });
 
 router.get('/users/count', (request, response) => {
-  database.all("SELECT COUNT(*) AS count FROM users WHERE role <> 'admin'", [], (error, rows) => {
+  database.all("SELECT COUNT(*) AS count FROM users WHERE role NOT IN ('admin', 'super_admin')", [], (error, rows) => {
     if (error) return response.status(500).json({ error: databaseError('Reading the user count failed.', error) });
     response.json({ count: Number(rows?.[0]?.count || 0) });
   });

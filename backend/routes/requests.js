@@ -54,7 +54,7 @@ router.post('/requests', async (request, response) => {
   } catch (error) {
     return response.status(400).json({ error: error.message || 'The sample audio could not be saved. Check the file type and size, then try again.' });
   }
-  database.get('SELECT id FROM users WHERE lower(email) = lower(?) AND role <> ?', [String(email).trim(), 'admin'], (lookupError, user) => {
+  database.get("SELECT id FROM users WHERE lower(email) = lower(?) AND role NOT IN ('admin', 'super_admin')", [String(email).trim()], (lookupError, user) => {
     if (lookupError) return response.status(500).json({ error: databaseError('Looking up the request customer failed.', lookupError) });
     database.run('INSERT INTO customization_requests (user_id, request_type, customer_name, customer_email, product_name, details, sample_audio_file, sample_link, requested_license, license_price_gsh) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [user?.id || null, normalizedRequestType, name.trim(), email.trim().toLowerCase(), productName || null, details.trim(), sampleAudioFile, sampleLink, requestedLicense, licensePrice], function (error) {
       if (error && sampleAudioFile) fs.unlinkSync(path.join(config.uploadDirectory, sampleAudioFile));

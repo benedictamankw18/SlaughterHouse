@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const config = require('./config');
 const database = require('./database');
+const { startEmailOutbox } = require('./services/email/outbox');
 
 const app = express();
 
@@ -46,5 +47,6 @@ app.use((error, request, response, next) => {
 });
 
 app.listen(config.port, () => {
+  startEmailOutbox(database, { apiKey: config.emailApiKey, from: config.emailFrom });
   console.log(`UltBigBoy backend running at http://localhost:${config.port}`);
 });

@@ -1,4 +1,6 @@
 const { createNotificationSafely } = require('./notifications');
+const { isEmailAddress, queueEmailSafely } = require('./email/outbox');
+const config = require('../config');
 
 const FULL_REFUND_TOLERANCE = 0.005;
 
@@ -22,15 +24,38 @@ function refundEventKey(event) {
 }
 
 async function notifyAdmins(db, { type, title, message }) {
-  const admins = await db.all("SELECT id FROM users WHERE role = 'admin'");
+  const admins = await db.all("SELECT id FROM users WHERE role IN ('admin', 'super_admin')");
   for (const admin of admins || []) {
     await createNotificationSafely(db, { userId: admin.id, type, title, message });
   }
 }
 
 async function notifyCustomer(db, order, { type, title, message }) {
-  const customer = await db.get('SELECT id FROM users WHERE lower(email) = lower(?) AND role <> ?', [order.customer_email, 'admin']);
+  const customer = await db.get("SELECT id FROM users WHERE lower(email) = lower(?) AND role NOT IN ('admin', 'super_admin')", [order.customer_email]);
   if (customer?.id) await createNotificationSafely(db, { userId: customer.id, type, title, message });
+}
+
+async function emailAdmins(db, order, refundedAmount) {
+  let admins;
+  try {
+    admins = await db.all("SELECT id, name, email FROM users WHERE role IN ('admin', 'super_admin')");
+  } catch (error) {
+    console.error('Could not load administrator recipients for refund email:', error.code || error.message);
+    return;
+  }
+  for (const admin of admins || []) {
+    if (!isEmailAddress(admin.email)) continue;
+    await queueEmailSafely(db, {
+      to: admin.email,
+      template: 'admin_alert',
+      idempotencyKey: `refund-review:${order.reference}:${refundedAmount.toFixed(2)}:${admin.id}`,
+      data: {
+        title: 'Refund needs manual review',
+        message: `Order ${order.reference} needs review after a full refund. Merchandise fulfillment or a past booking may require follow-up.`,
+        reference: order.reference
+      }
+    });
+  }
 }
 
 function parseItems(order) {
@@ -107,6 +132,20 @@ async function applyRefund(db, order, { amountGhs, reference, reason = null }) {
     title: manualReview.length ? 'Refund needs manual review' : 'Refund processed',
     message: `Order ${order.reference}: ${full ? 'full' : 'partial'} refund of ${refundedAmount.toFixed(2)} ${order.currency}.${summary}`
   });
+  await queueEmailSafely(db, {
+    to: order.customer_email,
+    template: 'refund_processed',
+    idempotencyKey: `refund-customer:${order.reference}:${refundedAmount.toFixed(2)}`,
+    data: {
+      name: order.customer_name,
+      reference: order.reference,
+      amount: amountGhs,
+      currency: order.currency,
+      full,
+      orderUrl: new URL('/', config.frontendOrigin).toString()
+    }
+  });
+  if (manualReview.length) await emailAdmins(db, order, refundedAmount);
 
   return {
     full,
@@ -118,4 +157,42 @@ async function applyRefund(db, order, { amountGhs, reference, reason = null }) {
   };
 }
 
-module.exports = { FULL_REFUND_TOLERANCE, refundEventDetails, refundEventKey, applyRefund };
+async function applyPaymentReversal(db, order, { reference, paymentData }) {
+  const amountGhs = Number.isFinite(Number(paymentData?.amount)) && Number(paymentData.amount) > 0
+    ? Number(paymentData.amount) / 100
+    : Number(order.amount);
+  await db.run(
+    `INSERT INTO payments (order_id, provider, provider_reference, status, amount, currency, provider_payload, verified_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+     ON DUPLICATE KEY UPDATE order_id = VALUES(order_id), status = VALUES(status), amount = VALUES(amount), currency = VALUES(currency), provider_payload = VALUES(provider_payload), verified_at = VALUES(verified_at)`,
+    [order.id, 'paystack', reference, 'reversed', amountGhs, paymentData?.currency || order.currency, JSON.stringify(paymentData || {})]
+  );
+  if (['paid', 'partially_refunded'].includes(String(order.status || ''))) {
+    return applyRefund(db, order, {
+      amountGhs,
+      reference,
+      reason: 'Payment reversed by provider'
+    });
+  }
+  if (['pending', 'failed', 'abandoned'].includes(String(order.status || ''))) {
+    await db.run(
+      'UPDATE orders SET status = ?, refunded_amount = amount, refunded_at = CURRENT_TIMESTAMP WHERE id = ?',
+      ['refunded', order.id]
+    );
+    await notifyAdmins(db, {
+      type: 'payment_reversed',
+      title: 'Payment reversed',
+      message: `Payment for order ${order.reference} was reversed before settlement.`
+    });
+    return {
+      full: true,
+      status: 'refunded',
+      refundedAmount: Number(order.amount),
+      actions: ['marked the unsettled order refunded'],
+      manualReview: []
+    };
+  }
+  return { ignored: true, reason: `order_${order.status || 'unknown'}` };
+}
+
+module.exports = { FULL_REFUND_TOLERANCE, refundEventDetails, refundEventKey, applyRefund, applyPaymentReversal };

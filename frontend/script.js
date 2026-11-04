@@ -54,6 +54,38 @@ if (loginButton) {
         <p class="auth-message" id="login-message" role="status" aria-live="polite"></p>
       </form>
     </div>
+    <div class="auth-view" data-auth-view="reset-request">
+      <form class="auth-form" id="reset-request-form">
+        <h3>Reset your password</h3>
+        <label for="reset-request-email">Account email</label>
+        <input id="reset-request-email" name="email" type="email" autocomplete="email" required>
+        <button class="auth-primary-button" type="submit">Send reset link</button>
+        <button class="auth-link-button" data-auth-switch="login" type="button">Back to login</button>
+        <p class="auth-message" id="reset-request-message" role="status" aria-live="polite"></p>
+      </form>
+    </div>
+    <div class="auth-view" data-auth-view="reset-password">
+      <form class="auth-form" id="reset-password-form">
+        <h3>Choose a new password</h3>
+        <input name="token" type="hidden">
+        <label for="reset-new-password">New password</label>
+        <input id="reset-new-password" name="password" type="password" minlength="8" pattern="[A-Za-z0-9]{8,}" autocomplete="new-password" required>
+        <label for="reset-confirm-password">Confirm new password</label>
+        <input id="reset-confirm-password" name="confirmPassword" type="password" minlength="8" pattern="[A-Za-z0-9]{8,}" autocomplete="new-password" required>
+        <p class="auth-password-hint">At least 8 characters, letters and numbers only.</p>
+        <button class="auth-primary-button" type="submit">Update password</button>
+        <p class="auth-message" id="reset-password-message" role="status" aria-live="polite"></p>
+      </form>
+    </div>
+    <div class="auth-view" data-auth-view="verify-email">
+      <form class="auth-form" id="verify-email-form">
+        <h3>Verify your email address</h3>
+        <input name="token" type="hidden">
+        <p>Confirm your email address to finish setting up your account.</p>
+        <button class="auth-primary-button" type="submit">Verify email</button>
+        <p class="auth-message" id="verify-email-message" role="status" aria-live="polite"></p>
+      </form>
+    </div>
     <div class="auth-view" data-auth-view="account">
       <div class="auth-account-summary">
         <p class="section-kicker">Signed in</p>
@@ -172,7 +204,10 @@ if (loginButton) {
         <button class="auth-primary-button" type="submit">Save profile</button>
         <p class="auth-message" data-profile-message role="status"></p>
       </form>`;
-      if (type === 'orders') return `<article><strong>${escapeHTML(item.reference)}</strong><span>${escapeHTML(item.status)} · ${accountFormatMoney(item.amount)} · ${escapeHTML(item.created_at || '')}</span><span>${item.items.map(orderItem => escapeHTML(orderItem.product_name || 'Item')).join(', ')}</span></article>`;
+      if (type === 'orders') {
+        const history = (item.fulfillmentHistory || []).map(entry => `<span>Fulfillment: ${escapeHTML(entry.status)} · ${escapeHTML(entry.created_at || '')}</span>`).join('');
+        return `<article><strong>${escapeHTML(item.reference)}</strong><span>Payment: ${escapeHTML(item.status)} · ${accountFormatMoney(item.amount)} · ${escapeHTML(item.created_at || '')}</span><span>Fulfillment: ${escapeHTML(item.fulfillment_status || 'unfulfilled')}</span>${item.items.map(orderItem => `<span>${escapeHTML(orderItem.product_name || 'Item')}${orderItem.license_type ? ` · ${escapeHTML(orderItem.license_type)} license` : ''}</span>`).join('')}${history}</article>`;
+      }
       if (type === 'notifications') return `<article class="${item.read_at ? '' : 'account-notification-unread'}" data-notification-id="${Number(item.id)}"><strong>${escapeHTML(item.title)}</strong><span>${escapeHTML(item.message)} · ${escapeHTML(item.created_at || '')}</span>${item.read_at ? '' : '<button type="button" data-mark-notification-read>Mark read</button>'}</article>`;
       if (type === 'requests') return `<article><strong>${escapeHTML(item.product_name || `${item.request_type} request`)}</strong><span>Status: ${escapeHTML(item.status)} · ${item.quote_gsh === null ? 'No quote yet' : accountFormatMoney(item.quote_gsh)} · ${escapeHTML(item.created_at || '')}</span>${item.admin_notes ? `<span>Studio note: ${escapeHTML(item.admin_notes)}</span>` : ''}</article>`;
       return `<article><strong>${escapeHTML(item.title)}</strong><span>${escapeHTML(item.genre || 'Beat')} · Added ${escapeHTML(item.addedAt || '')}</span></article>`;
@@ -279,7 +314,7 @@ if (loginButton) {
   });
   authPanel.querySelectorAll('[data-auth-switch]').forEach(button => button.addEventListener('click', () => setAuthView(button.dataset.authSwitch)));
   authPanel.querySelectorAll('.auth-role-button').forEach(button => button.addEventListener('click', () => setSignupRole(button.dataset.role)));
-  authPanel.querySelector('#forgot-password-button').addEventListener('click', () => setAuthMessage('login-message', 'Password reset is not available yet. Please contact the producer.'));
+  authPanel.querySelector('#forgot-password-button').addEventListener('click', () => setAuthView('reset-request'));
   authPanel.querySelector('#logout-button').addEventListener('click', async () => {
     const token = sessionStorage.getItem('customerToken');
     const logoutMessage = document.getElementById('logout-message');
@@ -312,7 +347,7 @@ if (loginButton) {
       const result = await fetch(`${API}/api/auth/signup`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...Object.fromEntries(form), phone }) });
       const data = await result.json();
       if (!result.ok) throw new Error(data.error);
-      setAuthMessage('signup-message', 'Account created. You can now log in.', false);
+      setAuthMessage('signup-message', `${data.message || 'Account created.'}${data.verificationToken ? ` Development verification token: ${data.verificationToken}` : ''}`, false);
       event.currentTarget.reset();
       setSignupRole('artist');
     } catch (error) {
@@ -345,6 +380,96 @@ if (loginButton) {
       setAuthMessage('login-message', error.message || 'Could not log in.');
     }
   });
+
+  authPanel.querySelector('#reset-request-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    try {
+      const email = new FormData(event.currentTarget).get('email');
+      const response = await fetch(`${API}/api/auth/request-password-reset`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      const message = data.resetToken
+        ? `${data.message} Development reset token: ${data.resetToken}`
+        : data.message;
+      setAuthMessage('reset-request-message', message, false);
+    } catch (error) {
+      setAuthMessage('reset-request-message', error.message || 'Could not request a password reset.');
+    }
+  });
+
+  authPanel.querySelector('#reset-password-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = Object.fromEntries(new FormData(event.currentTarget));
+    if (form.password !== form.confirmPassword) return setAuthMessage('reset-password-message', 'Passwords do not match.');
+    try {
+      const response = await fetch(`${API}/api/auth/reset-password`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: form.token, password: form.password })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      setAuthMessage('reset-password-message', data.message, false);
+      const params = new URLSearchParams(location.search);
+      params.delete('resetToken');
+      const query = params.toString();
+      history.replaceState(null, '', `${location.pathname}${query ? `?${query}` : ''}${location.hash}`);
+      setTimeout(() => {
+        setAuthView('login');
+        setAuthMessage('login-message', 'Password updated. You can now log in.', false);
+      }, 1200);
+    } catch (error) {
+      setAuthMessage('reset-password-message', error.message || 'Could not update the password.');
+    }
+  });
+
+  authPanel.querySelector('#verify-email-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    try {
+      const token = new FormData(event.currentTarget).get('token');
+      const response = await fetch(`${API}/api/auth/verify-email`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      setAuthMessage('verify-email-message', data.message, false);
+    } catch (error) {
+      setAuthMessage('verify-email-message', error.message || 'Could not verify the email address.');
+    } finally {
+      const params = new URLSearchParams(location.search);
+      params.delete('verifyToken');
+      const query = params.toString();
+      history.replaceState(null, '', `${location.pathname}${query ? `?${query}` : ''}${location.hash}`);
+    }
+  });
+
+  const actionParams = new URLSearchParams(location.search);
+  const verificationToken = actionParams.get('verifyToken');
+  const resetToken = actionParams.get('resetToken');
+  if (verificationToken || resetToken) {
+    authPanel.hidden = false;
+    loginButton.setAttribute('aria-expanded', 'true');
+    actionParams.delete('verifyToken');
+    actionParams.delete('resetToken');
+    const cleanedQuery = actionParams.toString();
+    history.replaceState(null, '', `${location.pathname}${cleanedQuery ? `?${cleanedQuery}` : ''}${location.hash}`);
+    if (resetToken) {
+      authPanel.querySelector('#reset-password-form [name="token"]').value = resetToken;
+      setAuthView('reset-password');
+    } else {
+      authPanel.querySelector('#verify-email-form [name="token"]').value = verificationToken;
+      setAuthView('verify-email');
+    }
+  }
 
   refreshAuthPanel();
 }

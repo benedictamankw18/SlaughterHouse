@@ -7,8 +7,11 @@ const { databaseError } = require('../services/error-messages');
 const validators = require('../services/input-validation');
 const { rateLimit } = require('../services/rate-limit');
 const { recordAuditSafely } = require('../services/audit');
-const { createNotificationSafely } = require('../services/notifications');
+const { createNotificationSafely, notifyAdminsSafely } = require('../services/notifications');
+const { queueEmailSafely } = require('../services/email/outbox');
 const { isAvailableBookingSlot } = require('../services/booking');
+const { loadLicenseRights, saveLicenseRights } = require('../services/license-rights');
+const { FULFILLMENT_STATUSES, updateFulfillmentStatus } = require('../services/fulfillment');
 
 const router = express.Router();
 router.use(rateLimit({ windowMs: 60 * 1000, max: 60, message: 'Too many administrator requests. Try again shortly.' }));
@@ -61,8 +64,96 @@ router.get('/admin/data', sessions.requireAdmin, (request, response) => {
       withdrawals: withdrawals.reduce((sum, withdrawal) => sum + Number(withdrawal.amount || 0), 0),
       monthlySales: Object.entries(monthlySales).sort(([left], [right]) => left.localeCompare(right)).slice(-6).map(([month, amount]) => ({ month, amount }))
     };
-    response.json({ beats, merchandise, sales, requests, bookings, orders, merchandiseOrders, reviews, artists: artistsWithPurchases, withdrawals, analytics });
+    response.json({ role: request.role, beats, merchandise, sales, requests, bookings, orders, merchandiseOrders, reviews, artists: artistsWithPurchases, withdrawals, analytics });
   }).catch(error => response.status(500).json({ error: databaseError('Loading administrator data failed.', error) }));
+});
+
+router.get('/admin/license-rights', sessions.requireAdmin, async (request, response) => {
+  try {
+    response.json({ licenseRights: await loadLicenseRights(database) });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Loading license definitions failed.', error) });
+  }
+});
+
+router.put('/admin/license-rights/:type', sessions.requirePermission('admin:manage_license_rights'), async (request, response) => {
+  try {
+    const result = await saveLicenseRights(database, request.params.type, request.body);
+    if (result.error) return response.status(400).json({ error: result.error });
+    recordAuditSafely(database, {
+      userId: request.admin.id,
+      action: 'license_rights_updated',
+      entityType: 'license_rights',
+      details: { licenseType: request.params.type.toLowerCase(), rights: result.value },
+      ipAddress: request.ip
+    });
+    response.json({ licenseType: request.params.type.toLowerCase(), rights: result.value });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Updating the license definition failed.', error) });
+  }
+});
+
+router.get('/admin/notifications', sessions.requireAdmin, async (request, response) => {
+  try {
+    const notifications = await queryRows(
+      `SELECT id, type, title, message, read_at, read_at IS NOT NULL AS is_read, created_at
+       FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 100`,
+      [request.admin.id]
+    );
+    response.json({
+      notifications,
+      unreadCount: notifications.filter(notification => !notification.read_at).length
+    });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Loading administrator notifications failed.', error) });
+  }
+});
+
+router.patch('/admin/notifications/:id/:state', sessions.requireAdmin, async (request, response) => {
+  if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) return response.status(400).json({ error: 'Notification ID must be a positive whole number.' });
+  if (!['read', 'unread'].includes(request.params.state)) return response.status(400).json({ error: 'Notification state must be read or unread.' });
+  try {
+    const readAt = request.params.state === 'read' ? 'CURRENT_TIMESTAMP' : 'NULL';
+    const result = await new Promise((resolve, reject) => database.run(
+      `UPDATE notifications SET read_at = ${readAt} WHERE id = ? AND user_id = ?`,
+      [Number(request.params.id), request.admin.id],
+      function (error) { if (error) reject(error); else resolve(this); }
+    ));
+    if (!result.changes) {
+      const notification = await new Promise((resolve, reject) => database.get(
+        'SELECT id FROM notifications WHERE id = ? AND user_id = ?',
+        [Number(request.params.id), request.admin.id],
+        (error, row) => error ? reject(error) : resolve(row)
+      ));
+      if (!notification) return response.status(404).json({ error: 'Notification was not found.' });
+    }
+    response.json({ id: Number(request.params.id), read: request.params.state === 'read' });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Updating the administrator notification failed.', error) });
+  }
+});
+
+router.get('/admin/email-deliveries', sessions.requireAdmin, async (request, response) => {
+  const status = String(request.query.status || '').trim().toLowerCase();
+  const validStatuses = ['pending', 'processing', 'sent', 'failed'];
+  if (status && !validStatuses.includes(status)) return response.status(400).json({ error: `Email status must be one of: ${validStatuses.join(', ')}.` });
+  try {
+    const [deliveries, counts] = await Promise.all([
+      queryRows(
+        `SELECT id, recipient, template, status, attempts, next_attempt_at, sent_at, last_error, created_at
+         FROM email_outbox ${status ? 'WHERE status = ?' : ''}
+         ORDER BY created_at DESC LIMIT 100`,
+        status ? [status] : []
+      ),
+      queryRows('SELECT status, COUNT(*) AS count FROM email_outbox GROUP BY status')
+    ]);
+    response.json({
+      deliveries,
+      counts: Object.fromEntries(counts.map(row => [row.status, Number(row.count)]))
+    });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Loading email delivery status failed.', error) });
+  }
 });
 
 router.get('/admin/audit-logs', sessions.requireAdmin, (request, response) => {
@@ -105,19 +196,32 @@ router.get('/admin/orders.csv', sessions.requireAdmin, (request, response) => {
 
 router.patch('/admin/orders/:reference/fulfillment', sessions.requireAdmin, (request, response) => {
   const status = String(request.body?.status || '').trim().toLowerCase();
-  const allowedStatuses = ['unfulfilled', 'shipped', 'delivered'];
-  if (!allowedStatuses.includes(status)) return response.status(400).json({ error: `Fulfillment status must be one of: ${allowedStatuses.join(', ')}.` });
-  database.get('SELECT id, reference, items_json, status AS order_status FROM orders WHERE reference = ?', [request.params.reference], (error, order) => {
+  if (!FULFILLMENT_STATUSES.includes(status)) return response.status(400).json({ error: `Fulfillment status must be one of: ${FULFILLMENT_STATUSES.join(', ')}.` });
+  database.get('SELECT id, reference, items_json FROM orders WHERE reference = ?', [request.params.reference], async (error, order) => {
     if (error) return response.status(500).json({ error: databaseError('Loading the order failed.', error) });
     if (!order) return response.status(404).json({ error: `No order was found with reference ${request.params.reference}.` });
     let items;
     try { items = JSON.parse(order.items_json); } catch { return response.status(500).json({ error: 'Order data is invalid.' }); }
     if (!Array.isArray(items) || !items.some(item => item.type === 'merchandise')) return response.status(400).json({ error: 'Fulfillment tracking only applies to orders that contain merchandise.' });
-    database.run('UPDATE orders SET fulfillment_status = ? WHERE id = ?', [status, order.id], runError => {
-      if (runError) return response.status(500).json({ error: databaseError('Updating fulfillment failed.', runError) });
-      recordAuditSafely(database, { userId: request.admin.id, action: 'order_fulfillment_updated', entityType: 'order', entityId: order.id, details: { reference: order.reference, fulfillmentStatus: status }, ipAddress: request.ip });
-      response.json({ reference: order.reference, fulfillmentStatus: status });
-    });
+    try {
+      const result = await database.transaction(tx => updateFulfillmentStatus(tx, {
+        orderId: order.id,
+        status,
+        adminId: request.admin.id
+      }));
+      if (result.notFound) return response.status(404).json({ error: `No order was found with reference ${request.params.reference}.` });
+      if (result.changed) recordAuditSafely(database, {
+        userId: request.admin.id,
+        action: 'order_fulfillment_updated',
+        entityType: 'order',
+        entityId: order.id,
+        details: { reference: order.reference, previousStatus: result.previousStatus, fulfillmentStatus: status },
+        ipAddress: request.ip
+      });
+      response.json({ reference: order.reference, fulfillmentStatus: status, changed: result.changed });
+    } catch (updateError) {
+      response.status(500).json({ error: databaseError('Updating fulfillment failed.', updateError) });
+    }
   });
 });
 
@@ -206,6 +310,12 @@ router.patch('/admin/merchandise/:id/inventory', sessions.requireAdmin, (request
     if (error) return response.status(500).json({ error: databaseError('Updating merchandise inventory failed.', error) });
     if (!this.changes) return response.status(404).json({ error: `No merchandise was found with ID ${request.params.id}.` });
     recordAuditSafely(database, { userId: request.admin.id, action: 'merchandise_inventory_changed', entityType: 'merchandise', entityId: Number(request.params.id), details: { stockQuantity: stock }, ipAddress: request.ip });
+    if (stock !== null && stock <= 5) notifyAdminsSafely(database, {
+      type: 'low_stock',
+      title: 'Merchandise stock is low',
+      message: `Merchandise item #${request.params.id} has been set to ${stock} item${stock === 1 ? '' : 's'} remaining.`,
+      dedupeKey: `low-stock-manual:${request.params.id}:${stock}`
+    });
     response.json({ id: Number(request.params.id), stockQuantity: stock });
   });
 });
@@ -219,8 +329,8 @@ router.post('/admin/withdraw', sessions.requireAdmin, async (request, response) 
   let admin;
   try {
     admin = await new Promise((resolve, reject) => database.get(
-      'SELECT password_hash FROM users WHERE id = ? AND role = ?',
-      [request.admin.id, 'admin'],
+      "SELECT password_hash FROM users WHERE id = ? AND role IN ('admin', 'super_admin')",
+      [request.admin.id],
       (error, row) => error ? reject(error) : resolve(row)
     ));
   } catch (error) {
@@ -280,10 +390,31 @@ router.patch('/admin/bookings/:id/status', sessions.requireAdmin, (request, resp
     database.run('UPDATE bookings SET status = ?, admin_notes = COALESCE(?, admin_notes) WHERE id = ?', [status, notes, Number(request.params.id)], function (error) {
       if (error) return response.status(500).json({ error: databaseError('Updating the booking status failed.', error) });
       recordAuditSafely(database, { userId: request.admin.id, action: 'booking_status_changed', entityType: 'booking', entityId: Number(request.params.id), details: { previousStatus: booking.status, status, notes: notes || booking.admin_notes || null }, ipAddress: request.ip });
-      database.get('SELECT email, service FROM bookings WHERE id = ?', [Number(request.params.id)], async (emailError, updatedBooking) => {
+      database.get('SELECT name, email, service, booking_slots_json, payment_reference FROM bookings WHERE id = ?', [Number(request.params.id)], async (emailError, updatedBooking) => {
         if (emailError) return response.status(500).json({ error: databaseError('Loading the booking customer failed.', emailError) });
         try {
-          const customer = await new Promise((resolve, reject) => database.get('SELECT id FROM users WHERE lower(email) = lower(?) AND role <> ?', [updatedBooking.email, 'admin'], (lookupError, user) => lookupError ? reject(lookupError) : resolve(user)));
+          if (status === 'cancelled' && booking.status !== 'cancelled') {
+            let slots = [];
+            try {
+              const parsedSlots = JSON.parse(updatedBooking.booking_slots_json || '[]');
+              if (Array.isArray(parsedSlots)) slots = parsedSlots;
+            } catch (error) {
+              console.error('Booking cancellation email slot data is invalid:', error.message);
+            }
+            await queueEmailSafely(database, {
+              to: updatedBooking.email,
+              template: 'booking_cancelled',
+              idempotencyKey: `booking-cancelled:${Number(request.params.id)}`,
+              data: {
+                name: updatedBooking.name,
+                service: updatedBooking.service,
+                reference: updatedBooking.payment_reference,
+                slots,
+                reason: notes || null
+              }
+            });
+          }
+          const customer = await new Promise((resolve, reject) => database.get("SELECT id FROM users WHERE lower(email) = lower(?) AND role NOT IN ('admin', 'super_admin')", [updatedBooking.email], (lookupError, user) => lookupError ? reject(lookupError) : resolve(user)));
           if (customer) await createNotificationSafely(database, {
             userId: customer.id,
             type: 'booking_status_changed',

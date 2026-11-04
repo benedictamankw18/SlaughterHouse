@@ -8,6 +8,7 @@ const validators = require('../services/input-validation');
 const { issueToken, consumeToken } = require('../services/account-tokens');
 const { recordAuditSafely } = require('../services/audit');
 const { rateLimit } = require('../services/rate-limit');
+const { createEmailIdempotencyKey, queueEmailSafely } = require('../services/email/outbox');
 
 const router = express.Router();
 const authRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 30, message: 'Too many authentication requests. Try again later.' });
@@ -25,6 +26,13 @@ function execute(query, parameters = []) {
     if (error) return reject(error);
     resolve(this);
   }));
+}
+
+function accountActionUrl(parameter, token) {
+  const url = new URL('/', config.frontendOrigin);
+  url.searchParams.set(parameter, token);
+  url.searchParams.set('apiBaseUrl', config.apiPublicUrl);
+  return url.toString();
 }
 
 router.post('/auth/signup', authRateLimit, async (request, response) => {
@@ -84,9 +92,24 @@ router.post('/auth/signup', authRateLimit, async (request, response) => {
         return response.status(500).json({ error: databaseMessages[error.code] || `Could not create the account because the database returned ${error.code || 'an unknown error'}.` });
       }
       try {
+        await queueEmailSafely(database, {
+          to: normalizedEmail,
+          template: 'welcome',
+          idempotencyKey: `welcome:${this.lastID}`,
+          data: { name, accountUrl: new URL('/', config.frontendOrigin).toString() }
+        });
         const verificationToken = await issueToken(database, this.lastID, 'email_verification');
+        const emailQueued = await queueEmailSafely(database, {
+          to: normalizedEmail,
+          template: 'email_verification',
+          idempotencyKey: createEmailIdempotencyKey('email-verification', verificationToken),
+          data: { name, verifyUrl: accountActionUrl('verifyToken', verificationToken) }
+        });
         await recordAuditSafely(database, { userId: this.lastID, action: 'account_created', entityType: 'user', entityId: this.lastID, details: { role: normalizedRole }, ipAddress: request.ip });
-        const result = { user: { id: this.lastID, name, email: normalizedEmail, role: normalizedRole }, message: 'Account created. Check your email to verify the account.' };
+        const result = {
+          user: { id: this.lastID, name, email: normalizedEmail, role: normalizedRole },
+          message: emailQueued ? 'Account created. Check your email to verify the account.' : 'Account created, but the verification email could not be queued.'
+        };
         if (process.env.NODE_ENV !== 'production') result.verificationToken = verificationToken;
         response.status(201).json(result);
       } catch (tokenError) {
@@ -105,7 +128,7 @@ router.post('/auth/login', loginRateLimit, (request, response) => {
   const attempt = sessions.customerLoginAttempts.get(request.ip) || { count: 0, startedAt: Date.now() };
   if (Date.now() - attempt.startedAt > 15 * 60 * 1000) { attempt.count = 0; attempt.startedAt = Date.now(); }
   if (attempt.count >= 10) return response.status(429).json({ error: 'Too many login attempts. Try again later.' });
-  database.get('SELECT id, name, email, phone, role, password_hash FROM users WHERE (lower(email) = lower(?) OR phone = ?) AND role <> ?', [identifier, identifier, 'admin'], async (error, user) => {
+  database.get("SELECT id, name, email, phone, role, password_hash FROM users WHERE (lower(email) = lower(?) OR phone = ?) AND role NOT IN ('admin', 'super_admin')", [identifier, identifier], async (error, user) => {
     if (error) return response.status(500).json({ error: databaseError('Customer sign-in failed.', error) });
     if (!user || !(await passwordMatches(password, user.password_hash))) {
       attempt.count += 1;
@@ -137,8 +160,8 @@ router.post('/auth/logout', sessions.requireCustomer, (request, response) => {
 router.get('/auth/profile', sessions.requireCustomer, async (request, response) => {
   try {
     const user = await queryOne(
-      'SELECT id, name, email, first_name AS firstName, last_name AS lastName, artist_name AS artistName, phone, role, address, email_verified_at AS emailVerifiedAt FROM users WHERE id = ? AND role <> ?',
-      [request.customer.id, 'admin']
+      "SELECT id, name, email, first_name AS firstName, last_name AS lastName, artist_name AS artistName, phone, role, address, email_verified_at AS emailVerifiedAt FROM users WHERE id = ? AND role NOT IN ('admin', 'super_admin')",
+      [request.customer.id]
     );
     if (!user) return response.status(404).json({ error: 'Customer profile was not found.' });
     response.json({ user });
@@ -156,7 +179,7 @@ router.patch('/auth/profile', sessions.requireCustomer, async (request, response
   const addressValue = String(address || '').trim();
   let currentUser;
   try {
-    currentUser = await queryOne('SELECT role FROM users WHERE id = ? AND role <> ?', [request.customer.id, 'admin']);
+    currentUser = await queryOne("SELECT role FROM users WHERE id = ? AND role NOT IN ('admin', 'super_admin')", [request.customer.id]);
   } catch (error) {
     return response.status(500).json({ error: databaseError('Loading the customer profile failed.', error) });
   }
@@ -172,8 +195,8 @@ router.patch('/auth/profile', sessions.requireCustomer, async (request, response
     await execute(
       `UPDATE users
        SET name = ?, first_name = ?, last_name = ?, artist_name = ?, phone = ?, address = ?
-       WHERE id = ? AND role <> ?`,
-      [`${firstNameValue} ${lastNameValue}`, firstNameValue, lastNameValue, currentUser.role === 'artist' ? artistNameValue : null, phoneValue, currentUser.role === 'artist' ? null : addressValue, request.customer.id, 'admin']
+       WHERE id = ? AND role NOT IN ('admin', 'super_admin')`,
+      [`${firstNameValue} ${lastNameValue}`, firstNameValue, lastNameValue, currentUser.role === 'artist' ? artistNameValue : null, phoneValue, currentUser.role === 'artist' ? null : addressValue, request.customer.id]
     );
     const user = await queryOne(
       'SELECT id, name, email, first_name AS firstName, last_name AS lastName, artist_name AS artistName, phone, role, address, email_verified_at AS emailVerifiedAt FROM users WHERE id = ?',
@@ -192,10 +215,17 @@ router.post('/auth/request-password-reset', resetRateLimit, async (request, resp
   const emailError = validators.email(email);
   if (emailError) return response.status(400).json({ error: emailError });
   try {
-    const user = await new Promise((resolve, reject) => database.get('SELECT id FROM users WHERE lower(email) = lower(?) AND role <> ?', [email, 'admin'], (error, row) => error ? reject(error) : resolve(row)));
+    const user = await new Promise((resolve, reject) => database.get("SELECT id FROM users WHERE lower(email) = lower(?) AND role NOT IN ('admin', 'super_admin')", [email], (error, row) => error ? reject(error) : resolve(row)));
     const result = { message: 'If a customer account exists for that email, password reset instructions will be sent.' };
     if (!user) return response.json(result);
     const token = await issueToken(database, user.id, 'password_reset');
+    const account = await queryOne('SELECT name FROM users WHERE id = ?', [user.id]);
+    await queueEmailSafely(database, {
+      to: email,
+      template: 'password_reset',
+      idempotencyKey: createEmailIdempotencyKey('password-reset', token),
+      data: { name: account?.name || 'there', resetUrl: accountActionUrl('resetToken', token) }
+    });
     await recordAuditSafely(database, { userId: user.id, action: 'password_reset_requested', entityType: 'user', entityId: user.id, ipAddress: request.ip });
     if (process.env.NODE_ENV !== 'production') result.resetToken = token;
     response.json(result);
@@ -245,8 +275,8 @@ router.post('/admin/login', loginRateLimit, (request, response) => {
   if (Date.now() - attempt.startedAt > 15 * 60 * 1000) { attempt.count = 0; attempt.startedAt = Date.now(); }
   if (attempt.count >= 10) return response.status(429).json({ error: 'Too many login attempts. Try again later.' });
   database.get(
-    'SELECT id, name, email, phone, role, password_hash FROM users WHERE lower(email) = lower(?) AND role = ?',
-    [email, 'admin'],
+    "SELECT id, name, email, phone, role, password_hash FROM users WHERE lower(email) = lower(?) AND role IN ('admin', 'super_admin')",
+    [email],
     async (error, admin) => {
       if (error) return response.status(500).json({ error: databaseError('Administrator sign-in failed.', error) });
       if (!admin || !(await passwordMatches(password, admin.password_hash))) {
@@ -264,7 +294,7 @@ router.post('/admin/login', loginRateLimit, (request, response) => {
         role: admin.role
       }).then(token => {
         response.setHeader('Set-Cookie', cookieOptions(config.sessionCookieNames.admin, token));
-        response.json({ token, email: admin.email });
+        response.json({ token, email: admin.email, role: admin.role });
       })
         .catch(sessionError => response.status(500).json({ error: databaseError('Creating the administrator login session failed.', sessionError) }));
     }

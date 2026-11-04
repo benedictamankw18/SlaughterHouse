@@ -18,6 +18,8 @@ module.exports = {
   frontendOrigin,
   apiPublicUrl,
   paymentCallbackUrl,
+  emailApiKey: process.env.EMAIL_API_KEY || null,
+  emailFrom: process.env.EMAIL_FROM || null,
   uploadDirectory: path.join(__dirname, 'data', 'uploads'),
   paystackSecretKey,
   downloadSigningSecret: process.env.DOWNLOAD_SIGNING_SECRET || (
