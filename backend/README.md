@@ -97,7 +97,9 @@ Use `npm test` instead when local PowerShell script execution is enabled.
 Login sessions, password reset tokens, and email verification tokens are stored
 hashed and are single-use or expiry-controlled. Login responses also set
 HttpOnly, SameSite cookies; bearer tokens remain temporarily supported during
-the frontend migration.
+the frontend migration. Customer sign-in and customer sessions require a
+verified email address; unverified customers can request another verification
+email from the sign-in form. Administrator sign-in is unchanged.
 
 Authorization middleware distinguishes visitors, customers (`artist` and
 `non_artist` accounts), administrators, and super-administrators. Existing
@@ -167,15 +169,20 @@ Administrators can manage catalog visibility with
 `PATCH /api/admin/beats/:id/status`, using `published`, `unpublished`, or
 `archived`. Only published beats appear in public catalog endpoints.
 Beat metadata and prices can be edited with `PATCH /api/admin/beats/:id`.
-License definitions are stored in the existing `license_rights` table and can
-be viewed by administrators through `GET /api/admin/license-rights`. A
-super-administrator can update a definition with
+License definitions use the `license_rights` table for rights and
+`license_definition_status` for availability. Administrators can view them with
+`GET /api/admin/license-definitions`. A super-administrator can update a
+definition with
 `PUT /api/admin/license-rights/:type` (`basic`, `premium`, `unlimited`, or
 `exclusive`), including allowed formats, commercial-use and distribution
 flags, named non-negative integer usage limits (`null` means unlimited), and
-distribution rules. Changes apply to new purchases; each purchased license
-keeps its `rights_json` snapshot, which remains authoritative for its downloads
-and certificate.
+distribution rules. The same administrator can activate a built-in tier with
+`POST /api/admin/license-definitions`, deactivate it with
+`PATCH /api/admin/license-definitions/:type/status`, or delete its custom
+rights and deactivate it with `DELETE /api/admin/license-definitions/:type`.
+Only active tiers are shown in the public beat catalog and accepted at checkout.
+Changes apply to new purchases; each purchased license keeps its `rights_json`
+snapshot, which remains authoritative for its downloads and certificate.
 
 Verified payments populate normalized order items, provider payment records, and
 customer-linked beat licenses with rights metadata. Customers can retrieve

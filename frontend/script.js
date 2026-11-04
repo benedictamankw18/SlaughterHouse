@@ -54,21 +54,40 @@ if (loginButton) {
   const authPanel = document.createElement('div');
   authPanel.className = 'auth-panel';
   authPanel.hidden = true;
-  authPanel.innerHTML = `
-    <div class="auth-panel-header">
-      <div><p class="section-kicker">Account</p><h2>Welcome back</h2></div>
-      <button class="auth-close-button" type="button" aria-label="Close account panel">&#10005;</button>
-    </div>
+  authPanel.setAttribute('role', 'dialog');
+  authPanel.setAttribute('aria-modal', 'true');
+  authPanel.setAttribute('aria-labelledby', 'auth-dialog-title');
+  authPanel.innerHTML = `<div class="auth-panel-shell">
+    <aside class="auth-studio-visual" aria-label="UltBigBoy music studio">
+      <a class="auth-studio-brand" href="index.html"><img src="Images/Logo 2.png" alt="UltBigBoy home"></a>
+      <div class="auth-studio-art" aria-hidden="true">
+        <div class="auth-orbit auth-orbit-one"></div>
+        <div class="auth-orbit auth-orbit-two"></div>
+        <div class="auth-vinyl"><span></span></div>
+        <div class="auth-equalizer"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="auth-soundwave"></div>
+      </div>
+      <p class="section-kicker">YOUR CREATIVE SPACE</p>
+      <h2>YOUR SOUND.<br>YOUR NEXT<br><span>BIG MOVE.</span></h2>
+      <p class="auth-studio-copy">Beats, studio sessions and everything you need to bring your next idea to life.</p>
+      <div class="auth-studio-status"><span></span> THE STUDIO IS OPEN</div>
+    </aside>
+    <section class="auth-panel-content">
+      <div class="auth-panel-header">
+        <div><p class="section-kicker">ULTBIGBOY / ACCOUNT</p><h2 id="auth-dialog-title">Welcome back</h2></div>
+        <button class="auth-close-button" type="button" aria-label="Close account panel">&#10005;</button>
+      </div>
     <div class="auth-view active" data-auth-view="login">
       <form class="auth-form" id="login-form">
+        <p class="auth-form-intro">Sign in to pick up where the music left off.</p>
         <label for="login-identifier">Email or phone number</label>
         <input id="login-identifier" name="identifier" type="text" autocomplete="username" placeholder="Email or +233..." required>
         <label for="login-password">Password</label>
-        <input id="login-password" name="password" type="password" autocomplete="current-password" required>
-        <button class="auth-primary-button" type="submit">Log in</button>
-        <button class="auth-link-button" id="forgot-password-button" type="button">Forgot password?</button>
-        <button class="auth-link-button" data-auth-switch="signup" type="button">Create an account</button>
+        <div class="auth-password-field"><input id="login-password" name="password" type="password" autocomplete="current-password" required><button class="auth-password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
+        <button class="auth-primary-button" type="submit">Sign in</button>
+        <div class="auth-form-links"><button class="auth-link-button" id="forgot-password-button" type="button">Forgot password?</button><button class="auth-link-button" data-auth-switch="signup" type="button">Create an account</button></div>
         <p class="auth-message" id="login-message" role="status" aria-live="polite"></p>
+        <button class="auth-link-button" id="resend-verification-button" type="button" hidden>Resend verification email</button>
       </form>
     </div>
     <div class="auth-view" data-auth-view="reset-request">
@@ -86,9 +105,9 @@ if (loginButton) {
         <h3>Choose a new password</h3>
         <input name="token" type="hidden">
         <label for="reset-new-password">New password</label>
-        <input id="reset-new-password" name="password" type="password" minlength="8" pattern="[A-Za-z0-9]{8,}" autocomplete="new-password" required>
+        <div class="auth-password-field"><input id="reset-new-password" name="password" type="password" minlength="8" pattern="[A-Za-z0-9]{8,}" autocomplete="new-password" required><button class="auth-password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
         <label for="reset-confirm-password">Confirm new password</label>
-        <input id="reset-confirm-password" name="confirmPassword" type="password" minlength="8" pattern="[A-Za-z0-9]{8,}" autocomplete="new-password" required>
+        <div class="auth-password-field"><input id="reset-confirm-password" name="confirmPassword" type="password" minlength="8" pattern="[A-Za-z0-9]{8,}" autocomplete="new-password" required><button class="auth-password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
         <p class="auth-password-hint">At least 8 characters, letters and numbers only.</p>
         <button class="auth-primary-button" type="submit">Update password</button>
         <p class="auth-message" id="reset-password-message" role="status" aria-live="polite"></p>
@@ -98,28 +117,34 @@ if (loginButton) {
       <form class="auth-form" id="verify-email-form">
         <h3>Verify your email address</h3>
         <input name="token" type="hidden">
-        <p>Confirm your email address to finish setting up your account.</p>
-        <button class="auth-primary-button" type="submit">Verify email</button>
+        <p class="auth-form-intro">We sent a secure confirmation link to your inbox. Open that link to activate your account.</p>
+        <button class="auth-primary-button" id="verify-email-submit" type="submit">Verify email</button>
+        <button class="auth-link-button" data-auth-switch="login" type="button">Return to sign in</button>
         <p class="auth-message" id="verify-email-message" role="status" aria-live="polite"></p>
       </form>
     </div>
     <div class="auth-view" data-auth-view="account">
       <div class="auth-account-summary">
-        <p class="section-kicker">Signed in</p>
-        <h2 id="auth-account-name"></h2>
-        <p id="auth-account-email"></p>
-        <div class="account-dashboard">
-          <div class="account-dashboard-tabs" role="tablist" aria-label="Account history">
-            <button type="button" class="account-dashboard-tab active" data-account-tab="purchases">Purchases</button>
-            <button type="button" class="account-dashboard-tab" data-account-tab="licenses">Licenses</button>
-            <button type="button" class="account-dashboard-tab" data-account-tab="downloads">Downloads</button>
-            <button type="button" class="account-dashboard-tab" data-account-tab="wishlist">Wishlist</button>
-            <button type="button" class="account-dashboard-tab" data-account-tab="bookings">Bookings</button>
-            <button type="button" class="account-dashboard-tab" data-account-tab="profile">Profile</button>
-            <button type="button" class="account-dashboard-tab" data-account-tab="orders">Orders</button>
-            <button type="button" class="account-dashboard-tab" data-account-tab="notifications">Alerts</button>
-            <button type="button" class="account-dashboard-tab" data-account-tab="requests">Requests</button>
-          </div>
+      <div class="account-welcome-row"><div class="account-avatar" aria-hidden="true">U</div><div><p class="section-kicker">YOUR STUDIO / OVERVIEW</p><h2 id="auth-account-name"></h2><p id="auth-account-email"></p></div></div>
+      <p class="account-welcome-copy">Your workspace for beats, licenses, bookings and orders.</p>
+      <div class="account-studio-shortcuts" aria-label="Account shortcuts">
+        <button type="button" data-account-tab="purchases"><span>01</span> Purchases <b aria-hidden="true">↗</b></button>
+        <button type="button" data-account-tab="licenses"><span>02</span> Licenses <b aria-hidden="true">↗</b></button>
+        <button type="button" data-account-tab="bookings"><span>03</span> Bookings <b aria-hidden="true">↗</b></button>
+        <button type="button" data-account-tab="notifications"><span>04</span> Alerts <b aria-hidden="true">↗</b></button>
+      </div>
+      <div class="account-dashboard">
+          <nav class="account-dashboard-tabs" aria-label="Account pages">
+            <a class="account-dashboard-tab" href="purchases.html">Purchases</a>
+            <a class="account-dashboard-tab" href="licenses.html">Licenses</a>
+            <a class="account-dashboard-tab" href="downloads.html">Downloads</a>
+            <a class="account-dashboard-tab" href="wishlist.html">Wishlist</a>
+            <a class="account-dashboard-tab" href="bookings.html">Bookings</a>
+            <a class="account-dashboard-tab" href="profile.html">Profile</a>
+            <a class="account-dashboard-tab" href="orders.html">Orders</a>
+            <a class="account-dashboard-tab" href="alerts.html">Alerts</a>
+            <a class="account-dashboard-tab" href="requests.html">Requests</a>
+          </nav>
           <div id="account-dashboard-content" class="account-dashboard-content" aria-live="polite">Loading account history...</div>
         </div>
         <button class="auth-primary-button" id="logout-button" type="button">Log out</button>
@@ -141,22 +166,34 @@ if (loginButton) {
         </div>
         <div id="artist-fields"><label for="signup-artist-name">Artiste name</label><input id="signup-artist-name" name="artistName" placeholder="Your public name"></div>
         <label for="signup-phone">Telephone number</label>
-        <div class="phone-field"><select id="signup-country-code" aria-label="Country code"><option value="+233">GH +233</option><option value="+1">US +1</option><option value="+44">UK +44</option><option value="+234">NG +234</option></select><input id="signup-phone" name="phone" type="tel" autocomplete="tel" placeholder="24 000 0000" required></div>
+        <div class="phone-field"><select id="signup-country-code" aria-label="Country code" style="width: 100px; background: #22c55e38; border: 1px solid #ccc; padding: 5px;"><option value="+233">GH +233</option><option value="+1">US +1</option><option value="+44">UK +44</option><option value="+234">NG +234</option></select><input id="signup-phone" name="phone" type="tel" autocomplete="tel" placeholder="24 000 0000" required></div>
         <div id="address-field" hidden><label for="signup-address">Address</label><textarea id="signup-address" name="address" rows="2" autocomplete="street-address"></textarea></div>
         <label for="signup-password">Password</label>
-        <input id="signup-password" name="password" type="password" minlength="8" pattern="[A-Za-z0-9]{8,}" autocomplete="new-password" required>
+        <div class="auth-password-field"><input id="signup-password" name="password" type="password" minlength="8" pattern="[A-Za-z0-9]{8,}" autocomplete="new-password" required><button class="auth-password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
+        <div class="auth-password-strength" aria-live="polite"><span class="auth-password-strength-track"><i></i></span><span class="auth-password-strength-label">Password strength</span></div>
+        <p class="auth-password-hint">At least 8 characters, letters and numbers only.</p>
         <label for="signup-confirm-password">Confirm password</label>
-        <input id="signup-confirm-password" name="confirmPassword" type="password" minlength="8" pattern="[A-Za-z0-9]{8,}" autocomplete="new-password" required>
+        <div class="auth-password-field"><input id="signup-confirm-password" name="confirmPassword" type="password" minlength="8" pattern="[A-Za-z0-9]{8,}" autocomplete="new-password" required><button class="auth-password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
         <p class="auth-password-hint">At least 8 characters, letters and numbers only.</p>
         <button class="auth-primary-button" type="submit">Create account</button>
         <button class="auth-link-button" data-auth-switch="login" type="button">Already have an account? Log in</button>
         <p class="auth-message" id="signup-message" role="status" aria-live="polite"></p>
       </form>
     </div>`;
+  authPanel.innerHTML += '</section></div>';
   loginButton.insertAdjacentElement('afterend', authPanel);
 
   const setAuthView = view => {
     authPanel.querySelectorAll('.auth-view').forEach(panel => panel.classList.toggle('active', panel.dataset.authView === view));
+    const titles = {
+      login: 'Welcome back',
+      signup: 'Create your account',
+      'reset-request': 'Reset your password',
+      'reset-password': 'Choose a new password',
+      'verify-email': 'Verify your email',
+      account: 'Your studio'
+    };
+    document.getElementById('auth-dialog-title').textContent = titles[view] || 'Your account';
   };
   const setAuthMessage = (id, message, isError = true) => {
     const element = document.getElementById(id);
@@ -180,7 +217,7 @@ if (loginButton) {
     loginButton.textContent = loggedIn ? 'Account' : 'Login';
     loginButton.setAttribute('aria-label', loggedIn ? `Open account for ${customerUser.name}` : 'Open login');
     if (loggedIn) {
-      document.getElementById('auth-account-name').textContent = customerUser.name;
+      document.getElementById('auth-account-name').textContent = `Welcome, ${customerUser.name}.`;
       document.getElementById('auth-account-email').textContent = customerUser.email;
     }
     return loggedIn;
@@ -199,6 +236,23 @@ if (loginButton) {
   const accountFormatMoney = value => `GHS ${Number(value || 0).toFixed(2)}`;
   const renderAccountHistory = (type, items) => {
     const content = document.getElementById('account-dashboard-content');
+    if (type === 'profile') {
+      if (!items || typeof items !== 'object' || Array.isArray(items)) {
+        throw new Error('Your profile could not be loaded because the response was invalid.');
+      }
+      content.innerHTML = `<form class="account-profile-form" id="account-profile-form">
+        <label>First name<input name="firstName" value="${escapeHTML(items.firstName)}" required></label>
+        <label>Last name<input name="lastName" value="${escapeHTML(items.lastName)}" required></label>
+        <label>Phone<input name="phone" value="${escapeHTML(items.phone)}" required></label>
+        ${items.role === 'artist' ? `<label>Artist name<input name="artistName" value="${escapeHTML(items.artistName)}" required></label>` : `<label>Address<textarea name="address" rows="2" required>${escapeHTML(items.address)}</textarea></label>`}
+        <button class="auth-primary-button" type="submit">Save profile</button>
+        <p class="auth-message" data-profile-message role="status"></p>
+      </form>`;
+      return;
+    }
+    if (!Array.isArray(items)) {
+      throw new Error('Account history could not be loaded because the response was invalid.');
+    }
     if (type !== 'profile' && !items.length) {
       content.innerHTML = '<p>No records found.</p>';
       return;
@@ -213,14 +267,6 @@ if (loginButton) {
         const slotSummary = slots.map(slot => `${slot.date} at ${slot.time}`).join(', ') || `${item.preferred_date || 'Flexible'} ${item.preferred_time || ''}`;
         return `<article><strong>${escapeHTML(item.service)}</strong><span>Status: ${escapeHTML(item.status)} · ${escapeHTML(slotSummary)} · ${escapeHTML(item.created_at || '')}</span>${item.admin_notes ? `<span>Studio note: ${escapeHTML(item.admin_notes)}</span>` : ''}</article>`;
       }
-      if (type === 'profile') return `<form class="account-profile-form" id="account-profile-form">
-        <label>First name<input name="firstName" value="${escapeHTML(items.firstName)}" required></label>
-        <label>Last name<input name="lastName" value="${escapeHTML(items.lastName)}" required></label>
-        <label>Phone<input name="phone" value="${escapeHTML(items.phone)}" required></label>
-        ${items.role === 'artist' ? `<label>Artist name<input name="artistName" value="${escapeHTML(items.artistName)}" required></label>` : `<label>Address<textarea name="address" rows="2" required>${escapeHTML(items.address)}</textarea></label>`}
-        <button class="auth-primary-button" type="submit">Save profile</button>
-        <p class="auth-message" data-profile-message role="status"></p>
-      </form>`;
       if (type === 'orders') {
         const history = (item.fulfillmentHistory || []).map(entry => `<span>Fulfillment: ${escapeHTML(entry.status)} · ${escapeHTML(entry.created_at || '')}</span>`).join('');
         return `<article><strong>${escapeHTML(item.reference)}</strong><span>Payment: ${escapeHTML(item.status)} · ${accountFormatMoney(item.amount)} · ${escapeHTML(item.created_at || '')}</span><span>Fulfillment: ${escapeHTML(item.fulfillment_status || 'unfulfilled')}</span>${item.items.map(orderItem => `<span>${escapeHTML(orderItem.product_name || 'Item')}${orderItem.license_type ? ` · ${escapeHTML(orderItem.license_type)} license` : ''}</span>`).join('')}${history}</article>`;
@@ -273,9 +319,25 @@ if (loginButton) {
     }
   };
   authPanel.querySelectorAll('[data-account-tab]').forEach(button => button.addEventListener('click', () => {
-    authPanel.querySelectorAll('[data-account-tab]').forEach(tab => tab.classList.toggle('active', tab === button));
     loadAccountHistory(button.dataset.accountTab);
   }));
+  authPanel.addEventListener('click', event => {
+    const toggle = event.target.closest('.auth-password-toggle');
+    if (!toggle) return;
+    const input = toggle.parentElement.querySelector('input');
+    const visible = input.type === 'password';
+    input.type = visible ? 'text' : 'password';
+    toggle.textContent = visible ? 'Hide' : 'Show';
+    toggle.setAttribute('aria-label', `${visible ? 'Hide' : 'Show'} password`);
+    toggle.setAttribute('aria-pressed', String(visible));
+  });
+  const signupPassword = authPanel.querySelector('#signup-password');
+  signupPassword.addEventListener('input', () => {
+    const strength = signupPassword.value.length < 8 ? 0 : signupPassword.value.length < 12 ? 1 : 2;
+    const meter = authPanel.querySelector('.auth-password-strength');
+    meter.dataset.strength = String(strength);
+    meter.querySelector('.auth-password-strength-label').textContent = ['Password strength', 'Password strength: fair', 'Password strength: strong'][strength];
+  });
   document.addEventListener('click', async event => {
     const certificateButton = event.target.closest('[data-license-certificate]');
     if (certificateButton) {
@@ -316,18 +378,50 @@ if (loginButton) {
     }
   });
 
+  const closeAuthPanel = () => {
+    authPanel.hidden = true;
+    loginButton.setAttribute('aria-expanded', 'false');
+    document.body.classList.remove('auth-panel-open');
+    loginButton.focus();
+  };
+  loginButton.setAttribute('aria-haspopup', 'dialog');
+  loginButton.setAttribute('aria-controls', 'customer-auth-panel');
+  authPanel.id = 'customer-auth-panel';
   loginButton.addEventListener('click', () => {
     authPanel.hidden = !authPanel.hidden;
     loginButton.setAttribute('aria-expanded', String(!authPanel.hidden));
     if (!authPanel.hidden) {
+      document.body.classList.add('auth-panel-open');
       const loggedIn = refreshAuthPanel();
       setAuthView(loggedIn ? 'account' : 'login');
       if (loggedIn) loadAccountHistory('purchases');
+      (authPanel.querySelector('.auth-view.active input:not([type="hidden"])') || authPanel.querySelector('.auth-view.active button'))?.focus();
+    } else {
+      document.body.classList.remove('auth-panel-open');
     }
   });
-  authPanel.querySelector('.auth-close-button').addEventListener('click', () => {
-    authPanel.hidden = true;
-    loginButton.setAttribute('aria-expanded', 'false');
+  authPanel.querySelector('.auth-close-button').addEventListener('click', closeAuthPanel);
+  authPanel.addEventListener('click', event => {
+    if (event.target === authPanel) closeAuthPanel();
+  });
+  authPanel.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+      closeAuthPanel();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = [...authPanel.querySelectorAll('button:not(:disabled), input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled), a[href]')]
+      .filter(element => element.getClientRects().length);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   });
   authPanel.querySelectorAll('[data-auth-switch]').forEach(button => button.addEventListener('click', () => setAuthView(button.dataset.authSwitch)));
   authPanel.querySelectorAll('.auth-role-button').forEach(button => button.addEventListener('click', () => setSignupRole(button.dataset.role)));
@@ -349,6 +443,7 @@ if (loginButton) {
       customerUser = null;
       sessionStorage.removeItem('customerUser');
       sessionStorage.removeItem('customerToken');
+      window.dispatchEvent(new Event('ultbigboy:auth-changed'));
       refreshReviewAccess();
       refreshAuthPanel();
       setAuthView('login');
@@ -357,16 +452,21 @@ if (loginButton) {
 
   authPanel.querySelector('#signup-form').addEventListener('submit', async event => {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const signupForm = event.currentTarget;
+    const form = new FormData(signupForm);
     if (form.get('password') !== form.get('confirmPassword')) return setAuthMessage('signup-message', 'Passwords do not match.');
     const phone = `${document.getElementById('signup-country-code').value}${String(form.get('phone')).replace(/\D/g, '')}`;
     try {
       const result = await fetch(`${API}/api/auth/signup`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...Object.fromEntries(form), phone }) });
       const data = await result.json();
       if (!result.ok) throw new Error(data.error);
-      setAuthMessage('signup-message', `${data.message || 'Account created.'}${data.verificationToken ? ` Development verification token: ${data.verificationToken}` : ''}`, false);
-      event.currentTarget.reset();
+      const verificationMessage = `${data.message || 'Account created.'}${data.verificationToken ? ` Development verification token: ${data.verificationToken}` : ''}`;
+      authPanel.querySelector('#verify-email-form [name="token"]').value = data.verificationToken || '';
+      authPanel.querySelector('#verify-email-submit').disabled = !data.verificationToken;
+      setAuthMessage('verify-email-message', verificationMessage, false);
+      signupForm.reset();
       setSignupRole('artist');
+      setAuthView('verify-email');
     } catch (error) {
       setAuthMessage('signup-message', error.message || 'Could not create the account.');
     }
@@ -374,6 +474,8 @@ if (loginButton) {
 
   authPanel.querySelector('#login-form').addEventListener('submit', async event => {
     event.preventDefault();
+    const resendVerificationButton = authPanel.querySelector('#resend-verification-button');
+    resendVerificationButton.hidden = true;
     try {
       const form = Object.fromEntries(new FormData(event.currentTarget));
       const adminResult = await fetch(`${API}/api/admin/login`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: form.identifier, password: form.password }) });
@@ -385,16 +487,50 @@ if (loginButton) {
       }
       const result = await fetch(`${API}/api/auth/login`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
       const data = await result.json();
+      if (result.status === 403 && data.code === 'EMAIL_NOT_VERIFIED') {
+        resendVerificationButton.hidden = false;
+        setAuthMessage('login-message', data.error);
+        return;
+      }
       if (!result.ok) throw new Error(data.error);
       customerUser = data.user;
       sessionStorage.setItem('customerUser', JSON.stringify(customerUser));
       sessionStorage.setItem('customerToken', data.token);
+      window.dispatchEvent(new Event('ultbigboy:auth-changed'));
       refreshAuthPanel();
+      setAuthView('account');
       loadAccountHistory('purchases');
-      setAuthMessage('login-message', `Welcome, ${data.user.name}.`, false);
       refreshReviewAccess();
     } catch (error) {
       setAuthMessage('login-message', error.message || 'Could not log in.');
+    }
+  });
+
+  authPanel.querySelector('#resend-verification-button').addEventListener('click', async event => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const identifier = authPanel.querySelector('#login-identifier').value.trim();
+      const response = await fetch(`${API}/api/auth/resend-verification`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      if (data.verificationToken) {
+        authPanel.querySelector('#verify-email-form [name="token"]').value = data.verificationToken;
+        authPanel.querySelector('#verify-email-submit').disabled = false;
+        setAuthMessage('verify-email-message', `${data.message} Development verification token: ${data.verificationToken}`, false);
+        setAuthView('verify-email');
+        return;
+      }
+      setAuthMessage('login-message', data.message, false);
+    } catch (error) {
+      setAuthMessage('login-message', error.message || 'Could not resend the verification email.');
+    } finally {
+      button.disabled = false;
     }
   });
 
@@ -459,6 +595,7 @@ if (loginButton) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
       setAuthMessage('verify-email-message', data.message, false);
+      authPanel.querySelector('#verify-email-submit').disabled = true;
     } catch (error) {
       setAuthMessage('verify-email-message', error.message || 'Could not verify the email address.');
     } finally {
@@ -474,6 +611,7 @@ if (loginButton) {
   const resetToken = actionParams.get('resetToken');
   if (verificationToken || resetToken) {
     authPanel.hidden = false;
+    document.body.classList.add('auth-panel-open');
     loginButton.setAttribute('aria-expanded', 'true');
     actionParams.delete('verifyToken');
     actionParams.delete('resetToken');
@@ -484,6 +622,7 @@ if (loginButton) {
       setAuthView('reset-password');
     } else {
       authPanel.querySelector('#verify-email-form [name="token"]').value = verificationToken;
+      authPanel.querySelector('#verify-email-submit').disabled = false;
       setAuthView('verify-email');
     }
   }
@@ -758,8 +897,8 @@ function clearCatalogFilters() {
   updateKeyValue();
 }
 
-const producedList = document.querySelector('.produced-song-list');
-const producedPagination = document.querySelector('.produced-pagination');
+const producedList = document.querySelector('.produced-page .produced-song-list');
+const producedPagination = document.querySelector('.produced-page .produced-pagination');
 const producedPageSize = 10;
 function renderProducedPage(releases, page) {
   const pageCount = Math.ceil(releases.length / producedPageSize);
@@ -844,7 +983,7 @@ function renderProducedPage(releases, page) {
       button.addEventListener('click', () => renderProducedPage(releases, pageNumber));
       return button;
     });
-  producedPagination.replaceChildren(...pageButtons);
+  producedPagination?.replaceChildren(...pageButtons);
 }
 
 async function loadProducedReleases() {
@@ -856,7 +995,7 @@ async function loadProducedReleases() {
     if (!response.ok) throw new Error(data.error || 'Could not load stream releases.');
     if (!data.releases?.length) {
       producedList.innerHTML = '<p class="filter-empty-state">No stream releases are published yet.</p>';
-      producedPagination.replaceChildren();
+      producedPagination?.replaceChildren();
       return;
     }
     renderProducedPage(data.releases, 1);
@@ -885,6 +1024,13 @@ function updateCart() {
   const cartEmpty = document.getElementById("cart-empty");
   const cartTotal = document.getElementById("cart-total");
   const checkoutButton = document.getElementById("cart-checkout-button");
+  const cartCount = document.getElementById('cart-count');
+  const itemCount = cart.reduce((count, item) => count + Math.max(1, Number(item.quantity) || 1), 0);
+  if (cartCount) {
+    cartCount.textContent = itemCount > 99 ? '99+' : String(itemCount);
+    cartCount.hidden = itemCount === 0;
+  }
+  cartButton?.setAttribute('aria-label', `Shopping cart, ${itemCount} ${itemCount === 1 ? 'item' : 'items'}`);
   if (!cartItems || !cartEmpty || !cartTotal) return;
   cartItems.innerHTML = "";
   let total = 0;

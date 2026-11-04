@@ -69,6 +69,23 @@ test('migration 20 moves the curated stream catalog into the database', () => {
   assert.equal(migration.statements.filter(statement => statement.startsWith('INSERT IGNORE INTO stream_releases')).length, 15);
 });
 
+test('migration 21 adds a published catalog status to merchandise', () => {
+  const migration = migrations.find(candidate => candidate.version === 21);
+  assert.ok(migration, 'migration 21 must exist');
+  assert.match(migration.statements[0], /ALTER TABLE merchandise ADD COLUMN catalog_status VARCHAR\(20\) NOT NULL DEFAULT 'published'/);
+  assert.match(migration.statements[1], /ALTER TABLE merchandise ADD INDEX idx_merchandise_catalog_status/);
+});
+
+test('migration 22 tracks availability for the built-in license definitions', () => {
+  const migration = migrations.find(candidate => candidate.version === 22);
+  assert.ok(migration, 'migration 22 must exist');
+  assert.match(migration.statements[0], /CREATE TABLE IF NOT EXISTS license_definition_status/);
+  assert.match(migration.statements[0], /is_active TINYINT\(1\) NOT NULL DEFAULT 1/);
+  for (const licenseType of ['basic', 'premium', 'unlimited', 'exclusive']) {
+    assert.ok(migration.statements.some(statement => statement.includes(`'${licenseType}', 1`)));
+  }
+});
+
 test('migration 11 adds an idempotent per-order-line key to sales', () => {
   const migration = migrations.find(candidate => candidate.version === 11);
   assert.ok(migration, 'migration 11 must exist');
@@ -175,7 +192,11 @@ test('applyMigrations resumes from the last recorded version', async () => {
   await applyMigrations(pool);
   const expected = migrations.find(migration => migration.version === 19).statements.map(({ ensureColumn: { table, column, definition } }) =>
     `ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`
-  ).concat(migrations.find(migration => migration.version === 20).statements);
+  ).concat(
+    migrations.find(migration => migration.version === 20).statements,
+    migrations.find(migration => migration.version === 21).statements,
+    migrations.find(migration => migration.version === 22).statements
+  );
   assert.deepEqual(pool.statements, expected);
 });
 
@@ -186,5 +207,9 @@ test('applyMigrations skips existing legacy columns and applies the next migrati
   ));
   const pool = fakePool(applied, existingColumns);
   await applyMigrations(pool);
-  assert.deepEqual(pool.statements, migrations.find(migration => migration.version === 20).statements);
+  assert.deepEqual(pool.statements, [
+    ...migrations.find(migration => migration.version === 20).statements,
+    ...migrations.find(migration => migration.version === 21).statements,
+    ...migrations.find(migration => migration.version === 22).statements
+  ]);
 });

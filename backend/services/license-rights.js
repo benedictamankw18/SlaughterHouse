@@ -73,8 +73,15 @@ function cloneRights(rights) {
   };
 }
 
+function queryAll(db, query) {
+  if (db.all.length >= 3) {
+    return new Promise((resolve, reject) => db.all(query, [], (error, rows) => error ? reject(error) : resolve(rows || [])));
+  }
+  return Promise.resolve(db.all(query)).then(rows => rows || []);
+}
+
 async function loadLicenseRights(db) {
-  const rows = await db.all('SELECT license_type, rights_json FROM license_rights');
+  const rows = await queryAll(db, 'SELECT license_type, rights_json FROM license_rights');
   const rights = {};
   for (const [licenseType, defaults] of Object.entries(DEFAULT_LICENSE_RIGHTS)) {
     rights[licenseType] = cloneRights(defaults);
@@ -84,6 +91,19 @@ async function loadLicenseRights(db) {
     if (parsed) rights[String(row.license_type).toLowerCase()] = parsed;
   }
   return rights;
+}
+
+async function loadLicenseDefinitions(db) {
+  const [rights, statuses] = await Promise.all([
+    loadLicenseRights(db),
+    queryAll(db, 'SELECT license_type, is_active FROM license_definition_status')
+  ]);
+  const activeByType = new Map((statuses || []).map(row => [String(row.license_type).toLowerCase(), Boolean(Number(row.is_active))]));
+  return Object.entries(rights).map(([type, definition]) => ({
+    type,
+    rights: definition,
+    active: activeByType.get(type) ?? true
+  }));
 }
 
 async function saveLicenseRights(db, licenseType, definition) {
@@ -117,10 +137,12 @@ function allowedFormats(rights) {
 
 module.exports = {
   DEFAULT_LICENSE_RIGHTS,
+  LICENSE_TYPES,
   normalizeRights,
   validateRightsDefinition,
   parseRights,
   loadLicenseRights,
+  loadLicenseDefinitions,
   saveLicenseRights,
   rightsFor,
   rightsForPurchasedLicense,

@@ -10,13 +10,14 @@ const { recordAuditSafely } = require('../services/audit');
 const { createNotificationSafely, notifyAdminsSafely } = require('../services/notifications');
 const { queueEmailSafely } = require('../services/email/outbox');
 const { isAvailableBookingSlot } = require('../services/booking');
-const { loadLicenseRights, saveLicenseRights } = require('../services/license-rights');
+const { LICENSE_TYPES, loadLicenseRights, loadLicenseDefinitions, saveLicenseRights } = require('../services/license-rights');
 const { FULFILLMENT_STATUSES, updateFulfillmentStatus } = require('../services/fulfillment');
 const { BUSINESS_SETTINGS, validateDateRange, validateSettingUpdates } = require('../services/admin-controls');
 
 const router = express.Router();
 router.use(rateLimit({ windowMs: 60 * 1000, max: 60, message: 'Too many administrator requests. Try again shortly.' }));
 const queryRows = (query, parameters = []) => new Promise((resolve, reject) => database.all(query, parameters, (error, rows) => error ? reject(error) : resolve(rows || [])));
+const runQuery = (query, parameters = []) => new Promise((resolve, reject) => database.run(query, parameters, function (error) { error ? reject(error) : resolve(this); }));
 const csvCell = value => {
   const raw = String(value ?? '');
   const safe = typeof value === 'string' && /^[\t\r ]*[=+\-@]/.test(value) ? `'${raw}` : raw;
@@ -169,6 +170,32 @@ router.get('/admin/license-rights', sessions.requireAdmin, async (request, respo
   }
 });
 
+router.get('/admin/license-definitions', sessions.requireAdmin, async (request, response) => {
+  try {
+    response.json({ definitions: await loadLicenseDefinitions(database) });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Loading license definitions failed.', error) });
+  }
+});
+
+router.post('/admin/license-definitions', sessions.requirePermission('admin:manage_license_rights'), async (request, response) => {
+  const type = String(request.body.type || '').toLowerCase();
+  if (!LICENSE_TYPES.has(type)) return response.status(400).json({ error: `License type must be one of: ${[...LICENSE_TYPES].join(', ')}.` });
+  try {
+    await runQuery('UPDATE license_definition_status SET is_active = 1 WHERE license_type = ?', [type]);
+    recordAuditSafely(database, {
+      userId: request.admin.id,
+      action: 'license_definition_activated',
+      entityType: 'license_definition',
+      details: { licenseType: type },
+      ipAddress: request.ip
+    });
+    response.json({ licenseType: type, active: true });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Activating the license definition failed.', error) });
+  }
+});
+
 router.put('/admin/license-rights/:type', sessions.requirePermission('admin:manage_license_rights'), async (request, response) => {
   try {
     const result = await saveLicenseRights(database, request.params.type, request.body);
@@ -183,6 +210,46 @@ router.put('/admin/license-rights/:type', sessions.requirePermission('admin:mana
     response.json({ licenseType: request.params.type.toLowerCase(), rights: result.value });
   } catch (error) {
     response.status(500).json({ error: databaseError('Updating the license definition failed.', error) });
+  }
+});
+
+router.patch('/admin/license-definitions/:type/status', sessions.requirePermission('admin:manage_license_rights'), async (request, response) => {
+  const type = String(request.params.type || '').toLowerCase();
+  if (!LICENSE_TYPES.has(type)) return response.status(400).json({ error: 'Unknown license definition.' });
+  if (typeof request.body.active !== 'boolean') return response.status(400).json({ error: 'License active status must be true or false.' });
+  try {
+    await runQuery('UPDATE license_definition_status SET is_active = ? WHERE license_type = ?', [request.body.active ? 1 : 0, type]);
+    recordAuditSafely(database, {
+      userId: request.admin.id,
+      action: request.body.active ? 'license_definition_activated' : 'license_definition_deactivated',
+      entityType: 'license_definition',
+      details: { licenseType: type },
+      ipAddress: request.ip
+    });
+    response.json({ licenseType: type, active: request.body.active });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Updating the license definition status failed.', error) });
+  }
+});
+
+router.delete('/admin/license-definitions/:type', sessions.requirePermission('admin:manage_license_rights'), async (request, response) => {
+  const type = String(request.params.type || '').toLowerCase();
+  if (!LICENSE_TYPES.has(type)) return response.status(400).json({ error: 'Unknown license definition.' });
+  try {
+    await database.transaction(async tx => {
+      await tx.run('DELETE FROM license_rights WHERE license_type = ?', [type]);
+      await tx.run('UPDATE license_definition_status SET is_active = 0 WHERE license_type = ?', [type]);
+    });
+    recordAuditSafely(database, {
+      userId: request.admin.id,
+      action: 'license_definition_deleted',
+      entityType: 'license_definition',
+      details: { licenseType: type },
+      ipAddress: request.ip
+    });
+    response.json({ licenseType: type, deleted: true });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Deleting the license definition failed.', error) });
   }
 });
 
@@ -452,6 +519,38 @@ router.post('/admin/beats', sessions.requireAdmin, (request, response) => {
   }
 });
 
+router.delete('/admin/beats/:id', sessions.requireAdmin, async (request, response) => {
+  if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) {
+    return response.status(400).json({ error: 'Beat ID must be a positive whole number.' });
+  }
+  const beatId = Number(request.params.id);
+  try {
+    const licenses = await queryRows('SELECT id FROM licenses WHERE beat_id = ? LIMIT 1', [beatId]);
+    if (licenses.length) {
+      return response.status(409).json({ error: 'This beat has issued licenses and cannot be deleted. Deactivate it to remove it from the catalog.' });
+    }
+    database.run('DELETE FROM beats WHERE id = ?', [beatId], function (error) {
+      if (error) {
+        if (error.code === 'ER_ROW_IS_REFERENCED_2' || error.code === 'ER_ROW_IS_REFERENCED') {
+          return response.status(409).json({ error: 'This beat is referenced by existing records and cannot be deleted. Deactivate it to remove it from the catalog.' });
+        }
+        return response.status(500).json({ error: databaseError('Deleting the beat failed.', error) });
+      }
+      if (!this.changes) return response.status(404).json({ error: `No beat was found with ID ${beatId}.` });
+      recordAuditSafely(database, {
+        userId: request.admin.id,
+        action: 'beat_deleted',
+        entityType: 'beat',
+        entityId: beatId,
+        ipAddress: request.ip
+      });
+      response.json({ id: beatId, deleted: true });
+    });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Checking beat references failed.', error) });
+  }
+});
+
 router.patch('/admin/beats/:id/status', sessions.requireAdmin, (request, response) => {
   if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) return response.status(400).json({ error: 'Beat ID must be a positive whole number.' });
   const status = String(request.body.status || '').toLowerCase();
@@ -501,6 +600,77 @@ router.post('/admin/merchandise', sessions.requireAdmin, (request, response) => 
 
   } catch (error) {
     response.status(400).json({ error: error.message });
+  }
+});
+
+router.patch('/admin/merchandise/:id', sessions.requireAdmin, (request, response) => {
+  if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) return response.status(400).json({ error: 'Merchandise ID must be a positive whole number.' });
+  const { title, description, price, photo } = request.body;
+  const titleError = validators.text(title, 'Merchandise title', { required: true, max: 255 });
+  const priceError = validators.money(price, 'Merchandise price');
+  if (titleError || priceError) return response.status(400).json({ error: titleError || priceError });
+  try {
+    const photoFile = photo ? saveUpload(photo, 'merchandise', 'image') : null;
+    database.run(
+      'UPDATE merchandise SET title = ?, description = ?, price = ?, photo = COALESCE(?, photo) WHERE id = ?',
+      [title.trim(), String(description || '').trim(), Number(price), photoFile, Number(request.params.id)],
+      function (error) {
+        if (error) return response.status(500).json({ error: databaseError('Updating merchandise failed.', error) });
+        if (!this.changes) return response.status(404).json({ error: `No merchandise was found with ID ${request.params.id}.` });
+        recordAuditSafely(database, { userId: request.admin.id, action: 'merchandise_updated', entityType: 'merchandise', entityId: Number(request.params.id), ipAddress: request.ip });
+        response.json({ id: Number(request.params.id), title: title.trim() });
+      }
+    );
+  } catch (error) {
+    response.status(400).json({ error: error.message });
+  }
+});
+
+router.patch('/admin/merchandise/:id/status', sessions.requireAdmin, (request, response) => {
+  if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) return response.status(400).json({ error: 'Merchandise ID must be a positive whole number.' });
+  const status = String(request.body.status || '').toLowerCase();
+  if (!['published', 'unpublished', 'archived'].includes(status)) return response.status(400).json({ error: 'Merchandise status must be published, unpublished, or archived.' });
+  database.run('UPDATE merchandise SET catalog_status = ? WHERE id = ?', [status, Number(request.params.id)], function (error) {
+    if (error) return response.status(500).json({ error: databaseError('Updating merchandise status failed.', error) });
+    if (!this.changes) return response.status(404).json({ error: `No merchandise was found with ID ${request.params.id}.` });
+    recordAuditSafely(database, { userId: request.admin.id, action: 'merchandise_status_changed', entityType: 'merchandise', entityId: Number(request.params.id), details: { status }, ipAddress: request.ip });
+    response.json({ id: Number(request.params.id), status });
+  });
+});
+
+router.delete('/admin/merchandise/:id', sessions.requireAdmin, async (request, response) => {
+  if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) return response.status(400).json({ error: 'Merchandise ID must be a positive whole number.' });
+  const merchandiseId = Number(request.params.id);
+  try {
+    const [orderItems, sales, orders] = await Promise.all([
+      queryRows("SELECT id FROM order_items WHERE product_type = 'merchandise' AND product_id = ? LIMIT 1", [merchandiseId]),
+      queryRows("SELECT id FROM sales WHERE sale_type = 'merchandise' AND product_id = ? LIMIT 1", [merchandiseId]),
+      queryRows("SELECT items_json FROM orders WHERE status IN ('pending', 'paid', 'partially_refunded')"),
+    ]);
+    const referencedByOrder = orders.some(order => {
+      try {
+        const items = typeof order.items_json === 'string' ? JSON.parse(order.items_json) : order.items_json;
+        return Array.isArray(items) && items.some(item => item.type === 'merchandise' && Number(item.productId) === merchandiseId);
+      } catch {
+        return false;
+      }
+    });
+    if (orderItems.length || sales.length || referencedByOrder) {
+      return response.status(409).json({ error: 'This merchandise appears in order history and cannot be deleted. Deactivate it to remove it from the catalog.' });
+    }
+    database.run('DELETE FROM merchandise WHERE id = ?', [merchandiseId], function (error) {
+      if (error) {
+        if (error.code === 'ER_ROW_IS_REFERENCED_2' || error.code === 'ER_ROW_IS_REFERENCED') {
+          return response.status(409).json({ error: 'This merchandise is referenced by existing records and cannot be deleted. Deactivate it to remove it from the catalog.' });
+        }
+        return response.status(500).json({ error: databaseError('Deleting merchandise failed.', error) });
+      }
+      if (!this.changes) return response.status(404).json({ error: `No merchandise was found with ID ${merchandiseId}.` });
+      recordAuditSafely(database, { userId: request.admin.id, action: 'merchandise_deleted', entityType: 'merchandise', entityId: merchandiseId, ipAddress: request.ip });
+      response.json({ id: merchandiseId, deleted: true });
+    });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Checking merchandise references failed.', error) });
   }
 });
 

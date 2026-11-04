@@ -5,6 +5,7 @@ const {
   normalizeRights,
   parseRights,
   loadLicenseRights,
+  loadLicenseDefinitions,
   saveLicenseRights,
   validateRightsDefinition,
   rightsForPurchasedLicense,
@@ -69,6 +70,39 @@ test('loadLicenseRights ignores malformed rows and unknown types are safe', asyn
   assert.deepEqual(allowedFormats(rights.basic), new Set(['mp3']));
   assert.deepEqual(allowedFormats(rightsFor(rights, 'unknown')), new Set(['mp3']), 'unknown licenses fall back to basic');
   assert.deepEqual(allowedFormats(rightsFor(null, 'premium')), new Set(['mp3', 'wav']), 'a missing map falls back to defaults');
+});
+
+test('loadLicenseDefinitions includes active status while preserving default definitions', async () => {
+  const database = {
+    async all(query) {
+      if (query.includes('license_definition_status')) {
+        return [
+          { license_type: 'basic', is_active: 1 },
+          { license_type: 'premium', is_active: 0 }
+        ];
+      }
+      return [{ license_type: 'basic', rights_json: '{"formats":["mp3","wav"],"commercialUse":true}' }];
+    }
+  };
+  const definitions = await loadLicenseDefinitions(database);
+  assert.equal(definitions.find(definition => definition.type === 'basic').active, true);
+  assert.deepEqual(allowedFormats(definitions.find(definition => definition.type === 'basic').rights), new Set(['mp3', 'wav']));
+  assert.equal(definitions.find(definition => definition.type === 'premium').active, false);
+  assert.equal(definitions.find(definition => definition.type === 'unlimited').active, true);
+});
+
+test('loadLicenseDefinitions supports the callback-based application database adapter', async () => {
+  const database = {
+    all(query, parameters, callback) {
+      const rows = query.includes('license_definition_status')
+        ? [{ license_type: 'basic', is_active: 0 }]
+        : [{ license_type: 'basic', rights_json: '{"formats":["wav"],"commercialUse":true}' }];
+      callback(null, rows);
+    }
+  };
+  const definitions = await loadLicenseDefinitions(database);
+  assert.equal(definitions.find(definition => definition.type === 'basic').active, false);
+  assert.deepEqual(allowedFormats(definitions.find(definition => definition.type === 'basic').rights), new Set(['wav']));
 });
 
 test('license definitions validate and preserve configured limits and distribution rules', () => {

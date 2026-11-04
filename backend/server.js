@@ -3,13 +3,14 @@ const cors = require('cors');
 const config = require('./config');
 const database = require('./database');
 const { startEmailOutbox } = require('./services/email/outbox');
+const { isAllowedOrigin } = require('./services/cors-origin');
 
 const app = express();
 
 app.use(cors({
   credentials: true,
   origin(origin, callback) {
-    if (!origin || origin === config.frontendOrigin) return callback(null, true);
+    if (isAllowedOrigin(origin, config.frontendOrigin, process.env.NODE_ENV !== 'production')) return callback(null, true);
     return callback(new Error('Origin is not allowed.'));
   }
 }));

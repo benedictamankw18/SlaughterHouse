@@ -128,7 +128,7 @@ router.post('/auth/login', loginRateLimit, (request, response) => {
   const attempt = sessions.customerLoginAttempts.get(request.ip) || { count: 0, startedAt: Date.now() };
   if (Date.now() - attempt.startedAt > 15 * 60 * 1000) { attempt.count = 0; attempt.startedAt = Date.now(); }
   if (attempt.count >= 10) return response.status(429).json({ error: 'Too many login attempts. Try again later.' });
-  database.get("SELECT id, name, email, phone, role, password_hash FROM users WHERE (lower(email) = lower(?) OR phone = ?) AND role NOT IN ('admin', 'super_admin')", [identifier, identifier], async (error, user) => {
+  database.get("SELECT id, name, email, phone, role, password_hash, email_verified_at AS emailVerifiedAt FROM users WHERE (lower(email) = lower(?) OR phone = ?) AND role NOT IN ('admin', 'super_admin')", [identifier, identifier], async (error, user) => {
     if (error) return response.status(500).json({ error: databaseError('Customer sign-in failed.', error) });
     if (!user || !(await passwordMatches(password, user.password_hash))) {
       attempt.count += 1;
@@ -137,6 +137,13 @@ router.post('/auth/login', loginRateLimit, (request, response) => {
       return response.status(401).json({ error: 'Invalid email/phone number or password.' });
     }
     sessions.customerLoginAttempts.delete(request.ip);
+    if (!user.emailVerifiedAt) {
+      recordAuditSafely(database, { userId: user.id, action: 'customer_login_blocked_unverified', entityType: 'user', entityId: user.id, ipAddress: request.ip });
+      return response.status(403).json({
+        code: 'EMAIL_NOT_VERIFIED',
+        error: 'Verify your email address before signing in. You can resend the verification email below.'
+      });
+    }
     recordAuditSafely(database, { userId: user.id, action: 'customer_login', entityType: 'user', entityId: user.id, ipAddress: request.ip });
     sessions.createSession({ id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role })
       .then(token => {
@@ -145,6 +152,41 @@ router.post('/auth/login', loginRateLimit, (request, response) => {
       })
       .catch(sessionError => response.status(500).json({ error: databaseError('Creating the customer login session failed.', sessionError) }));
   });
+});
+
+router.post('/auth/resend-verification', resetRateLimit, async (request, response) => {
+  const identifier = String(request.body.identifier || '').trim();
+  if (!identifier || identifier.length > 320) {
+    return response.status(400).json({ error: 'Enter the email address or phone number for your account.' });
+  }
+  try {
+    const user = await queryOne(
+      "SELECT id, name, email, email_verified_at AS emailVerifiedAt FROM users WHERE (lower(email) = lower(?) OR phone = ?) AND role NOT IN ('admin', 'super_admin')",
+      [identifier, identifier]
+    );
+    const result = { message: 'If an unverified customer account matches those details, a verification email will be sent.' };
+    if (!user || user.emailVerifiedAt) return response.json(result);
+
+    const token = await issueToken(database, user.id, 'email_verification');
+    const emailQueued = await queueEmailSafely(database, {
+      to: user.email,
+      template: 'email_verification',
+      idempotencyKey: createEmailIdempotencyKey('email-verification', token),
+      data: { name: user.name, verifyUrl: accountActionUrl('verifyToken', token) }
+    });
+    await recordAuditSafely(database, {
+      userId: user.id,
+      action: 'email_verification_resent',
+      entityType: 'user',
+      entityId: user.id,
+      details: { emailQueued },
+      ipAddress: request.ip
+    });
+    if (emailQueued && process.env.NODE_ENV !== 'production') result.verificationToken = token;
+    response.json(result);
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Requesting email verification failed.', error) });
+  }
 });
 
 router.post('/auth/logout', sessions.requireCustomer, (request, response) => {

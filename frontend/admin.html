@@ -46,16 +46,35 @@
 
       <section class="admin-section" data-admin-section="content">
         <div class="admin-toggle" role="group" aria-label="Content type"><button class="active" data-content-type="beat" type="button">Beat</button><button data-content-type="merchandise" type="button">Merchandise</button></div>
-        <form id="beat-form" class="admin-form admin-card">
-          <h2>Add beat</h2><label>Beat title<input name="title" required></label><div class="admin-grid"><label>BPM<input name="bpm" type="number" min="1"></label><label>Key<input name="musicalKey"></label><label>Genre<input name="genre"></label><label>Mood<input name="mood"></label></div>
-          <div class="admin-grid admin-prices"><label>Basic price<input name="basic" type="number" min="0" step="0.01" required></label><label>Premium price<input name="premium" type="number" min="0" step="0.01" required></label><label>Unlimited price<input name="unlimited" type="number" min="0" step="0.01" required></label><label>Exclusive price<input name="exclusive" type="number" min="0" step="0.01" required></label></div>
-          <div class="admin-file-grid"><label>Cover art<input name="cover" type="file" accept="image/*"></label><label>Tagged preview file<input name="preview" type="file" accept="audio/*" required></label><label>Main MP3<input name="mp3" type="file" accept="audio/mpeg" required></label><label>WAV<input name="wav" type="file" accept="audio/wav" required></label><label>Track stems<input name="stems" type="file" required></label></div>
-          <button class="auth-primary-button" type="submit">Save beat</button><p id="beat-message" class="admin-message"></p>
-        </form>
-        <h2>Manage beats</h2>
-        <div id="beat-management-list" class="admin-list"></div>
-        <form id="merchandise-form" class="admin-form admin-card" hidden><h2>Add merchandise</h2><label>Title<input name="title" required></label><label>Description<textarea name="description" rows="4"></textarea></label><label>Price (GHS)<input name="price" type="number" min="0" step="0.01" required></label><label>Photo<input name="photo" type="file" accept="image/*"></label><button class="auth-primary-button" type="submit">Save merchandise</button><p id="merchandise-message" class="admin-message"></p></form>
-        <div id="merchandise-management" hidden><h2>Manage inventory</h2><div id="merchandise-management-list" class="admin-list"></div></div>
+        <button id="add-beat-button" class="auth-primary-button admin-add-beat-button" type="button">Add beat</button>
+        <p id="beat-message" class="admin-message" role="status"></p>
+        <dialog id="add-beat-dialog" class="admin-dialog" aria-labelledby="add-beat-title">
+          <div class="admin-dialog-header"><h2 id="add-beat-title">Add beat</h2><button id="close-add-beat" class="admin-secondary-button" type="button" aria-label="Close add beat form">Close</button></div>
+          <form id="beat-form" class="admin-form">
+            <label>Beat title<input name="title" required></label><div class="admin-grid"><label>BPM<input name="bpm" type="number" min="1"></label><label>Key<input name="musicalKey"></label><label>Genre<input name="genre"></label><label>Mood<input name="mood"></label></div>
+            <div class="admin-grid admin-prices"><label>Basic price<input name="basic" type="number" min="0" step="0.01" required></label><label>Premium price<input name="premium" type="number" min="0" step="0.01" required></label><label>Unlimited price<input name="unlimited" type="number" min="0" step="0.01" required></label><label>Exclusive price<input name="exclusive" type="number" min="0" step="0.01" required></label></div>
+            <div class="admin-file-grid"><label>Cover art<input name="cover" type="file" accept="image/*"></label><label>Tagged preview file<input name="preview" type="file" accept="audio/*" required></label><label>Main MP3<input name="mp3" type="file" accept="audio/mpeg" required></label><label>WAV<input name="wav" type="file" accept="audio/wav" required></label><label>Track stems<input name="stems" type="file" required></label></div>
+            <button class="auth-primary-button" type="submit">Save beat</button>
+          </form>
+        </dialog>
+        <div id="beat-management">
+          <h2>Manage beats</h2>
+          <div id="beat-management-list" class="admin-list"></div>
+        </div>
+        <button id="add-merchandise-button" class="auth-primary-button admin-add-beat-button" type="button" hidden>Add Merchandise</button>
+        <p id="merchandise-message" class="admin-message" role="status" hidden></p>
+        <dialog id="add-merchandise-dialog" class="admin-dialog" aria-labelledby="add-merchandise-title">
+          <div class="admin-dialog-header"><h2 id="add-merchandise-title">Add Merchandise</h2><button id="close-add-merchandise" class="admin-secondary-button" type="button" aria-label="Close add merchandise form">Close</button></div>
+          <form id="merchandise-form" class="admin-form">
+            <label>Title<input name="title" required></label>
+            <label>Description<textarea name="description" rows="4"></textarea></label>
+            <label>Price (GHS)<input name="price" type="number" min="0" step="0.01" required></label>
+            <label>Photo<input name="photo" type="file" accept="image/*"></label>
+            <button class="auth-primary-button" type="submit">Save merchandise</button>
+            <p id="merchandise-form-message" class="admin-message" role="status"></p>
+          </form>
+        </dialog>
+        <div id="merchandise-management" hidden><h2>Manage Merchandise</h2><div id="merchandise-management-list" class="admin-list"></div></div>
       </section>
 
       <section class="admin-section" data-admin-section="sales"><div class="admin-toggle" role="group" aria-label="Sale type"><button class="active" data-sale-type="beat" type="button">Beat sales</button><button data-sale-type="merchandise" type="button">Merchandise sales</button></div><div id="sales-list" class="admin-list"></div></section>
@@ -64,7 +83,22 @@
       <section class="admin-section" data-admin-section="reviews"><p>Customer reviews are hidden from the public until approved.</p><div id="reviews-list" class="admin-list"></div></section>
       <section class="admin-section" data-admin-section="customers"><h2>Customer accounts</h2><p id="customers-message" class="admin-message" role="status"></p><div id="customers-list" class="admin-list"></div></section>
       <section class="admin-section" data-admin-section="artists"><p>Beat licenses and purchases are matched to registered artist accounts by email.</p><div id="artists-list" class="admin-list"></div></section>
-      <section class="admin-section" data-admin-section="license-rights"><h2>License definitions</h2><p>Current definitions are used for new purchases. Existing licenses keep the rights snapshot saved at purchase.</p><p id="license-rights-message" class="admin-message" role="status"></p><div id="license-rights-list" class="admin-list"></div></section>
+      <section class="admin-section" data-admin-section="license-rights">
+        <h2>License definitions</h2>
+        <p>Current definitions are used for new purchases. Existing licenses keep the rights snapshot saved at purchase.</p>
+        <p id="license-rights-message" class="admin-message" role="status"></p>
+        <button id="add-license-button" class="auth-primary-button admin-add-beat-button" type="button" hidden>Add License</button>
+        <div id="license-rights-list" class="admin-list"></div>
+        <dialog id="add-license-dialog" class="admin-dialog" aria-labelledby="add-license-title">
+          <div class="admin-dialog-header"><h2 id="add-license-title">Add License</h2><button id="close-add-license" class="admin-secondary-button" type="button" aria-label="Close add license form">Close</button></div>
+          <form id="license-form" class="admin-form">
+            <p>Choose one of the built-in license definitions that is currently inactive. Existing customer licenses keep their saved rights.</p>
+            <label>License type<select name="type" required></select></label>
+            <button class="auth-primary-button" type="submit">Activate license</button>
+            <p id="license-form-message" class="admin-message" role="status"></p>
+          </form>
+        </dialog>
+      </section>
       <section class="admin-section" data-admin-section="settings"><h2>Business settings</h2><p>Price changes apply to future checkouts and requests. Existing beat prices remain unchanged.</p><form id="business-settings-form" class="admin-form admin-card"></form><p id="business-settings-message" class="admin-message" role="status"></p></section>
       <section class="admin-section" data-admin-section="staff"><h2>Super-admin staff management</h2><p>Changing a role revokes the user's active sessions. The last super-admin cannot be demoted.</p><p id="staff-message" class="admin-message" role="status"></p><div id="staff-list" class="admin-list"></div></section>
       <section class="admin-section" data-admin-section="alerts">

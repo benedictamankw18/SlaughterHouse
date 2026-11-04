@@ -64,7 +64,7 @@ function identifySession(request, response, { optional = false, requiredRole = n
     return response.status(401).json({ error: loginMessage });
   }
   get(
-    `SELECT s.user_id AS id, u.name, u.email, u.phone, u.role
+    `SELECT s.user_id AS id, u.name, u.email, u.phone, u.role, u.email_verified_at AS emailVerifiedAt
      FROM user_sessions s
      JOIN users u ON u.id = s.user_id
      WHERE s.token_hash = ? AND s.expires_at > CURRENT_TIMESTAMP`,
@@ -78,6 +78,21 @@ function identifySession(request, response, { optional = false, requiredRole = n
       return response.status(401).json({ error: loginMessage });
     }
     const role = normalizeRole(session.role);
+    if (role === 'customer' && !session.emailVerifiedAt) {
+      await deleteSession(token);
+      if (optional) {
+        request.role = 'visitor';
+        return next();
+      }
+      response.setHeader(
+        'Set-Cookie',
+        `${config.sessionCookieNames.customer}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax${config.secureCookies ? '; Secure' : ''}`
+      );
+      return response.status(403).json({
+        code: 'EMAIL_NOT_VERIFIED',
+        error: 'Verify your email address before using your customer account.'
+      });
+    }
     if (requiredRole && !hasRoleAccess(role, requiredRole)) {
       return response.status(403).json({ error: 'Your account does not have permission to access this resource.' });
     }

@@ -35,8 +35,11 @@ async function hasPaidExclusiveLicense(queryAll, beatId, excludedReference = nul
 
 async function decrementMerchandiseStock(db, items, orderReference) {
   for (const item of items.filter(candidate => candidate.type === 'merchandise')) {
-    const inventory = await db.get('SELECT title, stock_quantity FROM merchandise WHERE id = ? FOR UPDATE', [item.productId]);
-    const result = await db.run('UPDATE merchandise SET stock_quantity = stock_quantity - 1 WHERE id = ? AND (stock_quantity IS NULL OR stock_quantity > 0)', [item.productId]);
+    const inventory = await db.get('SELECT title, stock_quantity, catalog_status FROM merchandise WHERE id = ? FOR UPDATE', [item.productId]);
+    if (!inventory || inventory.catalog_status !== 'published') {
+      throw Object.assign(new Error(`${item.name} is no longer available.`), { code: 'PRODUCT_UNAVAILABLE' });
+    }
+    const result = await db.run("UPDATE merchandise SET stock_quantity = stock_quantity - 1 WHERE id = ? AND catalog_status = 'published' AND (stock_quantity IS NULL OR stock_quantity > 0)", [item.productId]);
     if (!result.changes) throw Object.assign(new Error(`${item.name} is out of stock.`), { code: 'OUT_OF_STOCK' });
     const remaining = inventory?.stock_quantity === null ? null : Number(inventory?.stock_quantity) - 1;
     if (remaining !== null && remaining >= 0 && remaining <= LOW_STOCK_THRESHOLD && Number(inventory?.stock_quantity) > LOW_STOCK_THRESHOLD) {
@@ -353,13 +356,21 @@ router.post('/payments/initialize', async (request, response) => {
   if (!['card', 'mobile_money'].includes(paymentMethod)) return response.status(400).json({ error: 'Choose Card or Mobile Money to continue.' });
   if (!paystackSecretKey) return response.status(503).json({ error: 'Store payments are unavailable because PAYSTACK_SECRET_KEY is missing or still set to the example placeholder. Add a valid Paystack secret key to backend/.env and restart the server.' });
   try {
-    const { beatDefaultPrices } = await getPricing(database);
+    const [{ beatDefaultPrices }, licenseStatusRows] = await Promise.all([
+      getPricing(database),
+      queryRows('SELECT license_type, is_active FROM license_definition_status')
+    ]);
+    const availableLicenseTypes = new Set(
+      licenseStatusRows.length
+        ? licenseStatusRows.filter(row => Boolean(Number(row.is_active))).map(row => String(row.license_type).toLowerCase())
+        : ['basic', 'premium', 'unlimited', 'exclusive']
+    );
     const validatedItems = await Promise.all(items.map(item => new Promise((resolve, reject) => {
       if (!item || typeof item !== 'object' || Array.isArray(item)) return reject(new Error('Each payment item must be an object.'));
       if (item.type === 'merchandise') {
         const productId = Number(item.productId);
         if (!Number.isInteger(productId) || productId < 1) return reject(new Error('Invalid merchandise selected.'));
-        database.get('SELECT id, title, price, stock_quantity FROM merchandise WHERE id = ?', [productId], (error, product) => {
+        database.get("SELECT id, title, price, stock_quantity FROM merchandise WHERE id = ? AND catalog_status = 'published'", [productId], (error, product) => {
           if (error) return reject(error);
           if (!product || !Number.isFinite(Number(product.price)) || Number(product.price) <= 0) return reject(new Error(`Merchandise unavailable: ${item.name || 'Unknown item'}.`));
           if (product.stock_quantity !== null && Number(product.stock_quantity) < 1) return reject(new Error(`${product.title} is out of stock.`));
@@ -371,6 +382,7 @@ router.post('/payments/initialize', async (request, response) => {
       if (typeof item.name !== 'string' || !item.name.trim() || item.name.trim().length > 255) return reject(new Error('Each beat item must include a title up to 255 characters.'));
       const priceColumns = { basic: 'basic_price', premium: 'premium_price', unlimited: 'unlimited_price', exclusive: 'exclusive_price' };
       if (!priceColumns[license]) return reject(new Error('Invalid license selected.'));
+      if (!availableLicenseTypes.has(license)) return reject(new Error('This license is no longer available for new purchases.'));
       database.get('SELECT id, title, cover_art, COALESCE(NULLIF(' + priceColumns[license] + ', 0), ?) AS price FROM beats WHERE lower(title) = lower(?)', [beatDefaultPrices[license], String(item.name || '')], (error, beat) => {
         if (error) return reject(error);
         if (!beat || !Number.isFinite(Number(beat.price)) || Number(beat.price) <= 0) return reject(new Error(`Beat unavailable: ${item.name || 'Unknown beat'}.`));

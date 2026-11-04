@@ -495,6 +495,26 @@ const migrations = [
         `INSERT IGNORE INTO stream_releases (title, artist, credits_json, cover_url, links_json, sort_order) VALUES (${migrationSqlLiteral(title)}, ${migrationSqlLiteral(artist)}, ${migrationSqlLiteral(JSON.stringify(credits))}, ${migrationSqlLiteral(coverUrl)}, ${migrationSqlLiteral(JSON.stringify(links.map(([platform, url, label]) => ({ platform, url, label }))))}, ${index + 1})`
       )
     ]
+  },
+  {
+    version: 21,
+    statements: [
+      'ALTER TABLE merchandise ADD COLUMN catalog_status VARCHAR(20) NOT NULL DEFAULT \'published\'',
+      'ALTER TABLE merchandise ADD INDEX idx_merchandise_catalog_status (catalog_status)'
+    ]
+  },
+  {
+    version: 22,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS license_definition_status (
+        license_type VARCHAR(50) PRIMARY KEY,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )`,
+      ...Object.keys(DEFAULT_LICENSE_RIGHTS).map(licenseType =>
+        `INSERT IGNORE INTO license_definition_status (license_type, is_active) VALUES ('${licenseType}', 1)`
+      )
+    ]
   }
 ];
 

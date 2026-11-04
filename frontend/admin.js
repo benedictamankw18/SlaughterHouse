@@ -106,35 +106,58 @@ function renderStaff(staff) {
 function renderBeatManagement() {
   const beats = dashboardData.beats || [];
   const container = $('#beat-management-list');
+  container.classList.add('admin-beat-grid');
   if (!beats.length) {
     container.innerHTML = '<p>No beats have been added yet.</p>';
     return;
   }
-  container.innerHTML = beats.map(beat => `<form class="admin-card admin-beat-editor" data-beat-id="${Number(beat.id)}">
-    <div class="admin-beat-editor-heading"><strong>${escapeHtml(beat.title)}</strong><span>Beat #${Number(beat.id)}</span></div>
-    <div class="admin-grid">
-      <label>Title<input name="title" value="${escapeHtml(beat.title)}" required></label>
-      <label>Status<select name="status"><option value="published" ${beat.catalog_status === 'published' ? 'selected' : ''}>Published</option><option value="unpublished" ${beat.catalog_status === 'unpublished' ? 'selected' : ''}>Unpublished</option><option value="archived" ${beat.catalog_status === 'archived' ? 'selected' : ''}>Archived</option></select></label>
-      <label>BPM<input name="bpm" type="number" min="1" max="400" value="${escapeHtml(beat.bpm)}"></label>
-      <label>Preview seconds<input name="previewDurationSeconds" type="number" min="1" max="3600" value="${escapeHtml(beat.preview_duration_seconds)}"></label>
-      <label>Key<input name="musicalKey" value="${escapeHtml(beat.musical_key)}"></label>
-      <label>Genre<input name="genre" value="${escapeHtml(beat.genre)}"></label>
-      <label>Mood<input name="mood" value="${escapeHtml(beat.mood)}"></label>
-    </div>
-    <div class="admin-grid admin-prices">
-      <label>Basic<input name="basic" type="number" min="0" step="0.01" value="${escapeHtml(beat.basic_price)}"></label>
-      <label>Premium<input name="premium" type="number" min="0" step="0.01" value="${escapeHtml(beat.premium_price)}"></label>
-      <label>Unlimited<input name="unlimited" type="number" min="0" step="0.01" value="${escapeHtml(beat.unlimited_price)}"></label>
-      <label>Exclusive<input name="exclusive" type="number" min="0" step="0.01" value="${escapeHtml(beat.exclusive_price)}"></label>
-    </div>
-    <div class="admin-review-actions"><button type="submit">Save changes</button><button type="button" data-beat-status="${Number(beat.id)}">Apply status</button></div>
-    <p class="admin-message" data-beat-message></p>
-  </form>`).join('');
+  container.innerHTML = beats.map(beat => {
+    const id = Number(beat.id);
+    const active = beat.catalog_status === 'published';
+    const cover = beat.cover_art
+      ? `<img class="admin-beat-cover" src="${API}/api/uploads/${encodeURIComponent(beat.cover_art)}" alt="">`
+      : '<div class="admin-beat-cover admin-beat-cover-empty" aria-hidden="true">No cover art</div>';
+    return `<article class="admin-card admin-beat-card" data-beat-id="${id}">
+      ${cover}
+      <div class="admin-beat-card-content">
+        <div class="admin-beat-editor-heading"><strong>${escapeHtml(beat.title)}</strong><span class="admin-beat-status ${active ? 'is-active' : ''}">${active ? 'Active' : escapeHtml(beat.catalog_status || 'Unpublished')}</span></div>
+        <p class="admin-beat-summary">${escapeHtml(beat.genre || 'Genre not set')}${beat.bpm ? ` · ${escapeHtml(beat.bpm)} BPM` : ''}${beat.musical_key ? ` · ${escapeHtml(beat.musical_key)}` : ''}</p>
+        <details class="admin-beat-details">
+          <summary>Show details</summary>
+          <dl><div><dt>Beat ID</dt><dd>${id}</dd></div><div><dt>Mood</dt><dd>${escapeHtml(beat.mood || 'Not set')}</dd></div><div><dt>Preview length</dt><dd>${escapeHtml(beat.preview_duration_seconds || 'Not set')} sec</dd></div><div><dt>Basic</dt><dd>${formatMoney(beat.basic_price)}</dd></div><div><dt>Premium</dt><dd>${formatMoney(beat.premium_price)}</dd></div><div><dt>Unlimited</dt><dd>${formatMoney(beat.unlimited_price)}</dd></div><div><dt>Exclusive</dt><dd>${formatMoney(beat.exclusive_price)}</dd></div></dl>
+        </details>
+        <div class="admin-review-actions admin-beat-actions">
+          <button type="button" data-beat-edit>Edit</button>
+          <button type="button" data-beat-status="${id}" data-next-status="${active ? 'unpublished' : 'published'}">${active ? 'Deactivate' : 'Activate'}</button>
+          <button type="button" class="admin-beat-delete" data-beat-delete="${id}">Delete</button>
+        </div>
+        <form class="admin-beat-editor" data-beat-id="${id}" hidden>
+          <div class="admin-grid">
+            <label>Title<input name="title" value="${escapeHtml(beat.title)}" required></label>
+            <label>BPM<input name="bpm" type="number" min="1" max="400" value="${escapeHtml(beat.bpm)}"></label>
+            <label>Preview seconds<input name="previewDurationSeconds" type="number" min="1" max="3600" value="${escapeHtml(beat.preview_duration_seconds)}"></label>
+            <label>Key<input name="musicalKey" value="${escapeHtml(beat.musical_key)}"></label>
+            <label>Genre<input name="genre" value="${escapeHtml(beat.genre)}"></label>
+            <label>Mood<input name="mood" value="${escapeHtml(beat.mood)}"></label>
+          </div>
+          <div class="admin-grid admin-prices">
+            <label>Basic<input name="basic" type="number" min="0" step="0.01" value="${escapeHtml(beat.basic_price)}"></label>
+            <label>Premium<input name="premium" type="number" min="0" step="0.01" value="${escapeHtml(beat.premium_price)}"></label>
+            <label>Unlimited<input name="unlimited" type="number" min="0" step="0.01" value="${escapeHtml(beat.unlimited_price)}"></label>
+            <label>Exclusive<input name="exclusive" type="number" min="0" step="0.01" value="${escapeHtml(beat.exclusive_price)}"></label>
+          </div>
+          <div class="admin-review-actions"><button type="submit">Save changes</button><button type="button" data-beat-cancel>Cancel</button></div>
+        </form>
+        <p class="admin-message" data-beat-message role="status"></p>
+      </div>
+    </article>`;
+  }).join('');
 }
 
 function renderMerchandiseManagement() {
   const container = $('#merchandise-management-list');
   const merchandise = dashboardData.merchandise || [];
+  container.classList.add('admin-beat-grid');
   if (!merchandise.length) {
     container.innerHTML = '<p>No merchandise has been added yet.</p>';
     return;
@@ -142,7 +165,41 @@ function renderMerchandiseManagement() {
   container.innerHTML = merchandise.map(item => {
     const stock = item.stock_quantity === null || item.stock_quantity === undefined ? '' : Number(item.stock_quantity);
     const stockLabel = stock === '' ? 'Unlimited stock' : `${stock} available`;
-    return `<article class="admin-list-item"><div class="admin-inventory-heading"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(stockLabel)}</span></div><p>${formatMoney(item.price)}</p><form class="admin-inventory-form" data-merchandise-id="${Number(item.id)}"><label>Stock quantity (leave blank for unlimited)<input name="stockQuantity" type="number" min="0" step="1" value="${escapeHtml(stock)}"></label><button type="submit">Save inventory</button><p class="admin-message" data-inventory-message></p></form></article>`;
+    const id = Number(item.id);
+    const active = item.catalog_status === 'published';
+    const photo = item.photo
+      ? `<img class="admin-beat-cover" src="${API}/api/uploads/${encodeURIComponent(item.photo)}" alt="">`
+      : '<div class="admin-beat-cover admin-beat-cover-empty" aria-hidden="true">No photo</div>';
+    return `<article class="admin-card admin-beat-card admin-merchandise-card" data-merchandise-card="${id}">
+      ${photo}
+      <div class="admin-beat-card-content">
+        <div class="admin-beat-editor-heading"><strong>${escapeHtml(item.title)}</strong><span class="admin-beat-status ${active ? 'is-active' : ''}">${active ? 'Active' : escapeHtml(item.catalog_status || 'Unpublished')}</span></div>
+        <p class="admin-beat-summary">${formatMoney(item.price)} · ${escapeHtml(stockLabel)}</p>
+        <details class="admin-beat-details">
+          <summary>Show details</summary>
+          <p>${escapeHtml(item.description || 'No description provided.')}</p>
+          <p>Product ID: ${id}<br>Added: ${escapeHtml(item.created_at || 'Unknown')}</p>
+          <form class="admin-inventory-form" data-merchandise-id="${id}">
+            <label>Stock quantity (leave blank for unlimited)<input name="stockQuantity" type="number" min="0" step="1" value="${escapeHtml(stock)}"></label>
+            <button type="submit">Save inventory</button>
+            <p class="admin-message" data-inventory-message role="status"></p>
+          </form>
+        </details>
+        <div class="admin-review-actions admin-beat-actions">
+          <button type="button" data-merchandise-edit>Edit</button>
+          <button type="button" data-merchandise-status="${id}" data-next-status="${active ? 'unpublished' : 'published'}">${active ? 'Deactivate' : 'Activate'}</button>
+          <button type="button" class="admin-beat-delete" data-merchandise-delete="${id}">Delete</button>
+        </div>
+        <form class="admin-beat-editor admin-merchandise-editor" data-merchandise-id="${id}" hidden>
+          <label>Title<input name="title" value="${escapeHtml(item.title)}" required></label>
+          <label>Description<textarea name="description" rows="3">${escapeHtml(item.description || '')}</textarea></label>
+          <label>Price (GHS)<input name="price" type="number" min="0" step="0.01" value="${escapeHtml(item.price)}" required></label>
+          <label>Replace photo (optional)<input name="photo" type="file" accept="image/*"></label>
+          <div class="admin-review-actions"><button type="submit">Save changes</button><button type="button" data-merchandise-cancel>Cancel</button></div>
+        </form>
+        <p class="admin-message" data-merchandise-message role="status"></p>
+      </div>
+    </article>`;
   }).join('');
 }
 
@@ -175,26 +232,54 @@ function renderEmailDeliveries({ deliveries, counts }) {
   </article>`).join('');
 }
 
-function renderLicenseRights(licenseRights) {
+function renderLicenseRights(definitions) {
   const canEdit = dashboardData.role === 'super_admin';
-  $('#license-rights-list').innerHTML = Object.entries(licenseRights).map(([type, rights]) => `<form class="admin-form admin-card license-rights-form" data-license-type="${escapeHtml(type)}">
-    <h3>${escapeHtml(type[0].toUpperCase() + type.slice(1))} license</h3>
-    <label>Download formats (comma-separated)<input name="formats" value="${escapeHtml((rights.formats || []).join(', '))}" ${canEdit ? '' : 'disabled'}></label>
-    <label><input name="commercialUse" type="checkbox" ${rights.commercialUse ? 'checked' : ''} ${canEdit ? '' : 'disabled'}> Commercial use</label>
-    <label><input name="distribution" type="checkbox" ${rights.distribution ? 'checked' : ''} ${canEdit ? '' : 'disabled'}> Distribution allowed</label>
-    <label><input name="resaleProhibited" type="checkbox" ${rights.resaleProhibited ? 'checked' : ''} ${canEdit ? '' : 'disabled'}> Resale prohibited</label>
-    <label>Usage limits (JSON; use null for unlimited)<textarea name="usageLimits" rows="3" ${canEdit ? '' : 'disabled'}>${escapeHtml(JSON.stringify(rights.usageLimits || {}, null, 2))}</textarea></label>
-    <label>Distribution rules (one per line)<textarea name="distributionRules" rows="4" ${canEdit ? '' : 'disabled'}>${escapeHtml((rights.distributionRules || []).join('\n'))}</textarea></label>
-    ${canEdit ? '<button type="submit">Save definition</button>' : ''}
-    <p class="admin-message" data-license-message></p>
-  </form>`).join('');
-  if (!canEdit) $('#license-rights-list').insertAdjacentHTML('afterbegin', '<p>Only a super-admin can edit license definitions.</p>');
+  const activeDefinitions = definitions.filter(definition => definition.active);
+  $('#add-license-button').hidden = !canEdit;
+  $('#license-rights-list').classList.add('admin-beat-grid');
+  $('#license-rights-list').innerHTML = activeDefinitions.length
+    ? activeDefinitions.map(({ type, rights }) => `<article class="admin-card admin-beat-card" data-license-card="${escapeHtml(type)}">
+      <div class="admin-beat-card-content">
+        <div class="admin-beat-editor-heading"><strong>${escapeHtml(type[0].toUpperCase() + type.slice(1))} license</strong><span class="admin-beat-status is-active">Active</span></div>
+        <details class="admin-beat-details">
+          <summary>Show details</summary>
+          <p>Formats: ${escapeHtml((rights.formats || []).join(', '))}</p>
+          <p>Commercial use: ${rights.commercialUse ? 'Allowed' : 'Not allowed'}<br>Distribution: ${rights.distribution ? 'Allowed' : 'Not allowed'}<br>Stems: ${rights.stems ? 'Included' : 'Not included'}<br>Resale prohibited: ${rights.resaleProhibited ? 'Yes' : 'No'}</p>
+          <p>Usage limits: ${escapeHtml(JSON.stringify(rights.usageLimits || {}))}</p>
+          <p>Distribution rules: ${escapeHtml((rights.distributionRules || []).join('; ') || 'None specified')}</p>
+        </details>
+        ${canEdit ? `<div class="admin-review-actions admin-beat-actions">
+          <button type="button" data-license-edit>Edit</button>
+          <button type="button" data-license-status="false">Deactivate</button>
+          <button type="button" class="admin-beat-delete" data-license-delete>Delete</button>
+        </div>
+        <form class="admin-beat-editor" data-license-editor data-license-type="${escapeHtml(type)}" hidden>
+          <label>Download formats (comma-separated)<input name="formats" value="${escapeHtml((rights.formats || []).join(', '))}" required></label>
+          <label class="license-switch"><input name="commercialUse" type="checkbox" role="switch" ${rights.commercialUse ? 'checked' : ''}><span>Commercial use</span></label>
+          <label class="license-switch"><input name="distribution" type="checkbox" role="switch" ${rights.distribution ? 'checked' : ''}><span>Distribution allowed</span></label>
+          <label class="license-switch"><input name="resaleProhibited" type="checkbox" role="switch" ${rights.resaleProhibited ? 'checked' : ''}><span>Resale prohibited</span></label>
+          <label>Usage limits (JSON; use null for unlimited)<textarea name="usageLimits" rows="3">${escapeHtml(JSON.stringify(rights.usageLimits || {}, null, 2))}</textarea></label>
+          <label>Distribution rules (one per line)<textarea name="distributionRules" rows="4">${escapeHtml((rights.distributionRules || []).join('\n'))}</textarea></label>
+          <div class="admin-review-actions"><button type="submit">Save changes</button><button type="button" data-license-cancel>Cancel</button></div>
+        </form>
+        <p class="admin-message" data-license-message role="status"></p>` : ''}
+      </div>
+    </article>`).join('')
+    : '<p>No active license definitions. Use Add License to reactivate a built-in tier.</p>';
+  if (!canEdit) $('#license-rights-list').insertAdjacentHTML('afterbegin', '<p>Only a super-admin can manage license definitions.</p>');
+  const inactive = definitions.filter(definition => !definition.active);
+  const typeSelect = $('#license-form').elements.type;
+  typeSelect.innerHTML = inactive.length
+    ? inactive.map(definition => `<option value="${escapeHtml(definition.type)}">${escapeHtml(definition.type[0].toUpperCase() + definition.type.slice(1))}</option>`).join('')
+    : '<option value="" selected>No inactive built-in licenses</option>';
+  typeSelect.disabled = !inactive.length;
+  $('#license-form').querySelector('button[type="submit"]').disabled = !inactive.length;
 }
 
 async function loadLicenseRights() {
   try {
-    const data = await api('/api/admin/license-rights');
-    renderLicenseRights(data.licenseRights || {});
+    const data = await api('/api/admin/license-definitions');
+    renderLicenseRights(data.definitions || []);
     message('license-rights-message', '');
   } catch (error) {
     message('license-rights-message', error.message || 'Could not load license definitions.', true);
@@ -435,10 +520,13 @@ $('#admin-notifications-list').addEventListener('click', async event => {
 });
 
 $('#license-rights-list').addEventListener('submit', async event => {
-  const form = event.target.closest('[data-license-type]');
+  const form = event.target.closest('[data-license-editor]');
   if (!form) return;
   event.preventDefault();
-  const status = form.querySelector('[data-license-message]');
+  const card = form.closest('[data-license-card]');
+  const status = card.querySelector('[data-license-message]');
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
   try {
     let usageLimits;
     try { usageLimits = JSON.parse(form.elements.usageLimits.value); } catch { throw new Error('Usage limits must be valid JSON.'); }
@@ -451,20 +539,112 @@ $('#license-rights-list').addEventListener('submit', async event => {
       distributionRules: form.elements.distributionRules.value.split(/\r?\n/).map(rule => rule.trim()).filter(Boolean)
     };
     await api(`/api/admin/license-rights/${encodeURIComponent(form.dataset.licenseType)}`, { method: 'PUT', body: JSON.stringify(definition) });
-    status.textContent = 'License definition saved. New purchases will use this version.';
-    status.classList.remove('error');
+    await loadLicenseRights();
   } catch (error) {
+    button.disabled = false;
     status.textContent = error.message || 'Could not save this license definition.';
     status.classList.add('error');
   }
 });
 
+$('#license-rights-list').addEventListener('click', async event => {
+  const card = event.target.closest('[data-license-card]');
+  if (!card) return;
+  const editButton = event.target.closest('[data-license-edit]');
+  if (editButton) {
+    const form = card.querySelector('[data-license-editor]');
+    form.hidden = !form.hidden;
+    editButton.textContent = form.hidden ? 'Edit' : 'Close editor';
+    return;
+  }
+  if (event.target.closest('[data-license-cancel]')) {
+    card.querySelector('[data-license-editor]').hidden = true;
+    card.querySelector('[data-license-edit]').textContent = 'Edit';
+    return;
+  }
+  const type = card.dataset.licenseCard;
+  const status = card.querySelector('[data-license-message]');
+  const statusButton = event.target.closest('[data-license-status]');
+  const deleteButton = event.target.closest('[data-license-delete]');
+  if (!statusButton && !deleteButton) return;
+  if (deleteButton && !window.confirm(`Delete the ${type} license definition? Its custom rights will be removed and the tier deactivated. Rights snapshots already issued to customers will be kept.`)) return;
+  if (statusButton && !window.confirm(`Deactivate the ${type} license? It will no longer be offered for new beat purchases.`)) return;
+  const actionButton = statusButton || deleteButton;
+  actionButton.disabled = true;
+  try {
+    if (deleteButton) {
+      await api(`/api/admin/license-definitions/${encodeURIComponent(type)}`, { method: 'DELETE' });
+    } else {
+      await api(`/api/admin/license-definitions/${encodeURIComponent(type)}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ active: false })
+      });
+    }
+    await loadLicenseRights();
+  } catch (error) {
+    actionButton.disabled = false;
+    status.textContent = error.message || `Could not update the ${type} license.`;
+    status.classList.add('error');
+  }
+});
+
+$('#add-license-button').addEventListener('click', () => {
+  const formMessage = $('#license-form-message');
+  formMessage.textContent = '';
+  formMessage.classList.remove('error');
+  $('#add-license-dialog').showModal();
+  $('#license-form').elements.type.focus();
+});
+
+$('#close-add-license').addEventListener('click', () => $('#add-license-dialog').close());
+
+$('#license-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  const formMessage = $('#license-form-message');
+  button.disabled = true;
+  try {
+    await api('/api/admin/license-definitions', {
+      method: 'POST',
+      body: JSON.stringify({ type: form.elements.type.value })
+    });
+    $('#add-license-dialog').close();
+    await loadLicenseRights();
+  } catch (error) {
+    formMessage.textContent = error.message || 'Could not activate this license.';
+    formMessage.classList.add('error');
+  } finally {
+    button.disabled = false;
+  }
+});
+
 document.querySelectorAll('[data-content-type]').forEach(button => button.addEventListener('click', () => {
   document.querySelectorAll('[data-content-type]').forEach(item => item.classList.toggle('active', item === button));
-  $('#beat-form').hidden = button.dataset.contentType !== 'beat';
-  $('#merchandise-form').hidden = button.dataset.contentType !== 'merchandise';
+  $('#add-beat-button').hidden = button.dataset.contentType !== 'beat';
+  $('#beat-message').hidden = button.dataset.contentType !== 'beat';
+  $('#beat-management').hidden = button.dataset.contentType !== 'beat';
+  $('#add-merchandise-button').hidden = button.dataset.contentType !== 'merchandise';
+  $('#merchandise-message').hidden = button.dataset.contentType !== 'merchandise';
   $('#merchandise-management').hidden = button.dataset.contentType !== 'merchandise';
 }));
+
+$('#add-beat-button').addEventListener('click', () => {
+  $('#add-beat-dialog').showModal();
+  $('#beat-form').elements.title.focus();
+});
+
+$('#close-add-beat').addEventListener('click', () => $('#add-beat-dialog').close());
+
+$('#add-merchandise-button').addEventListener('click', () => {
+  const formMessage = $('#merchandise-form-message');
+  formMessage.textContent = '';
+  formMessage.classList.remove('error');
+  $('#add-merchandise-dialog').showModal();
+  $('#merchandise-form').elements.title.focus();
+});
+
+$('#close-add-merchandise').addEventListener('click', () => $('#add-merchandise-dialog').close());
 
 document.querySelectorAll('[data-request-type]').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('[data-request-type]').forEach(item => item.classList.toggle('active', item === button)); renderList('requests-list', dashboardData.requests.filter(item => item.request_type === button.dataset.requestType), 'requests'); }));
 document.querySelectorAll('[data-sale-type]').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('[data-sale-type]').forEach(item => item.classList.toggle('active', item === button)); renderList('sales-list', dashboardData.sales.filter(item => item.sale_type === button.dataset.saleType), 'sales'); }));
@@ -570,7 +750,9 @@ $('#beat-form').addEventListener('submit', async event => {
   try {
     const files = await filesFrom(form, ['cover', 'preview', 'mp3', 'wav', 'stems']);
     await api('/api/admin/beats', { method: 'POST', body: JSON.stringify({ title: form.elements.title.value, bpm: form.elements.bpm.value, musicalKey: form.elements.musicalKey.value, genre: form.elements.genre.value, mood: form.elements.mood.value, prices: { basic: form.elements.basic.value, premium: form.elements.premium.value, unlimited: form.elements.unlimited.value, exclusive: form.elements.exclusive.value }, files }) });
-    form.reset(); message('beat-message', 'Beat saved.');
+    form.reset();
+    $('#add-beat-dialog').close();
+    message('beat-message', 'Beat saved.');
     loadDashboard();
   } catch (error) { message('beat-message', error.message, true); }
 });
@@ -580,9 +762,8 @@ $('#beat-management-list').addEventListener('submit', async event => {
   if (!form) return;
   event.preventDefault();
   const fields = form.elements;
-  const statusMessage = form.querySelector('[data-beat-message]');
+  const statusMessage = form.closest('.admin-beat-card').querySelector('[data-beat-message]');
   const saveButton = form.querySelector('button[type="submit"]');
-  if (fields.status.value === 'archived' && !window.confirm('Archive this beat from the catalog?')) return;
   saveButton.disabled = true;
   try {
     await api(`/api/admin/beats/${form.dataset.beatId}`, { method: 'PATCH', body: JSON.stringify({
@@ -594,8 +775,7 @@ $('#beat-management-list').addEventListener('submit', async event => {
       mood: fields.mood.value,
       prices: { basic: fields.basic.value, premium: fields.premium.value, unlimited: fields.unlimited.value, exclusive: fields.exclusive.value }
     }) });
-    await api(`/api/admin/beats/${form.dataset.beatId}/status`, { method: 'PATCH', body: JSON.stringify({ status: fields.status.value }) });
-    statusMessage.textContent = 'Beat details and status saved.';
+    statusMessage.textContent = 'Beat details saved.';
     statusMessage.classList.remove('error');
     await loadDashboard();
   } catch (error) {
@@ -606,20 +786,48 @@ $('#beat-management-list').addEventListener('submit', async event => {
 });
 
 $('#beat-management-list').addEventListener('click', async event => {
-  const button = event.target.closest('[data-beat-status]');
-  if (!button) return;
-  const form = button.closest('.admin-beat-editor');
-  const statusMessage = form.querySelector('[data-beat-message]');
-  if (form.elements.status.value === 'archived' && !window.confirm('Archive this beat from the catalog?')) return;
-  button.disabled = true;
+  const editButton = event.target.closest('[data-beat-edit]');
+  const card = event.target.closest('.admin-beat-card');
+  if (!card) return;
+  if (editButton) {
+    const form = card.querySelector('.admin-beat-editor');
+    form.hidden = !form.hidden;
+    editButton.textContent = form.hidden ? 'Edit' : 'Close editor';
+    return;
+  }
+  if (event.target.closest('[data-beat-cancel]')) {
+    card.querySelector('.admin-beat-editor').hidden = true;
+    card.querySelector('[data-beat-edit]').textContent = 'Edit';
+    return;
+  }
+  const statusButton = event.target.closest('[data-beat-status]');
+  if (statusButton) {
+    const statusMessage = card.querySelector('[data-beat-message]');
+    const status = statusButton.dataset.nextStatus;
+    const verb = status === 'published' ? 'Activate' : 'Deactivate';
+    if (!window.confirm(`${verb} "${card.querySelector('.admin-beat-editor [name="title"]').value}"?`)) return;
+    statusButton.disabled = true;
+    try {
+      await api(`/api/admin/beats/${statusButton.dataset.beatStatus}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
+      await loadDashboard();
+    } catch (error) {
+      statusButton.disabled = false;
+      statusMessage.textContent = error.message || 'Could not update beat status.';
+      statusMessage.classList.add('error');
+    }
+    return;
+  }
+  const deleteButton = event.target.closest('[data-beat-delete]');
+  if (!deleteButton) return;
+  if (!window.confirm(`Permanently delete "${card.querySelector('.admin-beat-editor [name="title"]').value}"? This cannot be undone.`)) return;
+  deleteButton.disabled = true;
+  const statusMessage = card.querySelector('[data-beat-message]');
   try {
-    await api(`/api/admin/beats/${button.dataset.beatStatus}/status`, { method: 'PATCH', body: JSON.stringify({ status: form.elements.status.value }) });
-    statusMessage.textContent = 'Beat status saved.';
-    statusMessage.classList.remove('error');
+    await api(`/api/admin/beats/${deleteButton.dataset.beatDelete}`, { method: 'DELETE' });
     await loadDashboard();
   } catch (error) {
-    button.disabled = false;
-    statusMessage.textContent = error.message;
+    deleteButton.disabled = false;
+    statusMessage.textContent = error.message || 'Could not delete beat.';
     statusMessage.classList.add('error');
   }
 });
@@ -627,11 +835,122 @@ $('#beat-management-list').addEventListener('click', async event => {
 $('#merchandise-form').addEventListener('submit', async event => {
   event.preventDefault();
   const form = event.currentTarget;
+  const submitButton = form.querySelector('button[type="submit"]');
+  const formMessage = $('#merchandise-form-message');
+  submitButton.disabled = true;
   try {
     await api('/api/admin/merchandise', { method: 'POST', body: JSON.stringify({ title: form.elements.title.value, description: form.elements.description.value, price: form.elements.price.value, photo: await fileData(form.elements.photo.files[0]) }) });
-    form.reset(); message('merchandise-message', 'Merchandise saved.');
-    loadDashboard();
-  } catch (error) { message('merchandise-message', error.message, true); }
+    form.reset();
+    $('#add-merchandise-dialog').close();
+    formMessage.textContent = '';
+    formMessage.classList.remove('error');
+    message('merchandise-message', 'Merchandise saved.');
+    await loadDashboard();
+  } catch (error) {
+    formMessage.textContent = error.message || 'Could not save merchandise.';
+    formMessage.classList.add('error');
+  } finally {
+    submitButton.disabled = false;
+  }
+});
+
+$('#merchandise-management-list').addEventListener('submit', async event => {
+  const inventoryForm = event.target.closest('.admin-inventory-form');
+  if (inventoryForm) {
+    event.preventDefault();
+    const button = inventoryForm.querySelector('button[type="submit"]');
+    const statusMessage = inventoryForm.querySelector('[data-inventory-message]');
+    const value = inventoryForm.elements.stockQuantity.value.trim();
+    button.disabled = true;
+    try {
+      await api(`/api/admin/merchandise/${inventoryForm.dataset.merchandiseId}/inventory`, {
+        method: 'PATCH',
+        body: JSON.stringify({ stockQuantity: value === '' ? null : Number(value) })
+      });
+      statusMessage.textContent = 'Inventory saved.';
+      statusMessage.classList.remove('error');
+      await loadDashboard();
+    } catch (error) {
+      button.disabled = false;
+      statusMessage.textContent = error.message || 'Could not save inventory.';
+      statusMessage.classList.add('error');
+    }
+    return;
+  }
+  const form = event.target.closest('.admin-merchandise-editor');
+  if (!form) return;
+  event.preventDefault();
+  const card = form.closest('.admin-merchandise-card');
+  const button = form.querySelector('button[type="submit"]');
+  const statusMessage = card.querySelector('[data-merchandise-message]');
+  button.disabled = true;
+  try {
+    await api(`/api/admin/merchandise/${form.dataset.merchandiseId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        title: form.elements.title.value,
+        description: form.elements.description.value,
+        price: form.elements.price.value,
+        photo: await fileData(form.elements.photo.files[0])
+      })
+    });
+    await loadDashboard();
+  } catch (error) {
+    button.disabled = false;
+    statusMessage.textContent = error.message || 'Could not update merchandise.';
+    statusMessage.classList.add('error');
+  }
+});
+
+$('#merchandise-management-list').addEventListener('click', async event => {
+  const card = event.target.closest('.admin-merchandise-card');
+  if (!card) return;
+  const editButton = event.target.closest('[data-merchandise-edit]');
+  if (editButton) {
+    const form = card.querySelector('.admin-merchandise-editor');
+    form.hidden = !form.hidden;
+    editButton.textContent = form.hidden ? 'Edit' : 'Close editor';
+    return;
+  }
+  if (event.target.closest('[data-merchandise-cancel]')) {
+    card.querySelector('.admin-merchandise-editor').hidden = true;
+    card.querySelector('[data-merchandise-edit]').textContent = 'Edit';
+    return;
+  }
+  const statusButton = event.target.closest('[data-merchandise-status]');
+  if (statusButton) {
+    const status = statusButton.dataset.nextStatus;
+    const title = card.querySelector('.admin-merchandise-editor [name="title"]').value;
+    if (!window.confirm(`${status === 'published' ? 'Activate' : 'Deactivate'} "${title}"?`)) return;
+    statusButton.disabled = true;
+    try {
+      await api(`/api/admin/merchandise/${statusButton.dataset.merchandiseStatus}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status })
+      });
+      await loadDashboard();
+    } catch (error) {
+      statusButton.disabled = false;
+      const messageElement = card.querySelector('[data-merchandise-message]');
+      messageElement.textContent = error.message || 'Could not update merchandise status.';
+      messageElement.classList.add('error');
+    }
+    return;
+  }
+  const deleteButton = event.target.closest('[data-merchandise-delete]');
+  if (!deleteButton) return;
+  const title = card.querySelector('.admin-merchandise-editor [name="title"]').value;
+  if (!window.confirm(`Permanently delete "${title}"? This cannot be undone.`)) return;
+  deleteButton.disabled = true;
+  try {
+    await api(`/api/admin/merchandise/${deleteButton.dataset.merchandiseDelete}`, { method: 'DELETE' });
+    await loadDashboard();
+  } catch (error) {
+    deleteButton.disabled = false;
+    const messageElement = card.querySelector('[data-merchandise-message]');
+    messageElement.textContent = error.message || 'Could not delete merchandise.';
+    messageElement.classList.add('error');
+  }
 });
 
 $('#requests-list').addEventListener('submit', async event => {
@@ -651,29 +970,6 @@ $('#requests-list').addEventListener('submit', async event => {
       })
     });
     statusMessage.textContent = 'Request saved.';
-    statusMessage.classList.remove('error');
-    await loadDashboard();
-  } catch (error) {
-    button.disabled = false;
-    statusMessage.textContent = error.message;
-    statusMessage.classList.add('error');
-  }
-});
-
-$('#merchandise-management-list').addEventListener('submit', async event => {
-  const form = event.target.closest('[data-merchandise-id]');
-  if (!form) return;
-  event.preventDefault();
-  const button = form.querySelector('button[type="submit"]');
-  const statusMessage = form.querySelector('[data-inventory-message]');
-  const value = form.elements.stockQuantity.value.trim();
-  button.disabled = true;
-  try {
-    await api(`/api/admin/merchandise/${form.dataset.merchandiseId}/inventory`, {
-      method: 'PATCH',
-      body: JSON.stringify({ stockQuantity: value === '' ? null : Number(value) })
-    });
-    statusMessage.textContent = 'Inventory saved.';
     statusMessage.classList.remove('error');
     await loadDashboard();
   } catch (error) {
