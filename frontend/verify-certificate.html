@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#080808">
+  <title>Verify a Beat License | UltBigBoy</title>
+  <link rel="icon" type="image/png" href="Images/Logo 2.png">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="certificate.css">
+</head>
+<body class="certificate-page">
+  <header class="certificate-header">
+    <a class="certificate-brand" href="index.html"><img src="Images/Logo 2.png" alt=""><span>UltBigBoy Music Production</span></a>
+    <a href="license-terms.html">License terms</a>
+  </header>
+  <main class="certificate-shell certificate-verification-shell">
+    <p class="certificate-kicker">PUBLIC RECORD CHECK</p>
+    <h1>Certificate verification</h1>
+    <p id="verification-message" class="certificate-message" role="status" aria-live="polite">Checking certificate…</p>
+    <article id="verification-result" class="verification-result" hidden>
+      <div class="verification-mark" aria-hidden="true">✓</div>
+      <span id="verification-status" class="certificate-status"></span>
+      <h2 id="verification-beat"></h2>
+      <dl>
+        <div><dt>Certificate ID</dt><dd id="verification-id"></dd></div>
+        <div><dt>Licensee</dt><dd id="verification-customer"></dd></div>
+        <div><dt>License tier</dt><dd id="verification-license"></dd></div>
+        <div><dt>Order reference</dt><dd id="verification-order"></dd></div>
+        <div><dt>Purchased</dt><dd id="verification-purchased"></dd></div>
+        <div><dt>Issued</dt><dd id="verification-issued"></dd></div>
+        <div><dt>Terms version</dt><dd id="verification-terms-version"></dd></div>
+      </dl>
+      <h3>Recorded permissions</h3>
+      <ul id="verification-rights"></ul>
+      <a href="license-terms.html">About certificate rights and terms</a>
+    </article>
+  </main>
+  <script src="certificate-verify.js"></script>
+</body>
+</html>

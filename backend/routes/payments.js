@@ -10,6 +10,7 @@ const validators = require('../services/input-validation');
 const { recordAuditSafely } = require('../services/audit');
 const { createNotificationSafely, notifyAdminsSafely } = require('../services/notifications');
 const { loadLicenseRights, rightsFor } = require('../services/license-rights');
+const { issueCertificateRecord } = require('../services/license-certificates');
 const { refundEventDetails, refundEventKey, applyRefund, applyPaymentReversal } = require('../services/refunds');
 const { paymentFailureStatus, isRefundEvent, recordNonSuccessPayment } = require('../services/payment-events');
 const { queueEmailSafely } = require('../services/email/outbox');
@@ -111,6 +112,11 @@ async function normalizePaidOrder(db, order, items, paymentData) {
        WHERE NOT EXISTS (SELECT 1 FROM licenses WHERE order_id = ? AND beat_id = ? AND license_type = ?)`,
       [customer.id, item.productId, order.id, item.license, JSON.stringify(rights), order.id, item.productId, item.license]
     );
+    const license = await db.get(
+      'SELECT id FROM licenses WHERE order_id = ? AND beat_id = ? AND license_type = ? FOR UPDATE',
+      [order.id, item.productId, item.license]
+    );
+    if (license?.id) await issueCertificateRecord(db, license.id);
   }
   await createNotificationSafely(db, {
     userId: customer.id,

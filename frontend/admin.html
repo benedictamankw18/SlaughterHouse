@@ -23,7 +23,7 @@
     <section id="admin-dashboard" hidden>
       <header class="admin-header"><div><p class="section-kicker">UltBigBoy control room</p><h1>Admin dashboard</h1></div><button id="admin-logout" class="admin-secondary-button" type="button">Log out</button></header>
       <p id="admin-preview-notice" class="admin-message" hidden>Preview mode: dashboard layout only. API-backed records and save actions are not connected yet.</p>
-      <nav class="admin-tabs" aria-label="Admin sections"><button class="admin-tab active" data-section="overview" type="button">Overview</button><button class="admin-tab" data-section="analytics" type="button">Analytics</button><button class="admin-tab" data-section="content" type="button">Content</button><button class="admin-tab" data-section="sales" type="button">Sales</button><button class="admin-tab" data-section="orders" type="button">Orders</button><button class="admin-tab" data-section="requests" type="button">Requests</button><button class="admin-tab" data-section="reviews" type="button">Reviews</button><button class="admin-tab" data-section="customers" type="button">Customers</button><button class="admin-tab" data-section="artists" type="button">Artists</button><button class="admin-tab" data-section="license-rights" type="button">License rights</button><button class="admin-tab" data-section="settings" type="button">Settings</button><button class="admin-tab" data-section="staff" type="button" hidden>Staff</button><button class="admin-tab" data-section="alerts" type="button">Alerts <span id="admin-unread-count" class="admin-alert-count" hidden></span></button><button class="admin-tab" data-section="audit" type="button">Audit</button><button class="admin-tab" data-section="withdrawal" type="button">Withdrawal</button></nav>
+      <nav class="admin-tabs" aria-label="Admin sections"><button class="admin-tab active" data-section="overview" type="button">Overview</button><button class="admin-tab" data-section="analytics" type="button">Analytics</button><button class="admin-tab" data-section="content" type="button">Content</button><button class="admin-tab" data-section="sales" type="button">Sales</button><button class="admin-tab" data-section="orders" type="button">Orders</button><button class="admin-tab" data-section="requests" type="button">Requests</button><button class="admin-tab" data-section="reviews" type="button">Reviews</button><button class="admin-tab" data-section="customers" type="button">Customers</button><button class="admin-tab" data-section="artists" type="button">Artists</button><button class="admin-tab" data-section="license-rights" type="button">License rights</button><button class="admin-tab" data-section="certificates" type="button">Certificates</button><button class="admin-tab" data-section="settings" type="button">Settings</button><button class="admin-tab" data-section="staff" type="button" hidden>Staff</button><button class="admin-tab" data-section="alerts" type="button">Alerts <span id="admin-unread-count" class="admin-alert-count" hidden></span></button><button class="admin-tab" data-section="audit" type="button">Audit</button><button class="admin-tab" data-section="withdrawal" type="button">Withdrawal</button></nav>
 
       <section class="admin-section active" data-admin-section="overview">
         <div class="admin-metrics">
@@ -51,9 +51,22 @@
         <dialog id="add-beat-dialog" class="admin-dialog" aria-labelledby="add-beat-title">
           <div class="admin-dialog-header"><h2 id="add-beat-title">Add beat</h2><button id="close-add-beat" class="admin-secondary-button" type="button" aria-label="Close add beat form">Close</button></div>
           <form id="beat-form" class="admin-form">
-            <label>Beat title<input name="title" required></label><div class="admin-grid"><label>BPM<input name="bpm" type="number" min="1"></label><label>Key<input name="musicalKey"></label><label>Genre<input name="genre"></label><label>Mood<input name="mood"></label></div>
-            <div class="admin-grid admin-prices"><label>Basic price<input name="basic" type="number" min="0" step="0.01" required></label><label>Premium price<input name="premium" type="number" min="0" step="0.01" required></label><label>Unlimited price<input name="unlimited" type="number" min="0" step="0.01" required></label><label>Exclusive price<input name="exclusive" type="number" min="0" step="0.01" required></label></div>
-            <div class="admin-file-grid"><label>Cover art<input name="cover" type="file" accept="image/*"></label><label>Tagged preview file<input name="preview" type="file" accept="audio/*" required></label><label>Main MP3<input name="mp3" type="file" accept="audio/mpeg" required></label><label>WAV<input name="wav" type="file" accept="audio/wav" required></label><label>Track stems<input name="stems" type="file" required></label></div>
+            <label>Beat title<input name="title" required></label>
+            <div class="admin-grid">
+              <label>BPM<select name="bpm"><option value="">Select BPM</option></select></label>
+              <label>Key<select name="musicalKey"><option value="">Select key</option></select></label>
+              <label>Genre<select name="genre"><option value="">Select genre</option></select></label>
+              <label>Mood<select name="mood"><option value="">Select mood</option></select></label>
+              <label>Preview seconds<input name="previewDurationSeconds" type="number" min="1" max="3600" step="1" placeholder="Optional"></label>
+            </div>
+            <div class="admin-grid admin-prices"><label>Basic price (USD)<input name="basic" type="number" min="0" step="0.01" required></label><label>Premium price (USD)<input name="premium" type="number" min="0" step="0.01" required></label><label>Unlimited price (USD)<input name="unlimited" type="number" min="0" step="0.01" required></label><label>Exclusive price (USD)<input name="exclusive" type="number" min="0" step="0.01" required></label></div>
+            <div class="admin-file-grid">
+              <label>Cover art<input name="cover" type="file" accept="image/*"><img id="beat-cover-preview" class="admin-beat-cover admin-cover-preview" alt="Cover art preview" hidden></label>
+              <label>Tagged preview file<input name="preview" type="file" accept="audio/*" required></label>
+              <label>Main MP3<input name="mp3" type="file" accept="audio/mpeg" required></label>
+              <label>WAV<input name="wav" type="file" accept="audio/wav" required></label>
+              <label>Track stems<input name="stems" type="file" required></label>
+            </div>
             <button class="auth-primary-button" type="submit">Save beat</button>
           </form>
         </dialog>
@@ -98,6 +111,19 @@
             <p id="license-form-message" class="admin-message" role="status"></p>
           </form>
         </dialog>
+      </section>
+      <section class="admin-section" data-admin-section="certificates">
+        <h2>Beat license certificates</h2>
+        <p>Search issued records, inspect immutable purchase terms and history, download PDFs, and revoke or reissue certificates with an audit reason.</p>
+        <form id="certificate-filter" class="admin-toggle">
+          <label>Search<input name="q" maxlength="100" placeholder="Certificate, customer, or beat"></label>
+          <label>Status<select name="status"><option value="">All statuses</option><option value="valid">Valid</option><option value="revoked">Revoked</option><option value="reissued">Reissued</option><option value="suspended">Suspended</option><option value="refunded">Refunded</option></select></label>
+          <label>License tier<select name="licenseType"><option value="">All tiers</option><option value="basic">Basic</option><option value="premium">Premium</option><option value="unlimited">Unlimited</option><option value="exclusive">Exclusive</option></select></label>
+          <label>From<input name="from" type="date"></label><label>To<input name="to" type="date"></label>
+          <button type="submit">Search certificates</button>
+        </form>
+        <p id="certificate-admin-message" class="admin-message" role="status"></p>
+        <div id="certificate-list" class="admin-list"></div>
       </section>
       <section class="admin-section" data-admin-section="settings"><h2>Business settings</h2><p>Price changes apply to future checkouts and requests. Existing beat prices remain unchanged.</p><form id="business-settings-form" class="admin-form admin-card"></form><p id="business-settings-message" class="admin-message" role="status"></p></section>
       <section class="admin-section" data-admin-section="staff"><h2>Super-admin staff management</h2><p>Changing a role revokes the user's active sessions. The last super-admin cannot be demoted.</p><p id="staff-message" class="admin-message" role="status"></p><div id="staff-list" class="admin-list"></div></section>

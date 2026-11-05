@@ -25,6 +25,31 @@
 		const title = document.getElementById('payment-title');
 		const message = document.getElementById('payment-message');
 		const links = document.getElementById('download-links');
+		const cartStorageKey = 'ultbigboyCart';
+		const pendingCartPaymentsKey = 'ultbigboyPendingCartPayments';
+
+		function removePaidItemsFromCart(paymentReference) {
+			const pendingPayments = JSON.parse(localStorage.getItem(pendingCartPaymentsKey) || '{}');
+			const purchasedKeys = pendingPayments[paymentReference];
+			if (!Array.isArray(purchasedKeys)) return;
+			const cart = JSON.parse(localStorage.getItem(cartStorageKey) || '[]');
+			if (!Array.isArray(cart)) throw new Error('Your saved cart could not be updated automatically.');
+			const remainingCounts = new Map();
+			purchasedKeys.forEach(key => remainingCounts.set(key, (remainingCounts.get(key) || 0) + 1));
+			const remainingCart = cart.filter(item => {
+				const product = Number.isInteger(Number(item.productId)) && Number(item.productId) > 0
+					? `id:${Number(item.productId)}`
+					: `name:${String(item.name || '').trim().toLowerCase()}`;
+				const key = `${item.type || 'beat'}|${product}|${String(item.license || '').toLowerCase()}`;
+				const count = remainingCounts.get(key) || 0;
+				if (!count) return true;
+				remainingCounts.set(key, count - 1);
+				return false;
+			});
+			localStorage.setItem(cartStorageKey, JSON.stringify(remainingCart));
+			delete pendingPayments[paymentReference];
+			localStorage.setItem(pendingCartPaymentsKey, JSON.stringify(pendingPayments));
+		}
 
 		if (!reference) {
 			title.textContent = 'Payment reference missing';
@@ -40,14 +65,19 @@
 						throw new Error('Payment was not confirmed.');
 					}
 
+					try {
+						removePaidItemsFromCart(reference);
+					} catch {
+						message.textContent = 'Payment confirmed, but your cart could not be updated. Please remove paid items manually.';
+					}
 					title.textContent = 'Payment confirmed';
 					if (data.booking) {
-						message.textContent = `${data.booking.service} payment received. Your session request is now booked.`;
+						if (!message.textContent.startsWith('Payment confirmed,')) message.textContent = `${data.booking.service} payment received. Your session request is now booked.`;
 						const returnLink = document.getElementById('payment-return-link');
 						returnLink.href = 'booking.html';
 						returnLink.textContent = 'Return to booking';
 					} else {
-						message.textContent = `Order ${data.reference} is ready. Download your files below.`;
+						if (!message.textContent.startsWith('Payment confirmed,')) message.textContent = `Order ${data.reference} is ready. Download your files below.`;
 					}
 					data.downloads.forEach(item => {
 						const downloadItem = document.createElement('div');

@@ -12,6 +12,13 @@ const configuredPaystackKey = String(process.env.PAYSTACK_SECRET_KEY || '').trim
 const paystackSecretKey = configuredPaystackKey && configuredPaystackKey !== 'sk_test_your_paystack_secret_key'
   ? configuredPaystackKey
   : null;
+const certificateSigningSecret = process.env.CERTIFICATE_SIGNING_SECRET
+  || process.env.DOWNLOAD_SIGNING_SECRET
+  || (process.env.NODE_ENV === 'production' ? null : crypto.randomBytes(32).toString('hex'));
+
+if (!certificateSigningSecret) {
+  throw new Error('Set CERTIFICATE_SIGNING_SECRET (or DOWNLOAD_SIGNING_SECRET) to a stable secret before starting in production.');
+}
 
 module.exports = {
   port,
@@ -21,6 +28,8 @@ module.exports = {
   emailApiKey: process.env.EMAIL_API_KEY || null,
   emailFrom: process.env.EMAIL_FROM || null,
   uploadDirectory: path.join(__dirname, 'data', 'uploads'),
+  certificateDirectory: path.join(__dirname, 'data', 'certificates'),
+  certificateSigningSecret,
   paystackSecretKey,
   downloadSigningSecret: process.env.DOWNLOAD_SIGNING_SECRET || (
     process.env.NODE_ENV === 'production' ? null : crypto.randomBytes(32).toString('hex')

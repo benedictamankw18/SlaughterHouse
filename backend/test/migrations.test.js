@@ -86,6 +86,19 @@ test('migration 22 tracks availability for the built-in license definitions', ()
   }
 });
 
+test('migration 23 stores certificates and immutable administrative history', () => {
+  const migration = migrations.find(candidate => candidate.version === 23);
+  assert.ok(migration, 'migration 23 must exist');
+  const sql = migration.statements.join('\n');
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS license_certificates/);
+  assert.match(sql, /verification_token_hash CHAR\(64\) NOT NULL UNIQUE/);
+  assert.match(sql, /license_terms_snapshot JSON NOT NULL/);
+  assert.match(sql, /reissued_from_id BIGINT NULL/);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS license_certificate_history/);
+  assert.match(sql, /reason VARCHAR\(500\) NULL/);
+  assert.match(sql, /ON DELETE RESTRICT/);
+});
+
 test('migration 11 adds an idempotent per-order-line key to sales', () => {
   const migration = migrations.find(candidate => candidate.version === 11);
   assert.ok(migration, 'migration 11 must exist');
@@ -195,7 +208,8 @@ test('applyMigrations resumes from the last recorded version', async () => {
   ).concat(
     migrations.find(migration => migration.version === 20).statements,
     migrations.find(migration => migration.version === 21).statements,
-    migrations.find(migration => migration.version === 22).statements
+    migrations.find(migration => migration.version === 22).statements,
+    migrations.find(migration => migration.version === 23).statements
   );
   assert.deepEqual(pool.statements, expected);
 });
@@ -210,6 +224,7 @@ test('applyMigrations skips existing legacy columns and applies the next migrati
   assert.deepEqual(pool.statements, [
     ...migrations.find(migration => migration.version === 20).statements,
     ...migrations.find(migration => migration.version === 21).statements,
-    ...migrations.find(migration => migration.version === 22).statements
+    ...migrations.find(migration => migration.version === 22).statements,
+    ...migrations.find(migration => migration.version === 23).statements
   ]);
 });

@@ -758,8 +758,13 @@ function setupPreviewCard(card) {
   const playIcon = card.querySelector('.play-icon');
   if (!coverButton || !audio || !playIcon) return;
   const beatKey = card.dataset.productId || card.querySelector('h3')?.textContent?.trim().toLowerCase();
-  const savedVolume = Number(localStorage.getItem(previewVolumeKey));
-  if (Number.isFinite(savedVolume) && savedVolume >= 0 && savedVolume <= 1) audio.volume = savedVolume;
+  const savedVolumeValue = localStorage.getItem(previewVolumeKey);
+  const savedVolume = Number(savedVolumeValue);
+  if (savedVolumeValue !== null && Number.isFinite(savedVolume) && savedVolume > 0 && savedVolume <= 1) {
+    audio.volume = savedVolume;
+  } else if (savedVolumeValue !== null) {
+    localStorage.removeItem(previewVolumeKey);
+  }
   audio.addEventListener('loadedmetadata', () => {
     try {
       const state = JSON.parse(localStorage.getItem(previewStateKey) || 'null');
@@ -770,7 +775,10 @@ function setupPreviewCard(card) {
     try { localStorage.setItem(previewStateKey, JSON.stringify({ beatKey, currentTime: audio.currentTime })); } catch {}
   });
   audio.addEventListener('volumechange', () => {
-    try { localStorage.setItem(previewVolumeKey, String(audio.volume)); } catch {}
+    try {
+      if (audio.volume > 0) localStorage.setItem(previewVolumeKey, String(audio.volume));
+      else localStorage.removeItem(previewVolumeKey);
+    } catch {}
   });
 
   coverButton.addEventListener('click', () => {
@@ -782,6 +790,7 @@ function setupPreviewCard(card) {
     });
 
     if (audio.paused) {
+      if (audio.volume === 0) audio.volume = 1;
       audio.play().then(() => {
         playIcon.textContent = '\u275A\u275A';
         coverButton.setAttribute('aria-label', `Pause ${card.querySelector('h3')?.textContent || 'beat'} preview`);
@@ -813,6 +822,7 @@ const rates = {
 };
 
 const cartStorageKey = 'ultbigboyCart';
+const pendingCartPaymentsKey = 'ultbigboyPendingCartPayments';
 let cart = [];
 try {
   const savedCart = JSON.parse(localStorage.getItem(cartStorageKey) || '[]');
@@ -1012,6 +1022,42 @@ function addToCart(item) {
   updateCart();
 }
 
+function cartItemKey(item) {
+  const product = Number.isInteger(Number(item.productId)) && Number(item.productId) > 0
+    ? `id:${Number(item.productId)}`
+    : `name:${String(item.name || '').trim().toLowerCase()}`;
+  return `${item.type || 'beat'}|${product}|${String(item.license || '').toLowerCase()}`;
+}
+
+function syncCartProductButtons() {
+  document.querySelectorAll('.beat-card .beat-cart-button').forEach(button => {
+    const card = button.closest('.beat-card');
+    const license = card.querySelector('.license-select')?.value || '';
+    const inCart = cart.some(item => cartItemKey(item) === cartItemKey({
+      type: 'beat',
+      productId: card.dataset.productId,
+      name: card.querySelector('h3')?.textContent,
+      license
+    }));
+    button.classList.toggle('is-in-cart', inCart);
+    button.disabled = inCart;
+    button.innerHTML = inCart ? '<span aria-hidden="true">&#10003;</span><small>In cart</small>' : '<span aria-hidden="true">&#128722;</span>';
+    button.setAttribute('aria-label', inCart ? `${card.querySelector('h3')?.textContent || 'Beat'} is in your cart` : `Add ${card.querySelector('h3')?.textContent || 'beat'} to cart`);
+    button.title = inCart ? 'Already in cart' : 'Add to cart';
+  });
+  document.querySelectorAll('.storefront-merchandise-item .merchandise-submit-button').forEach(button => {
+    const inCart = cart.some(item => item.type === 'merchandise' && cartItemKey(item) === cartItemKey({
+      type: 'merchandise',
+      productId: button.dataset.productId,
+      name: button.dataset.productName
+    }));
+    button.classList.toggle('is-in-cart', inCart);
+    button.disabled = inCart || button.dataset.outOfStock === 'true';
+    button.textContent = inCart ? 'In cart' : button.dataset.outOfStock === 'true' ? 'Out of stock' : 'Add to cart';
+    button.setAttribute('aria-label', inCart ? `${button.dataset.productName} is in your cart` : `${button.dataset.outOfStock === 'true' ? 'Out of stock:' : 'Add to cart:'} ${button.dataset.productName}`);
+  });
+}
+
 function updateCart() {
   try {
     localStorage.setItem(cartStorageKey, JSON.stringify(cart));
@@ -1031,6 +1077,7 @@ function updateCart() {
     cartCount.hidden = itemCount === 0;
   }
   cartButton?.setAttribute('aria-label', `Shopping cart, ${itemCount} ${itemCount === 1 ? 'item' : 'items'}`);
+  syncCartProductButtons();
   if (!cartItems || !cartEmpty || !cartTotal) return;
   cartItems.innerHTML = "";
   let total = 0;
@@ -1067,6 +1114,17 @@ function updateCart() {
     });
   });
 }
+
+window.addEventListener('storage', event => {
+  if (event.key !== cartStorageKey) return;
+  try {
+    const savedCart = JSON.parse(event.newValue || '[]');
+    cart = Array.isArray(savedCart) ? savedCart.filter(item => item && typeof item.name === 'string') : [];
+  } catch {
+    cart = [];
+  }
+  updateCart();
+});
 
 function switchCurrency() {
   currentCurrency = currencySelect ? currencySelect.value : currentCurrency;
@@ -1150,7 +1208,10 @@ async function loadDatabaseBeatCatalog() {
     const total = Number(pagination.total || data.beats.length);
     document.getElementById('beat-result-count').textContent = `${total} ${total === 1 ? 'beat' : 'beats'} found`;
     renderCatalogPagination(pagination);
-    catalogList.querySelectorAll('.license-select').forEach(select => select.addEventListener('change', updateBeatPrices));
+    catalogList.querySelectorAll('.license-select').forEach(select => select.addEventListener('change', () => {
+      updateBeatPrices();
+      syncCartProductButtons();
+    }));
     catalogList.querySelectorAll('.beat-cart-button').forEach(button => button.addEventListener('click', () => {
       const card = button.closest('.beat-card');
       const select = card.querySelector('.license-select');
@@ -1159,6 +1220,7 @@ async function loadDatabaseBeatCatalog() {
       showCartToast('Beat added to cart.');
     }));
     updateBeatPrices();
+    syncCartProductButtons();
   } catch (error) {
     showRetryState(catalogList, error.message || 'Could not load beats.', loadDatabaseBeatCatalog);
   }
@@ -1192,7 +1254,10 @@ async function loadFeaturedBeatCatalog() {
       setupPreviewCard(card);
       return card;
     }));
-    catalogList.querySelectorAll('.license-select').forEach(select => select.addEventListener('change', updateBeatPrices));
+    catalogList.querySelectorAll('.license-select').forEach(select => select.addEventListener('change', () => {
+      updateBeatPrices();
+      syncCartProductButtons();
+    }));
     catalogList.querySelectorAll('.beat-cart-button').forEach(button => button.addEventListener('click', () => {
       const card = button.closest('.beat-card');
       const select = card.querySelector('.license-select');
@@ -1202,6 +1267,7 @@ async function loadFeaturedBeatCatalog() {
       showCartToast('Beat added to cart.');
     }));
     updateBeatPrices();
+    syncCartProductButtons();
   } catch (error) {
     showRetryState(catalogList, error.message || 'Could not load featured beats.', loadFeaturedBeatCatalog);
   }
@@ -1302,6 +1368,14 @@ function openCheckoutForm() {
       const response = await fetch(`${API}/api/payments/initialize`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: customerUser?.name || 'Guest Customer', email: paymentEmail, items: currentSelectedItems, paymentMethod }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not start payment.');
+      if (!data.reference || !data.authorizationUrl) throw new Error('Payment could not be started because the response was incomplete.');
+      let pendingPayments = {};
+      try {
+        const savedPayments = JSON.parse(localStorage.getItem(pendingCartPaymentsKey) || '{}');
+        if (savedPayments && typeof savedPayments === 'object' && !Array.isArray(savedPayments)) pendingPayments = savedPayments;
+      } catch {}
+      pendingPayments[data.reference] = currentSelectedItems.map(cartItemKey);
+      localStorage.setItem(pendingCartPaymentsKey, JSON.stringify(pendingPayments));
       window.location.href = data.authorizationUrl;
     } catch (error) {
       message.textContent = error.message;
@@ -1385,8 +1459,11 @@ if (merchandiseList) {
       const button = document.createElement('button');
       button.className = 'merchandise-submit-button';
       button.type = 'button';
+      button.dataset.productId = String(product.id);
+      button.dataset.productName = product.title;
       const finiteStock = product.stockQuantity !== null && product.stockQuantity !== undefined;
       const outOfStock = finiteStock && Number(product.stockQuantity) < 1;
+      button.dataset.outOfStock = String(outOfStock);
       button.textContent = outOfStock ? 'Out of stock' : 'Add to cart';
       button.disabled = outOfStock;
       button.addEventListener('click', () => {
@@ -1399,6 +1476,7 @@ if (merchandiseList) {
       card.append(image, details);
       merchandiseList.append(card);
     });
+    syncCartProductButtons();
     if (!data.merchandise.length) merchandiseList.innerHTML = '<p>No merchandise is available to order yet.</p>';
   }).catch(error => {
     showRetryState(merchandiseList, error.message || 'Merchandise could not be loaded right now.', loadMerchandise);

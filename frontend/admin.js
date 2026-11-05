@@ -2,9 +2,62 @@ const configuredApiUrl = window.ULTBIGBOY_API_URL || new URLSearchParams(locatio
 const API = configuredApiUrl || `${location.protocol}//${location.hostname}:3000`;
 let adminToken = sessionStorage.getItem('adminToken');
 let dashboardData = { sales: [], requests: [], orders: [], reviews: [], artists: [], withdrawals: [], analytics: {} };
+const activeAdminSectionKey = 'adminActiveSection';
 
 const $ = selector => document.querySelector(selector);
 const message = (id, text, error = false) => { const element = document.getElementById(id); element.textContent = text; element.classList.toggle('error', error); };
+const beatGenres = [
+  { value: 'afrobeat', label: 'Afrobeat' },
+  { value: 'amapiano', label: 'Amapiano' },
+  { value: 'trap', label: 'Trap' },
+  { value: 'hiphop', label: 'Rap / Hip Hop' },
+  { value: 'highlife', label: 'Highlife' },
+  { value: 'rnb', label: 'R&B' },
+  { value: 'dancehall', label: 'Dancehall' },
+  { value: 'reggae', label: 'Reggae' },
+  { value: 'asakaa', label: 'Asakaa' }
+];
+const beatMoods = ['emotional', 'sad', 'happy', 'energetic', 'romantic', 'dark', 'chill', 'uplifting', 'storytelling', 'dance', 'other', 'cool']
+  .map(value => ({ value, label: value[0].toUpperCase() + value.slice(1) }));
+const beatKeys = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B']
+  .flatMap(note => ['Major', 'Minor'].map(mode => ({ value: `${note} ${mode}`, label: `${note} ${mode}` })));
+const beatBpms = Array.from({ length: 181 }, (_, index) => {
+  const value = index + 40;
+  return { value: String(value), label: String(value) };
+});
+const beatPriceUsd = value => `$${Number(value || 0).toFixed(2)} USD`;
+let beatCoverObjectUrl;
+
+function beatSelectMarkup(name, label, options, selectedValue = '', placeholder = `Select ${label.toLowerCase()}`) {
+  const selected = String(selectedValue ?? '');
+  const availableOptions = [...options];
+  if (selected && !availableOptions.some(option => option.value === selected)) {
+    availableOptions.push({ value: selected, label: `${selected} (current)` });
+  }
+  return `<label>${label}<select name="${name}">${beatOptionsMarkup(availableOptions, selected, placeholder)}</select></label>`;
+}
+
+function beatOptionsMarkup(options, selectedValue = '', placeholder = '') {
+  const selected = String(selectedValue ?? '');
+  return `<option value="">${escapeHtml(placeholder)}</option>${options.map(option =>
+    `<option value="${escapeHtml(option.value)}" ${selected === option.value ? 'selected' : ''}>${escapeHtml(option.label)}</option>`
+  ).join('')}`;
+}
+
+function populateBeatSelectors(form) {
+  form.elements.bpm.innerHTML = beatOptionsMarkup(beatBpms, '', 'Select BPM');
+  form.elements.musicalKey.innerHTML = beatOptionsMarkup(beatKeys, '', 'Select key');
+  form.elements.genre.innerHTML = beatOptionsMarkup(beatGenres, '', 'Select genre');
+  form.elements.mood.innerHTML = beatOptionsMarkup(beatMoods, '', 'Select mood');
+}
+
+function clearBeatCoverPreview() {
+  const preview = $('#beat-cover-preview');
+  if (beatCoverObjectUrl) URL.revokeObjectURL(beatCoverObjectUrl);
+  beatCoverObjectUrl = null;
+  preview.removeAttribute('src');
+  preview.hidden = true;
+}
 
 async function api(path, options = {}) {
   const response = await fetch(`${API}${path}`, { ...options, credentials: 'include', headers: { 'Content-Type': 'application/json', ...(adminToken ? { Authorization: 'Bearer ' + adminToken } : {}), ...(options.headers || {}) } });
@@ -31,6 +84,7 @@ async function filesFrom(form, names) {
 
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 const formatMoney = value => `GHS ${Number(value || 0).toFixed(2)}`;
+populateBeatSelectors($('#beat-form'));
 
 function renderList(elementId, items, type) {
   const container = document.getElementById(elementId);
@@ -124,7 +178,7 @@ function renderBeatManagement() {
         <p class="admin-beat-summary">${escapeHtml(beat.genre || 'Genre not set')}${beat.bpm ? ` · ${escapeHtml(beat.bpm)} BPM` : ''}${beat.musical_key ? ` · ${escapeHtml(beat.musical_key)}` : ''}</p>
         <details class="admin-beat-details">
           <summary>Show details</summary>
-          <dl><div><dt>Beat ID</dt><dd>${id}</dd></div><div><dt>Mood</dt><dd>${escapeHtml(beat.mood || 'Not set')}</dd></div><div><dt>Preview length</dt><dd>${escapeHtml(beat.preview_duration_seconds || 'Not set')} sec</dd></div><div><dt>Basic</dt><dd>${formatMoney(beat.basic_price)}</dd></div><div><dt>Premium</dt><dd>${formatMoney(beat.premium_price)}</dd></div><div><dt>Unlimited</dt><dd>${formatMoney(beat.unlimited_price)}</dd></div><div><dt>Exclusive</dt><dd>${formatMoney(beat.exclusive_price)}</dd></div></dl>
+          <dl><div><dt>Beat ID</dt><dd>${id}</dd></div><div><dt>Mood</dt><dd>${escapeHtml(beat.mood || 'Not set')}</dd></div><div><dt>Preview length</dt><dd>${escapeHtml(beat.preview_duration_seconds || 'Not set')} sec</dd></div><div><dt>Basic (USD)</dt><dd>${beatPriceUsd(beat.basic_price)}</dd></div><div><dt>Premium (USD)</dt><dd>${beatPriceUsd(beat.premium_price)}</dd></div><div><dt>Unlimited (USD)</dt><dd>${beatPriceUsd(beat.unlimited_price)}</dd></div><div><dt>Exclusive (USD)</dt><dd>${beatPriceUsd(beat.exclusive_price)}</dd></div></dl>
         </details>
         <div class="admin-review-actions admin-beat-actions">
           <button type="button" data-beat-edit>Edit</button>
@@ -134,17 +188,17 @@ function renderBeatManagement() {
         <form class="admin-beat-editor" data-beat-id="${id}" hidden>
           <div class="admin-grid">
             <label>Title<input name="title" value="${escapeHtml(beat.title)}" required></label>
-            <label>BPM<input name="bpm" type="number" min="1" max="400" value="${escapeHtml(beat.bpm)}"></label>
+            ${beatSelectMarkup('bpm', 'BPM', beatBpms, beat.bpm, 'Select BPM')}
             <label>Preview seconds<input name="previewDurationSeconds" type="number" min="1" max="3600" value="${escapeHtml(beat.preview_duration_seconds)}"></label>
-            <label>Key<input name="musicalKey" value="${escapeHtml(beat.musical_key)}"></label>
-            <label>Genre<input name="genre" value="${escapeHtml(beat.genre)}"></label>
-            <label>Mood<input name="mood" value="${escapeHtml(beat.mood)}"></label>
+            ${beatSelectMarkup('musicalKey', 'Key', beatKeys, beat.musical_key, 'Select key')}
+            ${beatSelectMarkup('genre', 'Genre', beatGenres, beat.genre, 'Select genre')}
+            ${beatSelectMarkup('mood', 'Mood', beatMoods, beat.mood, 'Select mood')}
           </div>
           <div class="admin-grid admin-prices">
-            <label>Basic<input name="basic" type="number" min="0" step="0.01" value="${escapeHtml(beat.basic_price)}"></label>
-            <label>Premium<input name="premium" type="number" min="0" step="0.01" value="${escapeHtml(beat.premium_price)}"></label>
-            <label>Unlimited<input name="unlimited" type="number" min="0" step="0.01" value="${escapeHtml(beat.unlimited_price)}"></label>
-            <label>Exclusive<input name="exclusive" type="number" min="0" step="0.01" value="${escapeHtml(beat.exclusive_price)}"></label>
+            <label>Basic price (USD)<input name="basic" type="number" min="0" step="0.01" value="${escapeHtml(beat.basic_price)}"></label>
+            <label>Premium price (USD)<input name="premium" type="number" min="0" step="0.01" value="${escapeHtml(beat.premium_price)}"></label>
+            <label>Unlimited price (USD)<input name="unlimited" type="number" min="0" step="0.01" value="${escapeHtml(beat.unlimited_price)}"></label>
+            <label>Exclusive price (USD)<input name="exclusive" type="number" min="0" step="0.01" value="${escapeHtml(beat.exclusive_price)}"></label>
           </div>
           <div class="admin-review-actions"><button type="submit">Save changes</button><button type="button" data-beat-cancel>Cancel</button></div>
         </form>
@@ -152,6 +206,16 @@ function renderBeatManagement() {
       </div>
     </article>`;
   }).join('');
+}
+
+function activateAdminSection(sectionName, persist = true) {
+  const tabs = [...document.querySelectorAll('.admin-tab')];
+  const selectedTab = tabs.find(tab => tab.dataset.section === sectionName && !tab.hidden)
+    || tabs.find(tab => tab.dataset.section === 'overview');
+  if (!selectedTab) return;
+  document.querySelectorAll('.admin-tab').forEach(tab => tab.classList.toggle('active', tab === selectedTab));
+  document.querySelectorAll('.admin-section').forEach(section => section.classList.toggle('active', section.dataset.adminSection === selectedTab.dataset.section));
+  if (persist) sessionStorage.setItem(activeAdminSectionKey, selectedTab.dataset.section);
 }
 
 function renderMerchandiseManagement() {
@@ -354,6 +418,38 @@ async function loadStaff() {
   }
 }
 
+async function loadCertificates() {
+  const form = $('#certificate-filter');
+  const params = new URLSearchParams(new FormData(form));
+  const suffix = params.toString();
+  const container = $('#certificate-list');
+  container.innerHTML = '<p>Loading certificate records…</p>';
+  try {
+    const data = await api(`/api/admin/certificates${suffix ? `?${suffix}` : ''}`);
+    const certificates = data.certificates || [];
+    if (!certificates.length) {
+      container.innerHTML = '<p>No certificate records match these filters.</p>';
+      return true;
+    }
+    container.innerHTML = certificates.map(item => {
+      const status = String(item.status || 'unknown').toLowerCase();
+      const rights = escapeHtml(JSON.stringify(item.rights || {}, null, 2));
+      return `<article class="admin-list-item admin-certificate-card" data-certificate-id="${Number(item.id)}">
+        <div class="admin-certificate-heading"><div><strong>${escapeHtml(item.beat_title || 'Beat')}</strong><p>${escapeHtml(item.certificate_id)} · ${escapeHtml(item.license_type)} · Order ${escapeHtml(item.order_reference || 'not recorded')}</p><p>${escapeHtml(item.customer_name || 'Customer')} · ${escapeHtml(item.customer_email || 'No email')}</p></div><span class="certificate-status certificate-status-${escapeHtml(status)}">${escapeHtml(status)}</span></div>
+        <details class="admin-certificate-rights"><summary>Purchase-time rights</summary><pre>${rights}</pre></details>
+        <div class="admin-certificate-actions"><button type="button" data-certificate-details="${Number(item.id)}">Details &amp; history</button><button type="button" data-certificate-pdf="${Number(item.id)}">Download PDF</button>${status === 'valid' ? `<button type="button" data-certificate-action="revoke" data-certificate-id="${Number(item.id)}">Revoke</button>` : ''}${['valid', 'revoked'].includes(status) ? `<button type="button" data-certificate-action="reissue" data-certificate-id="${Number(item.id)}">Reissue</button>` : ''}</div>
+        <div class="admin-certificate-detail-panel" data-certificate-detail-panel hidden></div>
+      </article>`;
+    }).join('');
+    message('certificate-admin-message', `${certificates.length} certificate record(s) loaded.`);
+    return true;
+  } catch (error) {
+    container.innerHTML = '';
+    message('certificate-admin-message', error.message || 'Could not load certificate records.', true);
+    return false;
+  }
+}
+
 async function loadDashboard() {
   dashboardData = await api('/api/admin/data');
   document.querySelector('[data-section="license-rights"]').hidden = false;
@@ -362,6 +458,7 @@ async function loadDashboard() {
   document.querySelector('[data-admin-section="settings"]').hidden = false;
   document.querySelector('[data-section="staff"]').hidden = dashboardData.role !== 'super_admin';
   document.querySelector('[data-admin-section="staff"]').hidden = dashboardData.role !== 'super_admin';
+  activateAdminSection(sessionStorage.getItem(activeAdminSectionKey) || 'overview', false);
   renderAnalytics(dashboardData.analytics || {});
   renderBeatManagement();
   renderMerchandiseManagement();
@@ -378,6 +475,7 @@ async function loadDashboard() {
   loadLicenseRights();
   loadBusinessSettings();
   loadStaff();
+  loadCertificates();
   if (!$('#report-filter').elements.from.value || !$('#report-filter').elements.to.value) {
     const today = new Date();
     $('#report-filter').elements.to.value = dateInputValue(today);
@@ -421,13 +519,13 @@ $('#admin-logout').addEventListener('click', async () => {
     console.warn('Admin session could not be invalidated remotely:', error.message);
   }).finally(() => {
     sessionStorage.removeItem('adminToken');
+    sessionStorage.removeItem(activeAdminSectionKey);
     location.reload();
   });
 });
 
 document.querySelectorAll('.admin-tab').forEach(button => button.addEventListener('click', () => {
-  document.querySelectorAll('.admin-tab').forEach(tab => tab.classList.toggle('active', tab === button));
-  document.querySelectorAll('.admin-section').forEach(section => section.classList.toggle('active', section.dataset.adminSection === button.dataset.section));
+  activateAdminSection(button.dataset.section);
 }));
 
 $('#report-filter').addEventListener('submit', event => {
@@ -588,6 +686,72 @@ $('#license-rights-list').addEventListener('click', async event => {
   }
 });
 
+$('#certificate-filter').addEventListener('submit', event => {
+  event.preventDefault();
+  loadCertificates();
+});
+
+$('#certificate-list').addEventListener('click', async event => {
+  const detailsButton = event.target.closest('[data-certificate-details]');
+  const pdfButton = event.target.closest('[data-certificate-pdf]');
+  const actionButton = event.target.closest('[data-certificate-action]');
+  if (!detailsButton && !pdfButton && !actionButton) return;
+  const button = detailsButton || pdfButton || actionButton;
+  button.disabled = true;
+  try {
+    if (detailsButton) {
+      const card = detailsButton.closest('.admin-certificate-card');
+      const panel = card.querySelector('[data-certificate-detail-panel]');
+      if (panel.hidden) {
+        if (!panel.dataset.loaded) {
+          const result = await api(`/api/admin/certificates/${detailsButton.dataset.certificateDetails}`);
+          const certificate = result.certificate;
+          const history = result.history || [];
+          panel.innerHTML = `<h3>Certificate details</h3><p>Status: ${escapeHtml(certificate.status)} · Issued ${escapeHtml(certificate.issued_at || '')} · Terms ${escapeHtml(certificate.terms_version)}</p><p>Verification: <a href="${escapeHtml(certificate.verificationUrl)}" target="_blank" rel="noopener noreferrer">Open public verification</a></p><h4>Administrative history</h4>${history.length ? `<ol>${history.map(entry => `<li><strong>${escapeHtml(entry.action)}</strong> · ${escapeHtml(entry.actor_name || 'System')} · ${escapeHtml(entry.created_at || '')}${entry.reason ? `<p>${escapeHtml(entry.reason)}</p>` : ''}</li>`).join('')}</ol>` : '<p>No history events recorded.</p>'}`;
+          panel.dataset.loaded = 'true';
+        }
+        panel.hidden = false;
+        detailsButton.textContent = 'Hide details';
+      } else {
+        panel.hidden = true;
+        detailsButton.textContent = 'Details & history';
+      }
+    } else if (pdfButton) {
+      const response = await fetch(`${API}/api/admin/certificates/${pdfButton.dataset.certificatePdf}/pdf`, {
+        credentials: 'include',
+        headers: adminToken ? { Authorization: `Bearer ${adminToken}` } : {}
+      });
+      if (!response.ok) {
+        let result = {};
+        try { result = await response.json(); } catch {}
+        throw new Error(result.error || 'Could not download the certificate PDF.');
+      }
+      const objectUrl = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = `certificate-${pdfButton.dataset.certificatePdf}.pdf`;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } else {
+      const action = actionButton.dataset.certificateAction;
+      const reason = window.prompt(`Enter the reason to ${action} this certificate (required):`)?.trim();
+      if (!reason) return;
+      if (!window.confirm(`${action === 'revoke' ? 'Revoke' : 'Reissue'} this certificate? The action and reason will be recorded.`)) return;
+      await api(`/api/admin/certificates/${actionButton.dataset.certificateId}/${action}`, {
+        method: 'POST',
+        body: JSON.stringify({ reason })
+      });
+      if (await loadCertificates()) message('certificate-admin-message', `Certificate ${action} completed.`);
+    }
+  } catch (error) {
+    message('certificate-admin-message', error.message || 'Could not complete the certificate action.', true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
 $('#add-license-button').addEventListener('click', () => {
   const formMessage = $('#license-form-message');
   formMessage.textContent = '';
@@ -630,11 +794,30 @@ document.querySelectorAll('[data-content-type]').forEach(button => button.addEve
 }));
 
 $('#add-beat-button').addEventListener('click', () => {
+  const form = $('#beat-form');
+  form.reset();
+  clearBeatCoverPreview();
+  message('beat-message', '');
   $('#add-beat-dialog').showModal();
-  $('#beat-form').elements.title.focus();
+  form.elements.title.focus();
 });
 
 $('#close-add-beat').addEventListener('click', () => $('#add-beat-dialog').close());
+
+$('#beat-form').elements.cover.addEventListener('change', event => {
+  const file = event.currentTarget.files[0];
+  clearBeatCoverPreview();
+  if (!file) return;
+  if (!file.type.startsWith('image/')) {
+    event.currentTarget.value = '';
+    message('beat-message', 'Cover art must be an image file.', true);
+    return;
+  }
+  beatCoverObjectUrl = URL.createObjectURL(file);
+  const preview = $('#beat-cover-preview');
+  preview.src = beatCoverObjectUrl;
+  preview.hidden = false;
+});
 
 $('#add-merchandise-button').addEventListener('click', () => {
   const formMessage = $('#merchandise-form-message');
@@ -749,11 +932,12 @@ $('#beat-form').addEventListener('submit', async event => {
   const form = event.currentTarget;
   try {
     const files = await filesFrom(form, ['cover', 'preview', 'mp3', 'wav', 'stems']);
-    await api('/api/admin/beats', { method: 'POST', body: JSON.stringify({ title: form.elements.title.value, bpm: form.elements.bpm.value, musicalKey: form.elements.musicalKey.value, genre: form.elements.genre.value, mood: form.elements.mood.value, prices: { basic: form.elements.basic.value, premium: form.elements.premium.value, unlimited: form.elements.unlimited.value, exclusive: form.elements.exclusive.value }, files }) });
+    await api('/api/admin/beats', { method: 'POST', body: JSON.stringify({ title: form.elements.title.value, bpm: form.elements.bpm.value, previewDurationSeconds: form.elements.previewDurationSeconds.value, musicalKey: form.elements.musicalKey.value, genre: form.elements.genre.value, mood: form.elements.mood.value, prices: { basic: form.elements.basic.value, premium: form.elements.premium.value, unlimited: form.elements.unlimited.value, exclusive: form.elements.exclusive.value }, files }) });
     form.reset();
+    clearBeatCoverPreview();
     $('#add-beat-dialog').close();
     message('beat-message', 'Beat saved.');
-    loadDashboard();
+    await loadDashboard();
   } catch (error) { message('beat-message', error.message, true); }
 });
 

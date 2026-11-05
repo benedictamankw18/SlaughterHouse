@@ -6,11 +6,11 @@ const config = require('../config');
 const sessions = require('../session-store');
 const { requireCustomer } = sessions;
 const { databaseError } = require('../services/error-messages');
-const { createLicenseCertificatePdf } = require('../services/license-certificate');
 const validators = require('../services/input-validation');
 const { rateLimit } = require('../services/rate-limit');
 const { notifyAdminsSafely } = require('../services/notifications');
 const { DEFAULT_LICENSE_RIGHTS } = require('../services/license-rights');
+const { ensureCertificateForLicense, certificateToken } = require('../services/license-certificates');
 
 const router = express.Router();
 const queryRows = (query, parameters = []) => new Promise((resolve, reject) => database.all(query, parameters, (error, rows) => error ? reject(error) : resolve(rows || [])));
@@ -183,54 +183,58 @@ router.get('/customer/orders', requireCustomer, async (request, response) => {
 
 router.get('/customer/licenses', requireCustomer, async (request, response) => {
   try {
-    const licenses = await queryRows(
-      `SELECT l.id, l.beat_id, b.title AS beat_title, l.order_id, o.reference AS order_reference,
-              l.license_type, l.rights_json, l.certificate_path, l.purchased_at
+    let licenses = await queryRows(
+      `SELECT l.id, l.beat_id, b.title AS beat_title, b.genre, b.bpm, b.musical_key, b.cover_art,
+              l.order_id, o.reference AS order_reference, l.license_type, l.rights_json,
+              l.purchased_at, c.id AS certificate_record_id, c.certificate_id,
+              c.terms_version, c.status AS certificate_status, c.issued_at
        FROM licenses l
        JOIN beats b ON b.id = l.beat_id
        JOIN orders o ON o.id = l.order_id
+       LEFT JOIN license_certificates c ON c.id = (
+         SELECT latest.id FROM license_certificates latest
+         WHERE latest.license_id = l.id ORDER BY latest.issued_at DESC, latest.id DESC LIMIT 1
+       )
        WHERE l.user_id = ? AND l.revoked_at IS NULL AND o.status IN ('paid', 'partially_refunded')
        ORDER BY l.purchased_at DESC`,
       [request.customer.id]
     );
+    await Promise.all(licenses.filter(license => !license.certificate_record_id)
+      .map(license => ensureCertificateForLicense(database, license.id)));
+    if (licenses.some(license => !license.certificate_record_id)) {
+      licenses = await queryRows(
+        `SELECT l.id, l.beat_id, b.title AS beat_title, b.genre, b.bpm, b.musical_key, b.cover_art,
+                l.order_id, o.reference AS order_reference, l.license_type, l.rights_json,
+                l.purchased_at, c.id AS certificate_record_id, c.certificate_id,
+                c.terms_version, c.status AS certificate_status, c.issued_at
+         FROM licenses l
+         JOIN beats b ON b.id = l.beat_id
+         JOIN orders o ON o.id = l.order_id
+         LEFT JOIN license_certificates c ON c.id = (
+           SELECT latest.id FROM license_certificates latest
+           WHERE latest.license_id = l.id ORDER BY latest.issued_at DESC, latest.id DESC LIMIT 1
+         )
+         WHERE l.user_id = ? AND l.revoked_at IS NULL AND o.status IN ('paid', 'partially_refunded')
+         ORDER BY l.purchased_at DESC`,
+        [request.customer.id]
+      );
+    }
+    licenses = licenses.map(license => {
+      let verificationUrl = null;
+      if (license.certificate_id) {
+        const url = new URL('verify-certificate.html', `${config.frontendOrigin}/`);
+        url.searchParams.set('token', certificateToken(license.certificate_id));
+        verificationUrl = url.toString();
+      }
+      return {
+        ...license,
+        certificate_status: license.certificate_status || 'missing',
+        verification_url: verificationUrl
+      };
+    });
     response.json({ licenses });
   } catch (error) {
     response.status(500).json({ error: databaseError('Loading your licenses failed.', error) });
-  }
-});
-
-router.get('/customer/licenses/:id/certificate', requireCustomer, async (request, response) => {
-  if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) return response.status(400).json({ error: 'License ID must be a positive whole number.' });
-  try {
-    const license = await queryOne(
-      `SELECT l.id, l.license_type, l.rights_json, l.purchased_at,
-              b.title AS beat_title, o.reference AS order_reference,
-              u.name AS customer_name, u.email AS customer_email
-       FROM licenses l
-       JOIN beats b ON b.id = l.beat_id
-       JOIN orders o ON o.id = l.order_id AND o.status IN ('paid', 'partially_refunded')
-       JOIN users u ON u.id = l.user_id
-       WHERE l.id = ? AND l.user_id = ? AND l.revoked_at IS NULL`,
-      [Number(request.params.id), request.customer.id]
-    );
-    if (!license) return response.status(404).json({ error: 'Paid license was not found.' });
-    let rights = {};
-    try { rights = JSON.parse(license.rights_json || '{}'); } catch { rights = {}; }
-    const pdf = createLicenseCertificatePdf({
-      licenseId: license.id,
-      customerName: license.customer_name,
-      customerEmail: license.customer_email,
-      beatTitle: license.beat_title,
-      licenseType: license.license_type,
-      orderReference: license.order_reference,
-      purchasedAt: license.purchased_at,
-      rights
-    });
-    response.setHeader('Content-Type', 'application/pdf');
-    response.setHeader('Content-Disposition', `attachment; filename="ultbigboy-license-${license.id}.pdf"`);
-    response.send(pdf);
-  } catch (error) {
-    response.status(500).json({ error: databaseError('Generating the license certificate failed.', error) });
   }
 });
 

@@ -515,6 +515,55 @@ const migrations = [
         `INSERT IGNORE INTO license_definition_status (license_type, is_active) VALUES ('${licenseType}', 1)`
       )
     ]
+  },
+  {
+    version: 23,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS license_certificates (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        certificate_id VARCHAR(48) NOT NULL UNIQUE,
+        verification_token_hash CHAR(64) NOT NULL UNIQUE,
+        license_id INT NOT NULL,
+        user_id INT NOT NULL,
+        order_id INT NOT NULL,
+        order_item_id INT NULL,
+        beat_id INT NOT NULL,
+        license_type VARCHAR(50) NOT NULL,
+        license_terms_snapshot JSON NOT NULL,
+        terms_version VARCHAR(40) NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'valid',
+        reissued_from_id BIGINT NULL,
+        issued_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        revoked_at TIMESTAMP NULL,
+        revocation_reason VARCHAR(500) NULL,
+        pdf_storage_path VARCHAR(500) NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_license_certificates_license_id (license_id),
+        INDEX idx_license_certificates_user_id (user_id),
+        INDEX idx_license_certificates_order_id (order_id),
+        INDEX idx_license_certificates_beat_id (beat_id),
+        INDEX idx_license_certificates_status_issued (status, issued_at),
+        CONSTRAINT fk_license_certificates_license FOREIGN KEY (license_id) REFERENCES licenses(id) ON DELETE RESTRICT,
+        CONSTRAINT fk_license_certificates_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT,
+        CONSTRAINT fk_license_certificates_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE RESTRICT,
+        CONSTRAINT fk_license_certificates_order_item FOREIGN KEY (order_item_id) REFERENCES order_items(id) ON DELETE SET NULL,
+        CONSTRAINT fk_license_certificates_beat FOREIGN KEY (beat_id) REFERENCES beats(id) ON DELETE RESTRICT,
+        CONSTRAINT fk_license_certificates_reissued_from FOREIGN KEY (reissued_from_id) REFERENCES license_certificates(id) ON DELETE RESTRICT
+      )`,
+      `CREATE TABLE IF NOT EXISTS license_certificate_history (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        certificate_id BIGINT NOT NULL,
+        action VARCHAR(30) NOT NULL,
+        actor_user_id INT NULL,
+        reason VARCHAR(500) NULL,
+        details_json JSON NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_license_certificate_history_certificate (certificate_id, created_at),
+        CONSTRAINT fk_license_certificate_history_certificate FOREIGN KEY (certificate_id) REFERENCES license_certificates(id) ON DELETE RESTRICT,
+        CONSTRAINT fk_license_certificate_history_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE SET NULL
+      )`
+    ]
   }
 ];
 

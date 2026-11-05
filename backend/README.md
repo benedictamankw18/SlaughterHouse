@@ -61,7 +61,10 @@ From `backend\`, copy `.env.example` to `.env` and set `DB_HOST`, `DB_PORT`,
 `MYSQL_URL`, not both. `PORT` and `NODE_ENV` configure the API runtime.
 Payment and download configuration uses `PAYSTACK_SECRET_KEY`,
 `PAYMENT_CALLBACK_URL`, `API_PUBLIC_URL`, `FRONTEND_ORIGIN`, and
-`DOWNLOAD_SIGNING_SECRET`; email delivery uses `EMAIL_API_KEY` and
+`DOWNLOAD_SIGNING_SECRET`. Set a separate stable `CERTIFICATE_SIGNING_SECRET`
+for certificate verification links and keep it unchanged so issued certificate
+QR codes remain verifiable; `DOWNLOAD_SIGNING_SECRET` is used as a fallback.
+Email delivery uses `EMAIL_API_KEY` and
 `EMAIL_FROM`. The Paystack and email settings can remain unset for local
 database-only development.
 

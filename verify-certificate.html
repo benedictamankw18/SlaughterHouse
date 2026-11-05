@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Opening Certificate Verification | UltBigBoy</title>
+</head>
+<body>
+  <p>Opening certificate verification…</p>
+  <script>
+    const destination = new URL('/frontend/verify-certificate.html', location.origin);
+    destination.search = location.search;
+    location.replace(destination);
+  </script>
+  <noscript><p><a href="/frontend/verify-certificate.html">Continue to certificate verification</a></p></noscript>
+</body>
+</html>

@@ -68,17 +68,20 @@ if (accountPageRoot) {
 
     const renderRows = rows => {
       if (!Array.isArray(rows)) throw new Error('The account response had an invalid format.');
+      content.classList.toggle('account-orders-list', pageType === 'orders');
       if (!rows.length) {
         content.innerHTML = `<div class="account-page-state"><h2>No ${page.title.toLowerCase()} yet</h2><p>Your ${page.title.toLowerCase()} will appear here when available.</p></div>`;
         return;
       }
 
-      content.innerHTML = rows.map(item => {
+      content.innerHTML = rows.map((item, index) => {
         if (pageType === 'purchases') {
           return `<article class="account-page-card"><h2>${escapeAccountHtml(item.product_name || 'Purchase')}</h2><p>${escapeAccountHtml(item.product_type || 'Item')}${item.license_type ? ` · ${escapeAccountHtml(item.license_type)} license` : ''}</p><p>${money(item.unit_amount || item.amount)} · ${Number(item.quantity || 1)} item(s) · ${escapeAccountHtml(item.created_at || '')}</p><small>Order ${escapeAccountHtml(item.reference || '')}</small></article>`;
         }
         if (pageType === 'licenses') {
-          return `<article class="account-page-card"><h2>${escapeAccountHtml(item.beat_title || 'Beat')}</h2><p>${escapeAccountHtml(item.license_type)} license · Order ${escapeAccountHtml(item.order_reference || '')}</p><p>Purchased ${escapeAccountHtml(item.purchased_at || '')}</p><button class="auth-primary-button" type="button" data-account-action="certificate" data-id="${Number(item.id)}">Download certificate</button></article>`;
+          const status = String(item.certificate_status || 'missing').toLowerCase();
+          const cover = item.cover_art ? `${apiBase}/api/uploads/${encodeURIComponent(item.cover_art)}` : 'Images/Logo 2.png';
+          return `<article class="account-page-card account-license-card"><img class="account-license-cover" src="${escapeAccountHtml(cover)}" alt="${escapeAccountHtml(item.beat_title || 'Beat')} cover art"><div class="account-license-content"><span class="certificate-status certificate-status-${escapeAccountHtml(status)}">${escapeAccountHtml(status)}</span><h2>${escapeAccountHtml(item.beat_title || 'Beat')}</h2><p>${escapeAccountHtml(item.license_type)} license · Order ${escapeAccountHtml(item.order_reference || '')}</p><p>Purchased ${escapeAccountHtml(item.purchased_at || '')}</p><p>Certificate ${escapeAccountHtml(item.certificate_id || 'Pending issuance')}</p><div class="account-page-actions"><a href="certificate.html?licenseId=${Number(item.id)}">View certificate</a><button type="button" data-account-action="certificate" data-id="${Number(item.id)}">Download PDF</button>${item.verification_url ? `<a href="${escapeAccountHtml(item.verification_url)}" target="_blank" rel="noopener noreferrer">Verify</a>` : ''}</div></div></article>`;
         }
         if (pageType === 'downloads') {
           return `<article class="account-page-card"><h2>${escapeAccountHtml(item.beat_title || 'Beat')}</h2><p>${escapeAccountHtml(item.license_type)} license · ${escapeAccountHtml(item.format)} format</p><p>Order ${escapeAccountHtml(item.order_reference || '')} · Downloaded ${escapeAccountHtml(item.created_at || '')}</p></article>`;
@@ -93,9 +96,36 @@ if (accountPageRoot) {
           return `<article class="account-page-card"><h2>${escapeAccountHtml(item.service || 'Studio session')}</h2><p>Status: ${escapeAccountHtml(item.status || 'pending')}</p><p>${escapeAccountHtml(schedule)}</p>${item.artist_count ? `<p>${Number(item.artist_count)} artist(s)${item.song_count ? ` · ${Number(item.song_count)} song(s)` : ''}</p>` : ''}${item.admin_notes ? `<p class="account-page-note">Studio note: ${escapeAccountHtml(item.admin_notes)}</p>` : ''}<small>Requested ${escapeAccountHtml(item.created_at || '')}</small></article>`;
         }
         if (pageType === 'orders') {
-          const items = Array.isArray(item.items) ? item.items.map(orderItem => `<li>${escapeAccountHtml(orderItem.product_name || 'Item')}${orderItem.license_type ? ` · ${escapeAccountHtml(orderItem.license_type)} license` : ''} · ${Number(orderItem.quantity || 1)} item(s)</li>`).join('') : '';
-          const history = Array.isArray(item.fulfillmentHistory) ? item.fulfillmentHistory.map(entry => `<p>Fulfillment: ${escapeAccountHtml(entry.status)} · ${escapeAccountHtml(entry.created_at || '')}</p>`).join('') : '';
-          return `<article class="account-page-card"><h2>Order ${escapeAccountHtml(item.reference)}</h2><p>Payment: ${escapeAccountHtml(item.status)} · ${money(item.amount)} · ${escapeAccountHtml(item.created_at || '')}</p><p>Fulfillment: ${escapeAccountHtml(item.fulfillment_status || 'unfulfilled')}</p><ul>${items}</ul>${history}</article>`;
+          const orderDetailsId = `order-details-${index}`;
+          const orderItems = Array.isArray(item.items) ? item.items : [];
+          const itemCount = orderItems.reduce((total, orderItem) => total + Math.max(0, Number(orderItem.quantity) || 1), 0);
+          const itemTotal = orderItems.reduce((total, orderItem) => total + (Number(orderItem.unit_amount) || 0) * (Number(orderItem.quantity) || 1), 0);
+          const currency = item.currency || 'GHS';
+          const formatOrderMoney = value => `${escapeAccountHtml(currency)} ${Number(value || 0).toFixed(2)}`;
+          const itemRows = orderItems.map(orderItem => {
+            const quantity = Math.max(1, Number(orderItem.quantity) || 1);
+            const unitAmount = Number(orderItem.unit_amount) || 0;
+            const productType = orderItem.product_type === 'merchandise'
+              ? 'Merchandise'
+              : orderItem.product_type === 'booking' ? 'Studio booking' : 'Beat';
+            const description = [productType, orderItem.license_type ? `${orderItem.license_type} license` : ''].filter(Boolean).join(' · ');
+            return `<li class="account-order-item"><div><strong>${escapeAccountHtml(orderItem.product_name || 'Item')}</strong><small>${escapeAccountHtml(description)}</small></div><span class="account-order-quantity">Qty ${quantity}</span><span class="account-order-unit-price">${formatOrderMoney(unitAmount)} each</span><strong class="account-order-line-total">${formatOrderMoney(unitAmount * quantity)}</strong></li>`;
+          }).join('');
+          const history = Array.isArray(item.fulfillmentHistory) && item.fulfillmentHistory.length
+            ? `<section class="account-order-history"><h4>Fulfillment history</h4><ol>${item.fulfillmentHistory.map(entry => `<li><span>${escapeAccountHtml(entry.status)}</span><time>${escapeAccountHtml(entry.created_at || '')}</time></li>`).join('')}</ol></section>`
+            : '';
+          return `<article class="account-page-card account-order-card">
+            <div class="account-order-heading"><div><small>ORDER</small><h2 id="${orderDetailsId}-reference">${escapeAccountHtml(item.reference)}</h2></div><strong class="account-order-total">${formatOrderMoney(item.amount)}</strong></div>
+            <div class="account-order-summary"><span class="account-order-status">${escapeAccountHtml(item.status || 'pending')}</span><span>${itemCount} ${itemCount === 1 ? 'item' : 'items'}</span><time>${escapeAccountHtml(item.created_at || '')}</time></div>
+            <div class="account-order-footer"><span>Fulfillment: <strong>${escapeAccountHtml(item.fulfillment_status || 'unfulfilled')}</strong></span><button class="account-order-details-button" type="button" data-account-action="toggle-order-details" aria-expanded="false" aria-controls="${orderDetailsId}">View order details</button></div>
+            <div class="account-order-details" id="${orderDetailsId}" role="region" aria-labelledby="${orderDetailsId}-title" hidden>
+              <h3 id="${orderDetailsId}-title">Purchased items for order ${escapeAccountHtml(item.reference)}</h3>
+              ${itemRows ? `<ul class="account-order-items">${itemRows}</ul>` : '<p>No item details are available for this order.</p>'}
+              <div class="account-order-totals"><span>Items subtotal</span><strong>${formatOrderMoney(itemTotal)}</strong><span>Order total</span><strong>${formatOrderMoney(item.amount)}</strong></div>
+              <dl class="account-order-meta"><div><dt>Payment status</dt><dd>${escapeAccountHtml(item.status || 'pending')}</dd></div><div><dt>Fulfillment status</dt><dd>${escapeAccountHtml(item.fulfillment_status || 'unfulfilled')}</dd></div><div><dt>Order date</dt><dd>${escapeAccountHtml(item.created_at || '')}</dd></div></dl>
+              ${history}
+            </div>
+          </article>`;
         }
         if (pageType === 'alerts') {
           return `<article class="account-page-card${item.read_at ? '' : ' is-unread'}" data-notification-id="${Number(item.id)}"><h2>${escapeAccountHtml(item.title || 'Account update')}</h2><p>${escapeAccountHtml(item.message || '')}</p><small>${escapeAccountHtml(item.created_at || '')}</small><div class="account-page-actions">${item.read_at ? '<button type="button" data-account-action="mark-unread">Mark unread</button>' : '<button type="button" data-account-action="mark-read">Mark read</button>'}</div></article>`;
@@ -150,6 +180,15 @@ if (accountPageRoot) {
       if (!button) return;
       const action = button.dataset.accountAction;
       if (action === 'reload') return loadPage();
+      if (action === 'toggle-order-details') {
+        const details = document.getElementById(button.getAttribute('aria-controls'));
+        if (!details) return;
+        const expanded = button.getAttribute('aria-expanded') === 'true';
+        details.hidden = expanded;
+        button.setAttribute('aria-expanded', String(!expanded));
+        button.textContent = expanded ? 'View order details' : 'Hide order details';
+        return;
+      }
       button.disabled = true;
       try {
         if (action === 'remove-wishlist') {
@@ -174,8 +213,10 @@ if (accountPageRoot) {
           const link = document.createElement('a');
           link.href = objectUrl;
           link.download = `ultbigboy-license-${button.dataset.id}.pdf`;
+          document.body.append(link);
           link.click();
-          URL.revokeObjectURL(objectUrl);
+          link.remove();
+          window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
           button.disabled = false;
         }
       } catch (error) {

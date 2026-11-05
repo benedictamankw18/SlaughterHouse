@@ -32,6 +32,7 @@ app.use('/api', require('./routes/requests'));
 app.use('/api', require('./routes/bookings'));
 app.use('/api', require('./routes/payments'));
 app.use('/api', require('./routes/downloads'));
+app.use('/api', require('./routes/certificates'));
 
 app.use((error, request, response, next) => {
   if (response.headersSent) return next(error);
