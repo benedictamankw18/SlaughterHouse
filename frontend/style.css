@@ -1149,6 +1149,7 @@ header {
 .merchandise-catalog {
   display: grid;
   width: min(100%, 1100px);
+  box-sizing: border-box;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 22px;
   margin: 0 auto;
@@ -1686,6 +1687,7 @@ header {
 .beat-request-panel h2,
 .public-reviews h2 { margin: 0 0 18px; }
 .storefront-merchandise-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.home-merchandise-list { width: min(1100px, calc(100% - 40px)); margin: 0 auto; }
 .storefront-merchandise-item { overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.16); background: #111; }
 .storefront-merchandise-item img { display: block; width: 100%; aspect-ratio: 1.2; object-fit: cover; background: #080808; }
 .storefront-merchandise-details { display: grid; align-content: start; gap: 10px; padding: 16px; }
@@ -2809,5 +2811,45 @@ header {
     grid-column: auto;
     justify-self: auto;
     margin: 0;
+  }
+}
+
+/* Touch devices and narrow screens swipe/scroll the license carousel instead of using arrows. */
+@media (max-width: 900px), (hover: none) and (pointer: coarse) {
+  .license-carousel {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .license-carousel-button {
+    display: none;
+  }
+
+  .license-slide-frame {
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-right: 12px;
+    padding-left: 12px;
+    scroll-padding-inline: 12px;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x pan-y;
+    scrollbar-width: none;
+  }
+
+  .license-slide-frame::-webkit-scrollbar {
+    display: none;
+  }
+
+  .license-slide {
+    flex: 0 0 88%;
+    scroll-snap-stop: always;
+  }
+
+  .license-slide,
+  .license-slide.is-previous,
+  .license-slide.is-next {
+    transform: none;
   }
 }

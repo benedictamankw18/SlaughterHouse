@@ -9,7 +9,7 @@ const { databaseError } = require('../services/error-messages');
 const validators = require('../services/input-validation');
 const { rateLimit } = require('../services/rate-limit');
 const { notifyAdminsSafely } = require('../services/notifications');
-const { DEFAULT_LICENSE_RIGHTS } = require('../services/license-rights');
+const { DEFAULT_LICENSE_RIGHTS, loadLicenseDefinitions } = require('../services/license-rights');
 const { ensureCertificateForLicense, certificateToken } = require('../services/license-certificates');
 
 const router = express.Router();
@@ -47,6 +47,15 @@ function mapBeat(beat, defaults, activeLicenseTypes) {
 }
 
 router.get('/health', sessions.allowVisitor, (request, response) => response.json({ status: 'ok' }));
+
+router.get('/license-definitions', sessions.allowVisitor, async (request, response) => {
+  try {
+    const definitions = await loadLicenseDefinitions(database);
+    response.json({ definitions: definitions.filter(definition => definition.active) });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Loading license definitions failed.', error) });
+  }
+});
 
 router.get('/beats', sessions.allowVisitor, async (request, response) => {
   const page = Math.max(1, Number.parseInt(request.query.page, 10) || 1);

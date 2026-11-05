@@ -6,6 +6,42 @@ const defaultApiUrl = location.protocol === 'file:'
     : location.origin;
 window.ULTBIGBOY_API_URL = window.ULTBIGBOY_API_URL || configuredApiUrl || defaultApiUrl;
 const API = window.ULTBIGBOY_API_URL;
+if (location.origin !== 'null') {
+  const canonicalUrl = new URL(location.pathname, location.origin);
+  let canonical = document.querySelector('link[rel="canonical"]');
+  if (!canonical) {
+    canonical = document.createElement('link');
+    canonical.rel = 'canonical';
+    document.head.append(canonical);
+  }
+  canonical.href = canonicalUrl.href;
+
+  let openGraphUrl = document.querySelector('meta[property="og:url"]');
+  if (!openGraphUrl) {
+    openGraphUrl = document.createElement('meta');
+    openGraphUrl.setAttribute('property', 'og:url');
+    document.head.append(openGraphUrl);
+  }
+  openGraphUrl.content = canonicalUrl.href;
+
+  if (!document.querySelector('script[type="application/ld+json"]')) {
+    const structuredData = document.createElement('script');
+    structuredData.type = 'application/ld+json';
+    structuredData.textContent = JSON.stringify({
+      '@context': 'https://schema.org',
+      '@type': 'WebSite',
+      name: 'UltBigBoy',
+      url: new URL('/', location.origin).href,
+      publisher: {
+        '@type': 'Organization',
+        name: 'UltBigBoy',
+        url: new URL('/', location.origin).href,
+        logo: new URL('Images/Logo%202.png', document.baseURI).href
+      }
+    });
+    document.head.append(structuredData);
+  }
+}
 // Toggle menu open/close
 const menuIcon = document.getElementById('menuIcon');
 const dropdownMenu = document.getElementById('dropdownMenu');
@@ -907,7 +943,7 @@ function clearCatalogFilters() {
   updateKeyValue();
 }
 
-const producedList = document.querySelector('.produced-page .produced-song-list');
+const producedList = document.querySelector('.produced-page .produced-song-list, #home-stream-releases');
 const producedPagination = document.querySelector('.produced-page .produced-pagination');
 const producedPageSize = 10;
 function renderProducedPage(releases, page) {
@@ -999,6 +1035,7 @@ function renderProducedPage(releases, page) {
 async function loadProducedReleases() {
   if (!producedList) return;
   producedList.setAttribute('aria-busy', 'true');
+  producedList.replaceChildren(Object.assign(document.createElement('p'), { textContent: 'Loading stream releases...' }));
   try {
     const response = await fetch(`${API}/api/stream-releases`);
     const data = await response.json();
@@ -1434,13 +1471,20 @@ function showCartToast(message) {
 
 updateCart();
 
-const merchandiseList = document.getElementById('public-merchandise-list');
-if (merchandiseList) {
-  const loadMerchandise = () => fetch(`${API}/api/merchandise`).then(async response => {
+const merchandiseLists = [...document.querySelectorAll('#public-merchandise-list, #home-merchandise-list')];
+if (merchandiseLists.length) {
+  const loadMerchandise = async () => {
+    merchandiseLists.forEach(list => {
+      list.setAttribute('aria-busy', 'true');
+      list.replaceChildren(Object.assign(document.createElement('p'), { textContent: 'Loading merchandise...' }));
+    });
+    try {
+      const response = await fetch(`${API}/api/merchandise`);
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Could not load merchandise.');
-    merchandiseList.replaceChildren();
-    data.merchandise.forEach(product => {
+    merchandiseLists.forEach(merchandiseList => {
+      const visibleProducts = merchandiseList.id === 'home-merchandise-list' ? data.merchandise.slice(0, 3) : data.merchandise;
+      const cards = visibleProducts.map(product => {
       const card = document.createElement('article');
       card.className = 'storefront-merchandise-item';
       const image = document.createElement('img');
@@ -1474,13 +1518,20 @@ if (merchandiseList) {
       });
       details.append(title, description, price, button);
       card.append(image, details);
-      merchandiseList.append(card);
+      return card;
+    });
+      if (cards.length) merchandiseList.replaceChildren(...cards);
+      else merchandiseList.innerHTML = '<p class="filter-empty-state">No merchandise is available to order yet.</p>';
+      merchandiseList.setAttribute('aria-busy', 'false');
     });
     syncCartProductButtons();
-    if (!data.merchandise.length) merchandiseList.innerHTML = '<p>No merchandise is available to order yet.</p>';
-  }).catch(error => {
-    showRetryState(merchandiseList, error.message || 'Merchandise could not be loaded right now.', loadMerchandise);
-  });
+    } catch (error) {
+      merchandiseLists.forEach(merchandiseList => {
+        merchandiseList.setAttribute('aria-busy', 'false');
+        showRetryState(merchandiseList, error.message || 'Merchandise could not be loaded right now.', loadMerchandise);
+      });
+    }
+  };
   loadMerchandise();
 }
 
@@ -1624,14 +1675,15 @@ if (reviewsSection) {
   });
 }
 
-const licenseSlides = document.querySelectorAll('.license-slide');
-const licenseDots = document.querySelectorAll('.license-dot');
+const getLicenseSlides = () => document.querySelectorAll('.license-slide');
 const licensePrevious = document.getElementById('license-prev');
 const licenseNext = document.getElementById('license-next');
 const licenseSlideFrame = document.querySelector('.license-slide-frame');
+const licenseDefinitionDots = document.getElementById('license-definition-dots');
 let activeLicenseSlide = 0;
 
 function updateActiveLicenseSlide(slideIndex, shouldScroll = true) {
+  const licenseSlides = getLicenseSlides();
   if (!licenseSlides.length) return;
   activeLicenseSlide = (slideIndex + licenseSlides.length) % licenseSlides.length;
   licenseSlides.forEach((slide, index) => {
@@ -1642,26 +1694,36 @@ function updateActiveLicenseSlide(slideIndex, shouldScroll = true) {
     slide.classList.toggle('is-previous', isPrevious);
     slide.classList.toggle('is-next', isNext);
   });
-  licenseDots.forEach((dot, index) => {
+  licenseDefinitionDots?.querySelectorAll('.license-dot').forEach((dot, index) => {
     const isActive = index === activeLicenseSlide;
     dot.classList.toggle('active', isActive);
-    dot.setAttribute('aria-selected', String(isActive));
+    dot.setAttribute('aria-pressed', String(isActive));
   });
-  if (shouldScroll) {
-    licenseSlides[activeLicenseSlide].scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+  if (shouldScroll && licenseSlideFrame) {
+    const slide = licenseSlides[activeLicenseSlide];
+    const frameRect = licenseSlideFrame.getBoundingClientRect();
+    const slideRect = slide.getBoundingClientRect();
+    const targetLeft = licenseSlideFrame.scrollLeft + (slideRect.left - frameRect.left) - (licenseSlideFrame.clientWidth - slideRect.width) / 2;
+    licenseSlideFrame.scrollTo({
+      left: targetLeft,
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+    });
   }
 }
 
 licensePrevious?.addEventListener('click', () => updateActiveLicenseSlide(activeLicenseSlide - 1));
 licenseNext?.addEventListener('click', () => updateActiveLicenseSlide(activeLicenseSlide + 1));
-licenseDots.forEach(dot => {
-  dot.addEventListener('click', () => updateActiveLicenseSlide(Number(dot.dataset.slide)));
+licenseDefinitionDots?.addEventListener('click', event => {
+  const dot = event.target.closest('.license-dot');
+  if (dot) updateActiveLicenseSlide(Number(dot.dataset.slide));
 });
 
 let licenseScrollFrame;
 licenseSlideFrame?.addEventListener('scroll', () => {
   cancelAnimationFrame(licenseScrollFrame);
   licenseScrollFrame = requestAnimationFrame(() => {
+    const licenseSlides = getLicenseSlides();
+    if (!licenseSlides.length) return;
     const frameCenter = licenseSlideFrame.getBoundingClientRect().left + licenseSlideFrame.clientWidth / 2;
     let closestIndex = activeLicenseSlide;
     let closestDistance = Infinity;
@@ -1684,140 +1746,62 @@ document.getElementById('license-browser')?.addEventListener('keydown', event =>
   if (event.key === 'ArrowRight') updateActiveLicenseSlide(activeLicenseSlide + 1);
 });
 
-const basicLicenseTermsButton = document.getElementById('basic-license-terms-button');
-const basicLicenseTermsDialog = document.getElementById('basic-license-terms-dialog');
-const basicLicenseTermsClose = document.getElementById('basic-license-terms-close');
+async function loadPublicLicenseDefinitions() {
+  if (!licenseSlideFrame) return;
+  licenseSlideFrame.setAttribute('aria-busy', 'true');
+  try {
+    const response = await fetch(`${API}/api/license-definitions`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not load license definitions.');
+    const definitions = data.definitions || [];
+    if (!definitions.length) {
+      licenseSlideFrame.innerHTML = '<p class="filter-empty-state">No license options are currently available.</p>';
+      licenseDefinitionDots?.replaceChildren();
+      return;
+    }
 
-function closeBasicLicenseTerms() {
-  if (!basicLicenseTermsDialog) return;
-  basicLicenseTermsDialog.hidden = true;
-  document.body.classList.remove('license-dialog-open');
-  basicLicenseTermsButton?.focus();
+    licenseSlideFrame.replaceChildren(...definitions.map((definition, index) => {
+      const rights = definition.rights || {};
+      const details = [
+        `Formats: ${(rights.formats || []).map(format => String(format).toUpperCase()).join(', ') || 'Not specified'}`,
+        `Commercial use: ${rights.commercialUse ? 'Allowed' : 'Not allowed'}`,
+        `Distribution: ${rights.distribution ? 'Allowed' : 'Not allowed'}`,
+        `Stems: ${rights.stems ? 'Included' : 'Not included'}`
+      ];
+      if (rights.resaleProhibited) details.push('Resale of the beat is prohibited');
+      Object.entries(rights.usageLimits || {}).forEach(([name, limit]) => {
+        details.push(`${name.replace(/[_-]/g, ' ')}: ${limit === null ? 'Unlimited' : limit}`);
+      });
+      (rights.distributionRules || []).forEach(rule => details.push(rule));
+
+      const slide = document.createElement('article');
+      slide.className = `license-slide${index === 0 ? ' active' : ''}`;
+      slide.dataset.slide = String(index);
+      slide.innerHTML = `<div class="license-card">
+        <div class="license-card-heading"><span class="license-badge">${escapeHTML(definition.type)}</span><h3>${escapeHTML(definition.type)} rights</h3></div>
+        <ul>${details.map(detail => `<li>${escapeHTML(detail)}</li>`).join('')}</ul>
+        <a class="license-browse-button" href="beats.html?license=${encodeURIComponent(definition.type)}">Browse ${escapeHTML(definition.type)} beats</a>
+      </div>`;
+      return slide;
+    }));
+
+    licenseDefinitionDots?.replaceChildren(...definitions.map((definition, index) => {
+      const dot = document.createElement('button');
+      dot.className = `license-dot${index === 0 ? ' active' : ''}`;
+      dot.type = 'button';
+      dot.setAttribute('aria-label', `Show ${definition.type} rights`);
+      dot.setAttribute('aria-pressed', String(index === 0));
+      dot.dataset.slide = String(index);
+      return dot;
+    }));
+    updateActiveLicenseSlide(0, false);
+  } catch (error) {
+    showRetryState(licenseSlideFrame, error.message || 'Could not load license options.', loadPublicLicenseDefinitions);
+  } finally {
+    licenseSlideFrame.setAttribute('aria-busy', 'false');
+  }
 }
-
-basicLicenseTermsButton?.addEventListener('click', () => {
-  if (!basicLicenseTermsDialog) return;
-  const purchase = window.basicLicensePurchase;
-  if (purchase) {
-    document.getElementById('basic-license-beat-title').textContent = purchase.name;
-    document.getElementById('basic-license-agreement-date').textContent = purchase.purchasedAt.toLocaleString();
-    document.getElementById('basic-license-fee').textContent = convertPrice(purchase.price);
-    document.getElementById('basic-license-code').textContent = purchase.licenseCode;
-  }
-  basicLicenseTermsDialog.hidden = false;
-  document.body.classList.add('license-dialog-open');
-  basicLicenseTermsClose?.focus();
-});
-basicLicenseTermsClose?.addEventListener('click', closeBasicLicenseTerms);
-basicLicenseTermsDialog?.addEventListener('click', event => {
-  if (event.target === basicLicenseTermsDialog) closeBasicLicenseTerms();
-});
-document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && basicLicenseTermsDialog && !basicLicenseTermsDialog.hidden) {
-    closeBasicLicenseTerms();
-  }
-});
-
-const premiumLicenseTermsButton = document.getElementById('premium-license-terms-button');
-const premiumLicenseTermsDialog = document.getElementById('premium-license-terms-dialog');
-const premiumLicenseTermsClose = document.getElementById('premium-license-terms-close');
-
-function closePremiumLicenseTerms() {
-  if (!premiumLicenseTermsDialog) return;
-  premiumLicenseTermsDialog.hidden = true;
-  document.body.classList.remove('license-dialog-open');
-  premiumLicenseTermsButton?.focus();
-}
-
-premiumLicenseTermsButton?.addEventListener('click', () => {
-  if (!premiumLicenseTermsDialog) return;
-  const purchase = window.premiumLicensePurchase;
-  if (purchase) {
-    document.getElementById('premium-license-beat-title').textContent = purchase.name;
-    document.getElementById('premium-license-agreement-date').textContent = purchase.purchasedAt.toLocaleString();
-    document.getElementById('premium-license-fee').textContent = convertPrice(purchase.price);
-    document.getElementById('premium-license-code').textContent = purchase.licenseCode;
-  }
-  premiumLicenseTermsDialog.hidden = false;
-  document.body.classList.add('license-dialog-open');
-  premiumLicenseTermsClose?.focus();
-});
-premiumLicenseTermsClose?.addEventListener('click', closePremiumLicenseTerms);
-premiumLicenseTermsDialog?.addEventListener('click', event => {
-  if (event.target === premiumLicenseTermsDialog) closePremiumLicenseTerms();
-});
-document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && premiumLicenseTermsDialog && !premiumLicenseTermsDialog.hidden) {
-    closePremiumLicenseTerms();
-  }
-});
-
-const unlimitedLicenseTermsButton = document.getElementById('unlimited-license-terms-button');
-const unlimitedLicenseTermsDialog = document.getElementById('unlimited-license-terms-dialog');
-const unlimitedLicenseTermsClose = document.getElementById('unlimited-license-terms-close');
-
-function closeUnlimitedLicenseTerms() {
-  if (!unlimitedLicenseTermsDialog) return;
-  unlimitedLicenseTermsDialog.hidden = true;
-  document.body.classList.remove('license-dialog-open');
-  unlimitedLicenseTermsButton?.focus();
-}
-
-unlimitedLicenseTermsButton?.addEventListener('click', () => {
-  if (!unlimitedLicenseTermsDialog) return;
-  const purchase = window.unlimitedLicensePurchase;
-  if (purchase) {
-    document.getElementById('unlimited-license-beat-title').textContent = purchase.name;
-    document.getElementById('unlimited-license-agreement-date').textContent = purchase.purchasedAt.toLocaleString();
-    document.getElementById('unlimited-license-fee').textContent = convertPrice(purchase.price);
-  }
-  unlimitedLicenseTermsDialog.hidden = false;
-  document.body.classList.add('license-dialog-open');
-  unlimitedLicenseTermsClose?.focus();
-});
-unlimitedLicenseTermsClose?.addEventListener('click', closeUnlimitedLicenseTerms);
-unlimitedLicenseTermsDialog?.addEventListener('click', event => {
-  if (event.target === unlimitedLicenseTermsDialog) closeUnlimitedLicenseTerms();
-});
-document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && unlimitedLicenseTermsDialog && !unlimitedLicenseTermsDialog.hidden) {
-    closeUnlimitedLicenseTerms();
-  }
-});
-
-const exclusiveLicenseTermsButton = document.getElementById('exclusive-license-terms-button');
-const exclusiveLicenseTermsDialog = document.getElementById('exclusive-license-terms-dialog');
-const exclusiveLicenseTermsClose = document.getElementById('exclusive-license-terms-close');
-
-function closeExclusiveLicenseTerms() {
-  if (!exclusiveLicenseTermsDialog) return;
-  exclusiveLicenseTermsDialog.hidden = true;
-  document.body.classList.remove('license-dialog-open');
-  exclusiveLicenseTermsButton?.focus();
-}
-
-exclusiveLicenseTermsButton?.addEventListener('click', () => {
-  if (!exclusiveLicenseTermsDialog) return;
-  const purchase = window.exclusiveLicensePurchase;
-  if (purchase) {
-    document.getElementById('exclusive-license-beat-title').textContent = purchase.name;
-    document.getElementById('exclusive-license-agreement-date').textContent = purchase.purchasedAt.toLocaleString();
-    document.getElementById('exclusive-license-fee').textContent = convertPrice(purchase.price);
-    document.getElementById('exclusive-license-code').textContent = purchase.licenseCode;
-  }
-  exclusiveLicenseTermsDialog.hidden = false;
-  document.body.classList.add('license-dialog-open');
-  exclusiveLicenseTermsClose?.focus();
-});
-exclusiveLicenseTermsClose?.addEventListener('click', closeExclusiveLicenseTerms);
-exclusiveLicenseTermsDialog?.addEventListener('click', event => {
-  if (event.target === exclusiveLicenseTermsDialog) closeExclusiveLicenseTerms();
-});
-document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && exclusiveLicenseTermsDialog && !exclusiveLicenseTermsDialog.hidden) {
-    closeExclusiveLicenseTerms();
-  }
-});
+loadPublicLicenseDefinitions();
 
 const merchandiseTrack = document.getElementById('merchandise-track');
 const merchandiseCards = document.querySelectorAll('.merchandise-card');

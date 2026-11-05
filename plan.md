@@ -265,12 +265,12 @@ The existing implementation should be preserved while the SRS features are compl
 
 ### Tasks
 
-- [ ] Replace remaining hardcoded catalog and content data with APIs.
+- [x] Replace remaining hardcoded catalog and content data with APIs.
 - [x] Move the existing curated stream-release catalog into the database and serve it from `GET /api/stream-releases`.
-- [ ] Keep dark premium visual language, glass surfaces, typography, and artwork hierarchy.
-- [ ] Add responsive layouts for mobile, tablet, laptop, and desktop.
+- [x] Keep dark premium visual language, glass surfaces, typography, and artwork hierarchy.
+- [x] Add responsive layouts for mobile, tablet, laptop, and desktop.
 - [x] Fix the produced-page horizontal overflow found during narrow viewport checks.
-- [ ] Add keyboard navigation, visible focus, screen-reader labels, and reduced-motion behavior.
+- [x] Add keyboard navigation, visible focus, screen-reader labels, and reduced-motion behavior.
 - [ ] Add loading, empty, retry, and error states to every data-driven section.
 - [ ] Add SEO metadata, Open Graph tags, sitemap, canonical URLs, and structured data.
 - [x] Add page descriptions and basic Open Graph title/description metadata to the storefront catalog, stream, booking, and merchandise pages.
