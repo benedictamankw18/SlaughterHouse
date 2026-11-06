@@ -1,9 +1,15 @@
-function calculateBookingFee(service, songCount, fees) {
-  if (service !== 'ep-album') return fees[service];
-  if (!Number.isInteger(songCount) || songCount < 1 || songCount > 12) return null;
-  const fullProductionRate = fees['full-production'];
+function calculateBookingFee(service, songCount, fees = {}) {
+  const normalizedService = typeof service === 'string' ? service.trim().toLowerCase() : '';
+  const normalizedFees = fees && typeof fees === 'object' ? fees : {};
+  if (!normalizedService || normalizedService !== 'ep-album') {
+    const fee = Number(normalizedFees[normalizedService]);
+    return Number.isFinite(fee) && fee > 0 ? Number(fee.toFixed(2)) : null;
+  }
+  const normalizedSongCount = Number(songCount);
+  if (!Number.isInteger(normalizedSongCount) || normalizedSongCount < 1 || normalizedSongCount > 12) return null;
+  const fullProductionRate = Number(normalizedFees['full-production']);
   if (!Number.isFinite(fullProductionRate) || fullProductionRate <= 0) return null;
-  return Number((fullProductionRate * songCount * 0.8).toFixed(2));
+  return Number((fullProductionRate * normalizedSongCount * 0.8).toFixed(2));
 }
 
 function isAvailableBookingSlot(dateValue, timeValue) {
@@ -33,7 +39,14 @@ function areAvailableBookingSlots(slots, expectedCount) {
 }
 
 function normalizeBookingSlots(slots) {
-  return slots.map(slot => ({ date: slot.date, time: slot.time }));
+  if (!Array.isArray(slots)) return [];
+  return slots
+    .filter(Boolean)
+    .map(slot => ({
+      date: typeof slot.date === 'string' ? slot.date.trim() : '',
+      time: typeof slot.time === 'string' ? slot.time.trim() : ''
+    }))
+    .filter(slot => slot.date && slot.time);
 }
 
 module.exports = { calculateBookingFee, areAvailableBookingSlots, isAvailableBookingSlot, normalizeBookingSlots };

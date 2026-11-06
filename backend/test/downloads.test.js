@@ -84,3 +84,13 @@ test('getDownloadItems only offers formats allowed by the purchased license', ()
     }
   }
 });
+
+test('getDownloadItems safely rejects malformed order payloads and missing base URLs', () => {
+  assert.deepEqual(getDownloadItems({ reference, items_json: '{bad json' }, 'http://localhost:3000'), []);
+
+  const items = getDownloadItems({ reference, items_json: JSON.stringify([{ type: 'beat', productId: 1, name: 'Beat A', license: 'premium' }]) }, undefined);
+  assert.equal(items.length, 1);
+  assert.deepEqual(items[0].files.map(file => file.format), ['MP3', 'WAV']);
+  assert.match(items[0].files[0].url, /^\/api\/orders\/UBB-123-abc\/downloads\/1\?/);
+  assert.match(items[0].files[0].url, /token=/);
+});

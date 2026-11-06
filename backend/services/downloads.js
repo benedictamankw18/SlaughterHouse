@@ -6,7 +6,7 @@ const { DEFAULT_LICENSE_RIGHTS, rightsFor, allowedFormats } = require('./license
 const DOWNLOADABLE_ORDER_STATUSES = Object.freeze(['paid']);
 
 function isDownloadableOrderStatus(status) {
-  return DOWNLOADABLE_ORDER_STATUSES.includes(String(status || '').toLowerCase());
+  return DOWNLOADABLE_ORDER_STATUSES.includes(String(status ?? '').trim().toLowerCase());
 }
 
 function createDownloadToken(reference, productId, license, format, expiresAt = Date.now() + 15 * 60 * 1000) {
@@ -31,15 +31,32 @@ function verifyDownloadToken(token, reference, productId, license, format) {
 
 function getDownloadItems(order, apiPublicUrl, licenseRights = null) {
   const rightsMap = licenseRights || DEFAULT_LICENSE_RIGHTS;
-  return JSON.parse(order.items_json).filter(item => !item.type || item.type === 'beat').map(item => ({
-    productId: item.productId,
-    name: item.name,
-    license: item.license,
-    files: [...allowedFormats(rightsFor(rightsMap, item.license))].map(format => {
-      const token = createDownloadToken(order.reference, item.productId, item.license, format);
-      return { format: format.toUpperCase(), url: new URL(`/api/orders/${encodeURIComponent(order.reference)}/downloads/${item.productId}?license=${encodeURIComponent(item.license)}&format=${format}&token=${encodeURIComponent(token)}`, apiPublicUrl).toString() };
-    })
-  }));
+  if (!order || typeof order !== 'object' || !order.items_json || typeof order.items_json !== 'string') return [];
+
+  let items;
+  try {
+    items = JSON.parse(order.items_json);
+  } catch {
+    return [];
+  }
+
+  if (!Array.isArray(items)) return [];
+
+  const baseUrl = apiPublicUrl ? String(apiPublicUrl).replace(/\/+$/, '') : '';
+  return items
+    .filter(item => item && (!item.type || item.type === 'beat'))
+    .filter(item => item.productId != null && item.license)
+    .map(item => ({
+      productId: item.productId,
+      name: item.name,
+      license: item.license,
+      files: [...allowedFormats(rightsFor(rightsMap, item.license))].map(format => {
+        const token = createDownloadToken(order.reference, item.productId, item.license, format);
+        const path = `/api/orders/${encodeURIComponent(order.reference)}/downloads/${item.productId}?license=${encodeURIComponent(item.license)}&format=${format}&token=${encodeURIComponent(token)}`;
+        const url = baseUrl ? new URL(path, baseUrl).toString() : path;
+        return { format: format.toUpperCase(), url };
+      })
+    }));
 }
 
 module.exports = { DOWNLOADABLE_ORDER_STATUSES, isDownloadableOrderStatus, createDownloadToken, verifyDownloadToken, getDownloadItems };

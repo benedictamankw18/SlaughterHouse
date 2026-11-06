@@ -44,8 +44,8 @@ docker compose ps
 ```
 
 Open the site at `http://localhost:5500`; the API is available at
-`http://localhost:3000`. MySQL is published only on `127.0.0.1:3307` by default
-and is reachable by the API container on the private Compose network. MySQL
+`http://localhost:3000`. MariaDB is published only on `127.0.0.1:3308` by default
+and is reachable by the API container on the private Compose network. Database
 migrations run automatically when the API starts. The `mysql-data` and
 `app-data` named volumes persist the database, uploaded files, and certificates.
 To stop the stack without deleting data, run `docker compose down`. To remove

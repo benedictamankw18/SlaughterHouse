@@ -55,4 +55,12 @@ test('areAvailableBookingSlots enforces the requested count and non-overlap', ()
 
 test('normalizeBookingSlots keeps only date and time', () => {
   assert.deepEqual(normalizeBookingSlots([{ date: '2026-11-03', time: '11:00', extra: 'ignored' }]), [{ date: '2026-11-03', time: '11:00' }]);
+  assert.deepEqual(normalizeBookingSlots(null), []);
+  assert.deepEqual(normalizeBookingSlots([{ date: '2026-11-03' }]), []);
+});
+
+test('calculateBookingFee rejects unknown services and missing fee data without crashing', () => {
+  assert.equal(calculateBookingFee('mixtape', null, null), null);
+  assert.equal(calculateBookingFee('unknown', 2, { 'full-production': 1000 }), null);
+  assert.equal(calculateBookingFee('ep-album', '3', { 'full-production': 1000 }), 2400);
 });
