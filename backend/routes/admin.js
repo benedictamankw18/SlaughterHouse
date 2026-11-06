@@ -33,7 +33,11 @@ const csvCell = value => {
 function streamReleaseInput(body = {}) {
   const titleError = validators.text(body.title, 'Release title', { required: true, max: 255 });
   const artistError = validators.text(body.artist, 'Artist', { required: true, max: 500 });
-  const coverError = validators.text(body.coverUrl, 'Cover URL', { required: true, max: 1000 });
+  const hasCoverUpload = body.coverImage !== undefined && body.coverImage !== null && body.coverImage !== '';
+  if (hasCoverUpload && (typeof body.coverImage !== 'object' || typeof body.coverImage.name !== 'string' || typeof body.coverImage.data !== 'string')) {
+    return { error: 'Choose a valid cover image file.' };
+  }
+  const coverError = validators.text(body.coverUrl, 'Cover URL', { required: !hasCoverUpload, max: 1000 });
   if (titleError || artistError || coverError) return { error: titleError || artistError || coverError };
   if (!Array.isArray(body.credits) || body.credits.length > 20 || body.credits.some(credit =>
     typeof credit !== 'string' || validators.text(credit, 'Credit', { required: true, max: 255 }))) {
@@ -55,13 +59,15 @@ function streamReleaseInput(body = {}) {
     }
     links.push({ platform: link.platform.trim(), url: link.url.trim(), label: link.label.trim() });
   }
-  const coverUrl = body.coverUrl.trim();
-  try {
-    const parsedCover = new URL(coverUrl, 'https://slaughterhouse.invalid');
-    if (parsedCover.protocol !== 'https:' || coverUrl.startsWith('//')) throw new Error('invalid cover URL');
-    if (parsedCover.origin !== 'https://slaughterhouse.invalid' && !coverUrl.startsWith('https://')) throw new Error('invalid cover URL');
-  } catch {
-    return { error: 'Cover URL must be an HTTPS URL or a site-relative path.' };
+  const coverUrl = typeof body.coverUrl === 'string' ? body.coverUrl.trim() : '';
+  if (!hasCoverUpload) {
+    try {
+      const parsedCover = new URL(coverUrl, 'https://slaughterhouse.invalid');
+      if (parsedCover.protocol !== 'https:' || coverUrl.startsWith('//')) throw new Error('invalid cover URL');
+      if (parsedCover.origin !== 'https://slaughterhouse.invalid' && !coverUrl.startsWith('https://')) throw new Error('invalid cover URL');
+    } catch {
+      return { error: 'Choose a cover image or provide an HTTPS URL or site-relative path.' };
+    }
   }
   return {
     value: {
@@ -145,7 +151,13 @@ router.post('/admin/stream-releases', sessions.requireAdmin, async (request, res
   const validation = streamReleaseInput(request.body);
   if (validation.error) return response.status(400).json({ error: validation.error });
   const release = validation.value;
+  let coverFile = null;
   try {
+    if (request.body.coverImage) {
+      coverFile = await saveUpload(request.body.coverImage, 'cover', 'image');
+      if (!coverFile) return response.status(400).json({ error: 'Choose a cover image or provide a cover URL.' });
+      release.coverUrl = storage.publicUrl(coverFile);
+    }
     const sortRows = await queryRows('SELECT COALESCE(MAX(sort_order), 0) + 1 AS nextOrder FROM stream_releases');
     const result = await runQuery(
       'INSERT INTO stream_releases (title, artist, credits_json, cover_url, links_json, sort_order, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -154,6 +166,8 @@ router.post('/admin/stream-releases', sessions.requireAdmin, async (request, res
     recordAuditSafely(database, { userId: request.admin.id, action: 'stream_release_created', entityType: 'stream_release', entityId: result.lastID, ipAddress: request.ip });
     response.status(201).json({ id: result.lastID, title: release.title, status: 'unpublished' });
   } catch (error) {
+    await deleteUploads([coverFile]);
+    if (request.body.coverImage && !coverFile) return response.status(400).json({ error: error.message });
     if (error.code === 'ER_DUP_ENTRY') return response.status(409).json({ error: 'A stream release with this title already exists.' });
     response.status(500).json({ error: databaseError('Saving the stream release failed.', error) });
   }
@@ -165,9 +179,18 @@ router.patch('/admin/stream-releases/:id', sessions.requireAdmin, async (request
   if (validation.error) return response.status(400).json({ error: validation.error });
   const release = validation.value;
   const id = Number(request.params.id);
+  let coverFile = null;
   try {
+    if (request.body.coverImage) {
+      coverFile = await saveUpload(request.body.coverImage, 'cover', 'image');
+      if (!coverFile) return response.status(400).json({ error: 'Choose a valid cover image file.' });
+      release.coverUrl = storage.publicUrl(coverFile);
+    }
     const existing = await queryRows('SELECT id FROM stream_releases WHERE id = ?', [id]);
-    if (!existing.length) return response.status(404).json({ error: `No stream release was found with ID ${id}.` });
+    if (!existing.length) {
+      await deleteUploads([coverFile]);
+      return response.status(404).json({ error: `No stream release was found with ID ${id}.` });
+    }
     await runQuery(
       'UPDATE stream_releases SET title = ?, artist = ?, credits_json = ?, cover_url = ?, links_json = ? WHERE id = ?',
       [release.title, release.artist, JSON.stringify(release.credits), release.coverUrl, JSON.stringify(release.links), id]
@@ -175,6 +198,8 @@ router.patch('/admin/stream-releases/:id', sessions.requireAdmin, async (request
     recordAuditSafely(database, { userId: request.admin.id, action: 'stream_release_updated', entityType: 'stream_release', entityId: id, ipAddress: request.ip });
     response.json({ id, title: release.title });
   } catch (error) {
+    await deleteUploads([coverFile]);
+    if (request.body.coverImage && !coverFile) return response.status(400).json({ error: error.message });
     if (error.code === 'ER_DUP_ENTRY') return response.status(409).json({ error: 'A stream release with this title already exists.' });
     response.status(500).json({ error: databaseError('Updating the stream release failed.', error) });
   }

@@ -319,12 +319,34 @@ function streamReleasePayload(form) {
     artist: form.elements.artist.value,
     credits: form.elements.credits.value.split(/\r?\n/).map(credit => credit.trim()).filter(Boolean),
     coverUrl: form.elements.coverUrl.value,
+    coverImage: null,
     links
   };
 }
 
+async function streamReleasePayloadWithCover(form) {
+  const payload = streamReleasePayload(form);
+  payload.coverImage = await fileData(form.elements.coverImage.files[0]);
+  return payload;
+}
+
+function streamReleaseCoverSource(coverUrl) {
+  const value = String(coverUrl || '');
+  return value.startsWith('/api/uploads/') ? `${API}${value}` : value;
+}
+
+function clearStreamReleaseCoverPreview(form) {
+  const preview = form.querySelector('[data-stream-cover-preview]');
+  if (preview?.dataset.objectUrl) URL.revokeObjectURL(preview.dataset.objectUrl);
+  if (!preview) return;
+  delete preview.dataset.objectUrl;
+  preview.removeAttribute('src');
+  preview.hidden = true;
+}
+
 function renderStreamReleaseManagement(releases = dashboardData.streamReleases || []) {
   const container = $('#stream-release-management-list');
+  container.querySelectorAll('[data-stream-cover-preview][data-object-url]').forEach(preview => URL.revokeObjectURL(preview.dataset.objectUrl));
   if (!releases.length) {
     container.innerHTML = dashboardData.streamReleases?.length ? '<p>No stream releases match these filters.</p>' : '<p>No stream releases have been added yet.</p>';
     return;
@@ -332,22 +354,37 @@ function renderStreamReleaseManagement(releases = dashboardData.streamReleases |
   container.innerHTML = releases.map(release => {
     const id = Number(release.id);
     const active = release.status === 'published';
-    return `<article class="admin-list-item" data-stream-release-id="${id}">
-      <div class="admin-beat-editor-heading"><strong>${escapeHtml(release.title)}</strong><span class="admin-beat-status ${active ? 'is-active' : ''}">${active ? 'Active' : 'Inactive'}</span></div>
-      <p>${escapeHtml(release.artist)}</p>
-      <form class="admin-form admin-stream-release-editor" data-stream-release-id="${id}">
-        <label>Title<input name="title" maxlength="255" value="${escapeHtml(release.title)}" required></label>
-        <label>Artist<input name="artist" maxlength="500" value="${escapeHtml(release.artist)}" required></label>
-        <label>Credits (one per line)<textarea name="credits" rows="3" maxlength="5200">${escapeHtml((release.credits || []).join('\n'))}</textarea></label>
-        <label>Cover image URL<input name="coverUrl" maxlength="1000" value="${escapeHtml(release.cover_url)}" required></label>
-        <label>Streaming links (JSON)<textarea name="links" rows="6" required>${escapeHtml(JSON.stringify(release.links || [], null, 2))}</textarea></label>
-        <div class="admin-review-actions">
-          <button type="submit">Save changes</button>
+    const coverUrl = streamReleaseCoverSource(release.cover_url);
+    const cover = coverUrl
+      ? `<img class="admin-beat-cover admin-release-cover" src="${escapeHtml(coverUrl)}" alt="${escapeHtml(release.title)} cover" loading="lazy">`
+      : '<div class="admin-beat-cover admin-beat-cover-empty" aria-hidden="true">No cover image</div>';
+    return `<article class="admin-card admin-beat-card admin-stream-release-card" data-stream-release-id="${id}">
+      ${cover}
+      <div class="admin-beat-card-content">
+        <div class="admin-beat-editor-heading"><strong>${escapeHtml(release.title)}</strong><span class="admin-beat-status ${active ? 'is-active' : ''}">${active ? 'Active' : 'Inactive'}</span></div>
+        <p class="admin-beat-summary">${escapeHtml(release.artist)}</p>
+        <details class="admin-beat-details">
+          <summary>Show details</summary>
+          <p>Release ID: ${id}</p>
+          <p><strong>Credits</strong><br>${escapeHtml((release.credits || []).join('\n') || 'No credits added.')}</p>
+          <ul>${(release.links || []).map(link => `<li><a href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link.label || link.platform)}</a> · ${escapeHtml(link.platform)}</li>`).join('')}</ul>
+        </details>
+        <div class="admin-review-actions admin-beat-actions">
+          <button type="button" data-stream-release-edit-toggle>Edit</button>
           <button type="button" data-stream-release-status="${id}" data-next-status="${active ? 'unpublished' : 'published'}">${active ? 'Deactivate' : 'Activate'}</button>
           <button type="button" class="admin-beat-delete" data-stream-release-delete="${id}">Delete</button>
         </div>
-        <p class="admin-message" data-stream-release-item-message role="status"></p>
-      </form>
+        <form class="admin-form admin-beat-editor admin-stream-release-editor" data-stream-release-id="${id}" hidden>
+          <label>Title<input name="title" maxlength="255" value="${escapeHtml(release.title)}" required></label>
+          <label>Artist<input name="artist" maxlength="500" value="${escapeHtml(release.artist)}" required></label>
+          <label>Credits (one per line)<textarea name="credits" rows="3" maxlength="5200">${escapeHtml((release.credits || []).join('\n'))}</textarea></label>
+          <label>Browse cover image<input name="coverImage" type="file" accept="image/jpeg,image/png,image/webp"><span class="admin-field-help">JPG, PNG, or WebP · up to 5 MB</span><img class="admin-beat-cover admin-cover-preview" data-stream-cover-preview alt="Selected cover image preview" hidden></label>
+          <label>Or cover image URL<input name="coverUrl" type="url" maxlength="1000" value="${escapeHtml(release.cover_url)}" placeholder="https://... or Images/cover.jpg"></label>
+          <label>Streaming links (JSON)<textarea name="links" rows="6" required>${escapeHtml(JSON.stringify(release.links || [], null, 2))}</textarea></label>
+          <div class="admin-review-actions"><button type="submit">Save changes</button><button type="button" data-stream-release-edit-cancel>Cancel</button></div>
+          <p class="admin-message" data-stream-release-item-message role="status"></p>
+        </form>
+      </div>
     </article>`;
   }).join('');
 }
@@ -971,6 +1008,7 @@ $('#close-add-merchandise').addEventListener('click', () => $('#add-merchandise-
 $('#add-stream-release-button').addEventListener('click', () => {
   const form = $('#stream-release-form');
   form.reset();
+  clearStreamReleaseCoverPreview(form);
   form.elements.links.value = '[{"platform":"Spotify","url":"https://","label":"Listen on Spotify"}]';
   message('stream-release-form-message', '');
   $('#add-stream-release-dialog').showModal();
@@ -979,13 +1017,31 @@ $('#add-stream-release-button').addEventListener('click', () => {
 
 $('#close-add-stream-release').addEventListener('click', () => $('#add-stream-release-dialog').close());
 
+$('#stream-release-form').elements.coverImage.addEventListener('change', event => {
+  const form = event.currentTarget.form;
+  const preview = form.querySelector('[data-stream-cover-preview]');
+  clearStreamReleaseCoverPreview(form);
+  const file = event.currentTarget.files[0];
+  if (!file) return;
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 5 * 1024 * 1024) {
+    event.currentTarget.value = '';
+    message('stream-release-form-message', 'Choose a JPG, PNG, or WebP image up to 5 MB.', true);
+    return;
+  }
+  const objectUrl = URL.createObjectURL(file);
+  preview.src = objectUrl;
+  preview.dataset.objectUrl = objectUrl;
+  preview.hidden = false;
+  message('stream-release-form-message', '');
+});
+
 $('#stream-release-form').addEventListener('submit', async event => {
   event.preventDefault();
   const form = event.currentTarget;
   const button = form.querySelector('button[type="submit"]');
   button.disabled = true;
   try {
-    await api('/api/admin/stream-releases', { method: 'POST', body: JSON.stringify(streamReleasePayload(form)) });
+    await api('/api/admin/stream-releases', { method: 'POST', body: JSON.stringify(await streamReleasePayloadWithCover(form)) });
     $('#add-stream-release-dialog').close();
     message('stream-release-message', 'Stream release created as inactive. Activate it when it is ready to publish.');
     await loadDashboard();
@@ -994,6 +1050,27 @@ $('#stream-release-form').addEventListener('submit', async event => {
   } finally {
     button.disabled = false;
   }
+});
+
+$('#stream-release-management-list').addEventListener('change', event => {
+  if (!event.target.matches('[name="coverImage"]')) return;
+  const input = event.target;
+  const form = input.form;
+  const preview = form.querySelector('[data-stream-cover-preview]');
+  clearStreamReleaseCoverPreview(form);
+  const file = input.files[0];
+  if (!file) return;
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 5 * 1024 * 1024) {
+    input.value = '';
+    const statusMessage = form.querySelector('[data-stream-release-item-message]');
+    statusMessage.textContent = 'Choose a JPG, PNG, or WebP image up to 5 MB.';
+    statusMessage.classList.add('error');
+    return;
+  }
+  const objectUrl = URL.createObjectURL(file);
+  preview.src = objectUrl;
+  preview.dataset.objectUrl = objectUrl;
+  preview.hidden = false;
 });
 
 $('#stream-release-management-list').addEventListener('submit', async event => {
@@ -1006,7 +1083,7 @@ $('#stream-release-management-list').addEventListener('submit', async event => {
   try {
     await api(`/api/admin/stream-releases/${form.dataset.streamReleaseId}`, {
       method: 'PATCH',
-      body: JSON.stringify(streamReleasePayload(form))
+      body: JSON.stringify(await streamReleasePayloadWithCover(form))
     });
     message('stream-release-message', 'Stream release updated.');
     await loadDashboard();
@@ -1019,6 +1096,19 @@ $('#stream-release-management-list').addEventListener('submit', async event => {
 });
 
 $('#stream-release-management-list').addEventListener('click', async event => {
+  const editButton = event.target.closest('[data-stream-release-edit-toggle]');
+  const cancelEditButton = event.target.closest('[data-stream-release-edit-cancel]');
+  if (editButton || cancelEditButton) {
+    const card = (editButton || cancelEditButton).closest('[data-stream-release-id]');
+    const form = card.querySelector('.admin-stream-release-editor');
+    form.hidden = editButton ? !form.hidden : true;
+    if (editButton && !form.hidden) form.elements.title.focus();
+    if (cancelEditButton) {
+      clearStreamReleaseCoverPreview(form);
+      form.reset();
+    }
+    return;
+  }
   const statusButton = event.target.closest('[data-stream-release-status]');
   const deleteButton = event.target.closest('[data-stream-release-delete]');
   const button = statusButton || deleteButton;

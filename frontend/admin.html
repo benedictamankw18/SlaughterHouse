@@ -101,13 +101,14 @@
             <label>Title<input name="title" maxlength="255" required></label>
             <label>Artist<input name="artist" maxlength="500" required></label>
             <label>Credits (one per line)<textarea name="credits" rows="3" maxlength="5200"></textarea></label>
-            <label>Cover image URL<input name="coverUrl" maxlength="1000" placeholder="https://... or Images/cover.jpg" required></label>
+            <label>Browse cover image<input name="coverImage" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="stream-release-cover-help"><span id="stream-release-cover-help" class="admin-field-help">JPG, PNG, or WebP · up to 5 MB</span><img class="admin-beat-cover admin-cover-preview" data-stream-cover-preview alt="Selected cover image preview" hidden></label>
+            <label>Or cover image URL<input name="coverUrl" maxlength="1000" placeholder="https://... or Images/cover.jpg"></label>
             <label>Streaming links (JSON)<textarea name="links" rows="6" required>[{"platform":"Spotify","url":"https://","label":"Listen on Spotify"}]</textarea></label>
             <button class="auth-primary-button" type="submit">Create stream release</button>
             <p id="stream-release-form-message" class="admin-message" role="status"></p>
           </form>
         </dialog>
-        <div id="stream-release-management" hidden><h2>Manage stream releases</h2><div id="content-release-filters" class="admin-list-filters" hidden><label>Search releases<input id="content-release-search" type="search" placeholder="Title or artist"></label><label>Status<select id="content-release-status"><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label></div><div id="stream-release-management-list" class="admin-list"></div></div>
+        <div id="stream-release-management" hidden><h2>Manage stream releases</h2><div id="content-release-filters" class="admin-list-filters" hidden><label>Search releases<input id="content-release-search" type="search" placeholder="Title or artist"></label><label>Status<select id="content-release-status"><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label></div><div id="stream-release-management-list" class="admin-list admin-beat-grid"></div></div>
       </section>
 
       <section class="admin-section" data-admin-section="sales"><div class="admin-toggle" role="group" aria-label="Sale type"><button class="active" data-sale-type="beat" type="button">Beat sales</button><button data-sale-type="merchandise" type="button">Merchandise sales</button></div><div class="admin-list-filters"><label>Search sales<input id="sales-search" type="search" placeholder="Product, buyer, or email"></label><label>From<input id="sales-from" type="date"></label><label>To<input id="sales-to" type="date"></label></div><div id="sales-list" class="admin-list"></div></section>

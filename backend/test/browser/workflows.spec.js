@@ -137,7 +137,7 @@ async function mockApi(page, options = {}) {
       adminReviewStatus = data.status;
       body = { message: 'Review status updated.' };
     } else if (path === '/api/admin/stream-releases' && method === 'POST') {
-      const release = { ...data, id: ++nextStreamReleaseId, credits_json: data.credits, cover_url: data.coverUrl, links_json: data.links, status: 'unpublished' };
+      const release = { ...data, id: ++nextStreamReleaseId, credits_json: data.credits, cover_url: data.coverUrl || 'https://example.test/cover.jpg', links_json: data.links, status: 'unpublished' };
       adminStreamReleases.push(release);
       status = 201;
       body = { id: release.id, title: release.title, status: release.status };
@@ -147,7 +147,7 @@ async function mockApi(page, options = {}) {
       body = { id: release?.id, status: data.status };
     } else if (/^\/api\/admin\/stream-releases\/\d+$/.test(path) && method === 'PATCH') {
       const release = adminStreamReleases.find(item => item.id === Number(path.split('/').pop()));
-      if (release) Object.assign(release, data, { credits_json: data.credits, cover_url: data.coverUrl, links_json: data.links });
+      if (release) Object.assign(release, data, { credits_json: data.credits, cover_url: data.coverUrl || release.cover_url, links_json: data.links });
       body = { id: release?.id, title: data.title };
     } else if (/^\/api\/admin\/stream-releases\/\d+$/.test(path) && method === 'DELETE') {
       adminStreamReleases = adminStreamReleases.filter(item => item.id !== Number(path.split('/').pop()));
@@ -345,12 +345,17 @@ test('admin creates, updates, activates, deactivates, and deletes a stream relea
   await createForm.locator('[name="title"]').fill('Browser Test Release');
   await createForm.locator('[name="artist"]').fill('Browser Test Artist');
   await createForm.locator('[name="credits"]').fill('Producer: Browser Test');
-  await createForm.locator('[name="coverUrl"]').fill('https://example.test/cover.jpg');
+  await createForm.locator('[name="coverImage"]').setInputFiles({
+    name: 'cover.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lS8AAAAASUVORK5CYII=', 'base64')
+  });
   await createForm.locator('[name="links"]').fill('[{"platform":"Spotify","url":"https://open.spotify.com/track/test","label":"Listen on Spotify"}]');
   await createForm.getByRole('button', { name: 'Create stream release' }).click();
 
   const card = page.locator('article[data-stream-release-id="71"]');
   await expect(card).toBeVisible();
+  await card.getByRole('button', { name: 'Edit' }).click();
   await card.locator('[name="title"]').fill('Browser Test Release Updated');
   await card.getByRole('button', { name: 'Save changes' }).click();
   await expect(card.locator('[name="title"]')).toHaveValue('Browser Test Release Updated');
@@ -364,6 +369,7 @@ test('admin creates, updates, activates, deactivates, and deletes a stream relea
   await expect(page.locator('article[data-stream-release-id="71"]')).toHaveCount(0);
   expect(calls.filter(call => call.path.startsWith('/api/admin/stream-releases')).map(call => call.method))
     .toEqual(['POST', 'PATCH', 'PATCH', 'PATCH', 'DELETE']);
+  expect(calls.find(call => call.path === '/api/admin/stream-releases' && call.method === 'POST').data.coverImage.name).toBe('cover.png');
 });
 
 test('admin list sections search and filter their records', async ({ page }) => {

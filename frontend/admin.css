@@ -62,6 +62,12 @@
 .admin-beat-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); align-items: start; gap: 16px; }
 .admin-beat-card { display: grid; gap: 14px; min-width: 0; padding: 16px; }
 .admin-beat-cover { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 7px; background: #0b0b0b; object-fit: cover; }
+.admin-release-cover { aspect-ratio: 1; }
+.admin-stream-release-card { align-content: start; }
+.admin-stream-release-card .admin-beat-details p { overflow-wrap: anywhere; white-space: pre-line; }
+.admin-stream-release-card .admin-beat-details ul { padding-left: 20px; }
+.admin-stream-release-card .admin-beat-details a { color: #86efac; }
+.admin-field-help { color: rgba(255,255,255,.52); font-size: .72rem; letter-spacing: normal; text-transform: none; }
 .admin-cover-preview[hidden] { display: none; }
 .admin-beat-cover-empty { display: grid; place-items: center; color: rgba(255,255,255,.52); font-size: .85rem; }
 .admin-beat-card-content { display: grid; gap: 10px; min-width: 0; }
