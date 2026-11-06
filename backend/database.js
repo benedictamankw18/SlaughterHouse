@@ -3,6 +3,17 @@ require('dotenv').config();
 const mysql = require('mysql2');
 const { applyMigrations } = require('./services/migrations');
 const { runInTransaction } = require('./services/transaction');
+const logger = require('./services/logger');
+const monitoring = require('./services/monitoring');
+
+function reportDatabaseError(error) {
+  monitoring.increment('databaseErrors');
+  logger.error('database_operation_failed', { code: error?.code });
+}
+
+function isDatabaseError(error) {
+  return /^(ER_|ECONN|PROTOCOL_|ETIMEDOUT)/.test(String(error?.code || ''));
+}
 
 const mysqlConfig = process.env.MYSQL_URL && !process.env.MYSQL_URL.includes('user:password')
   ? process.env.MYSQL_URL
@@ -20,26 +31,75 @@ const pool = mysql.createPool(mysqlConfig);
 let initialization;
 const database = {
   run(query, parameters, callback) {
-    initialization.then(() => pool.execute(query, parameters || [], (error, result) => callback?.call({ lastID: result?.insertId, changes: result?.affectedRows }, error, result)));
+    initialization.then(
+      () => pool.execute(query, parameters || [], (error, result) => {
+        if (error) reportDatabaseError(error);
+        callback?.call({ lastID: result?.insertId, changes: result?.affectedRows }, error, result);
+      }),
+      error => {
+        reportDatabaseError(error);
+        callback?.(error);
+      }
+    );
   },
   get(query, parameters, callback) {
-    initialization.then(() => pool.execute(query, parameters || [], (error, rows) => callback?.(error, rows?.[0])));
+    initialization.then(
+      () => pool.execute(query, parameters || [], (error, rows) => {
+        if (error) reportDatabaseError(error);
+        callback?.(error, rows?.[0]);
+      }),
+      error => {
+        reportDatabaseError(error);
+        callback?.(error);
+      }
+    );
   },
   all(query, parameters, callback) {
-    initialization.then(() => pool.execute(query, parameters || [], (error, rows) => callback?.(error, rows)));
+    initialization.then(
+      () => pool.execute(query, parameters || [], (error, rows) => {
+        if (error) reportDatabaseError(error);
+        callback?.(error, rows);
+      }),
+      error => {
+        reportDatabaseError(error);
+        callback?.(error);
+      }
+    );
   },
   close() {
     return new Promise((resolve, reject) => pool.end(error => error ? reject(error) : resolve()));
+  },
+  checkConnection() {
+    return initialization.then(() => new Promise((resolve, reject) => {
+      pool.query('SELECT 1 AS ok', (error, rows) => {
+        if (error) {
+          reportDatabaseError(error);
+          return reject(error);
+        }
+        if (Number(rows?.[0]?.ok) !== 1) {
+          const error = new Error('Database readiness query returned an unexpected result.');
+          reportDatabaseError(error);
+          return reject(error);
+        }
+        resolve();
+      });
+    }));
   },
   getConnectionConfig() {
     return mysqlConfig;
   },
   transaction(callback) {
     return initialization
-      .then(() => new Promise((resolve, reject) => pool.getConnection((error, connection) => error ? reject(error) : resolve(connection))))
+      .then(() => new Promise((resolve, reject) => pool.getConnection((error, connection) => {
+        if (error) reportDatabaseError(error);
+        error ? reject(error) : resolve(connection);
+      })))
       .then(async connection => {
         try {
           return await runInTransaction(connection, callback);
+        } catch (error) {
+          if (isDatabaseError(error)) reportDatabaseError(error);
+          throw error;
         } finally {
           connection.release();
         }
@@ -50,12 +110,19 @@ const database = {
   }
 };
 
-initialization = database.initialize().catch(error => { console.error('MySQL initialization failed:', error.message); throw error; });
+initialization = database.initialize().catch(error => {
+  reportDatabaseError(error);
+  logger.error('mysql_initialization_failed', { code: error.code });
+  throw error;
+});
 module.exports = database;
 
 if (require.main === module) {
   initialization
     .then(() => database.close())
-    .then(() => console.log('Database initialized successfully.'))
-    .catch(() => process.exitCode = 1);
+    .then(() => logger.info('database_initialized'))
+    .catch(error => {
+      logger.error('database_initialization_command_failed', { code: error.code });
+      process.exitCode = 1;
+    });
 }

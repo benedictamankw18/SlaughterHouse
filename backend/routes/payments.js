@@ -14,6 +14,7 @@ const { issueCertificateRecord } = require('../services/license-certificates');
 const { refundEventDetails, refundEventKey, applyRefund, applyPaymentReversal } = require('../services/refunds');
 const { paymentFailureStatus, isRefundEvent, recordNonSuccessPayment } = require('../services/payment-events');
 const { queueEmailSafely } = require('../services/email/outbox');
+const logger = require('../services/logger');
 
 const router = express.Router();
 const { apiPublicUrl, paymentCallbackUrl, paystackSecretKey, usdToGhsRate, bookingServiceLabels } = config;
@@ -22,15 +23,20 @@ const queryRows = (query, parameters = []) => new Promise((resolve, reject) => d
 const run = (query, parameters = []) => new Promise((resolve, reject) => database.run(query, parameters, function (error) { error ? reject(error) : resolve(this); }));
 
 async function hasPaidExclusiveLicense(queryAll, beatId, excludedReference = null) {
-  const parameters = excludedReference ? ['paid', excludedReference] : ['paid'];
+  const parameters = excludedReference ? [beatId, 'paid', excludedReference] : [beatId, 'paid'];
   const rows = await queryAll(
-    `SELECT reference, items_json FROM orders WHERE status = ?${excludedReference ? ' AND reference <> ?' : ''}`,
+    `SELECT o.reference, o.items_json, l.id AS license_id, l.revoked_at,
+            (l.expires_at IS NULL OR l.expires_at > CURRENT_TIMESTAMP) AS license_active
+     FROM orders o
+     LEFT JOIN licenses l ON l.order_id = o.id AND l.beat_id = ? AND l.license_type = 'exclusive'
+     WHERE o.status = ?${excludedReference ? ' AND o.reference <> ?' : ''}`,
     parameters
   );
   return rows.some(order => {
     let items;
     try { items = JSON.parse(order.items_json); } catch { return false; }
-    return items.some(item => item.type === 'beat' && Number(item.productId) === Number(beatId) && item.license === 'exclusive');
+    const purchasedExclusive = items.some(item => item.type === 'beat' && Number(item.productId) === Number(beatId) && item.license === 'exclusive');
+    return purchasedExclusive && (!order.license_id || (!order.revoked_at && Number(order.license_active)));
   });
 }
 
@@ -107,8 +113,8 @@ async function normalizePaidOrder(db, order, items, paymentData) {
   for (const item of items.filter(candidate => candidate.type === 'beat')) {
     const rights = rightsFor(licenseRights, item.license);
     await db.run(
-      `INSERT INTO licenses (user_id, beat_id, order_id, license_type, rights_json)
-       SELECT ?, ?, ?, ?, ?
+      `INSERT INTO licenses (user_id, beat_id, order_id, license_type, rights_json, expires_at)
+       SELECT ?, ?, ?, ?, ?, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 1 YEAR)
        WHERE NOT EXISTS (SELECT 1 FROM licenses WHERE order_id = ? AND beat_id = ? AND license_type = ?)`,
       [customer.id, item.productId, order.id, item.license, JSON.stringify(rights), order.id, item.productId, item.license]
     );
@@ -325,7 +331,16 @@ router.post('/payments/webhook', async (request, response) => {
           throw error;
         }
       }
-      await completePaidOrder(tx, order, items, event.data);
+      try {
+        await completePaidOrder(tx, order, items, event.data);
+      } catch (error) {
+        if (error.code !== 'OUT_OF_STOCK') throw error;
+        return {
+          processed: true,
+          orderId: order.id,
+          conflict: { reason: 'merchandise_out_of_stock', reference: eventReference }
+        };
+      }
       return { processed: true, orderId: order.id };
     });
     if (outcome.duplicate) return response.json({ received: true, duplicate: true });
@@ -463,7 +478,7 @@ router.get('/payments/verify/:reference', async (request, response) => {
           status: 'success',
           reference: order.reference,
           booking: bookingItem ? { service: bookingItem.name, feeGhs: bookingItem.feeGhs } : null,
-          downloads: getDownloadItems(order, apiPublicUrl, licenseRights)
+          downloads: order.status === 'paid' ? getDownloadItems(order, apiPublicUrl, licenseRights) : []
         }
       });
       if (order.status === 'paid' || order.status === 'partially_refunded') return success();
@@ -478,7 +493,7 @@ router.get('/payments/verify/:reference', async (request, response) => {
     });
     return response.status(outcome.httpStatus).json(outcome.body);
   } catch (error) {
-    console.error('Payment verification failed:', error.code || error.message);
+    logger.error('payment_verification_failed', { code: error.code });
     if (error.code === 'ER_DUP_ENTRY') return response.status(409).json({ error: 'This booking could not be completed because one or more selected slots were reserved by another customer.' });
     response.status(502).json({ error: error.code ? databaseError('Payment verification failed.', error) : `Payment verification failed: ${error.message}` });
   }

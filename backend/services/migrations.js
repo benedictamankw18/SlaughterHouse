@@ -564,6 +564,24 @@ const migrations = [
         CONSTRAINT fk_license_certificate_history_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE SET NULL
       )`
     ]
+  },
+  {
+    version: 24,
+    statements: [
+      { ensureColumn: { table: 'user_sessions', column: 'csrf_token_hash', definition: 'CHAR(64) NULL' } }
+    ]
+  },
+  {
+    version: 25,
+    statements: [
+      { ensureColumn: { table: 'licenses', column: 'expires_at', definition: 'DATETIME NULL' } }
+    ]
+  },
+  {
+    version: 26,
+    statements: [
+      'ALTER TABLE licenses MODIFY COLUMN expires_at DATETIME NULL'
+    ]
   }
 ];
 

@@ -3,6 +3,7 @@
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta name="robots" content="noindex,nofollow">
 	<title>Payment Confirmation | UltBigBoy</title>
 	<link rel="stylesheet" href="style.css">
 </head>
@@ -11,7 +12,7 @@
 		<section class="catalog-heading">
 			<p class="section-kicker">ORDER STATUS</p>
 			<h1 id="payment-title">Checking your payment...</h1>
-			<p id="payment-message">Please wait while we confirm your transaction.</p>
+			<p id="payment-message" role="status" aria-live="polite">Please wait while we confirm your transaction.</p>
 			<div id="download-links"></div>
 			<a class="browse-more-beats" id="payment-return-link" href="beats.html">Return to beats</a>
 		</section>
@@ -57,8 +58,27 @@
 		} else {
 			const verifyUrl = new URL(`/api/payments/verify/${encodeURIComponent(reference)}`, apiBaseUrl);
 			const customerToken = sessionStorage.getItem('customerToken');
-			fetch(verifyUrl, { headers: customerToken ? { Authorization: `Bearer ${customerToken}` } : {} })
-				.then(async response => {
+
+			function showVerificationRetry(errorMessage) {
+				title.textContent = 'Payment needs attention';
+				message.textContent = errorMessage || 'We could not verify this payment yet.';
+				const retryButton = document.createElement('button');
+				retryButton.className = 'inline-retry-button';
+				retryButton.type = 'button';
+				retryButton.textContent = 'Try again';
+				retryButton.addEventListener('click', () => {
+					retryButton.remove();
+					verifyPayment();
+				}, { once: true });
+				message.append(document.createTextNode(' '), retryButton);
+			}
+
+			async function verifyPayment() {
+				title.textContent = 'Checking your payment...';
+				message.textContent = 'Please wait while we confirm your transaction.';
+				links.replaceChildren();
+				try {
+					const response = await fetch(verifyUrl, { headers: customerToken ? { Authorization: `Bearer ${customerToken}` } : {} });
 					const data = await response.json();
 					if (!response.ok) throw new Error(data.error || 'Could not verify payment.');
 					if (data.status !== 'success' || !Array.isArray(data.downloads)) {
@@ -97,11 +117,12 @@
 						});
 						links.appendChild(downloadItem);
 					});
-				})
-				.catch(error => {
-					title.textContent = 'Payment needs attention';
-					message.textContent = error.message || 'We could not verify this payment yet.';
-				});
+				} catch (error) {
+					showVerificationRetry(error.message);
+				}
+			}
+
+			verifyPayment();
 		}
 	</script>
 </body>

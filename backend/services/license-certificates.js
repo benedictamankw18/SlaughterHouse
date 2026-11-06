@@ -2,7 +2,7 @@ const crypto = require('node:crypto');
 const config = require('../config');
 const { validateRightsDefinition } = require('./license-rights');
 
-const TERMS_VERSION = 'UBB-MUSIC-LICENSE-2026-11-V1';
+const TERMS_VERSION = 'UBB-MUSIC-LICENSE-2026-11-V2';
 
 function databaseGet(db, query, parameters = []) {
   if (db.get.length >= 3) {
@@ -53,11 +53,11 @@ function parseLicenseTerms(value) {
 
 async function issueCertificateRecord(db, licenseId, { actorUserId = null, reissuedFromId = null } = {}) {
   const license = await databaseGet(db, `SELECT l.id AS license_id, l.user_id, l.beat_id, l.order_id,
-      l.license_type, l.rights_json, l.purchased_at, l.revoked_at, o.status AS order_status
+      l.license_type, l.rights_json, l.purchased_at, l.expires_at, l.revoked_at, o.status AS order_status
     FROM licenses l
     JOIN orders o ON o.id = l.order_id
     WHERE l.id = ? FOR UPDATE`, [licenseId]);
-  if (!license || !['paid', 'partially_refunded'].includes(license.order_status) || license.revoked_at) {
+  if (!license || license.order_status !== 'paid' || license.revoked_at) {
     throw new Error('A certificate can only be issued for an active license from a paid order.');
   }
   const rights = parseLicenseTerms(license.rights_json);

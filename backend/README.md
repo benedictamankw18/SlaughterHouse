@@ -18,6 +18,7 @@ The backend is organized by responsibility:
 - `services/security.js` - password hashing and password verification
 - `services/booking.js` - booking fees and slot validation
 - `services/uploads.js` - validated image/audio persistence
+- `services/storage/` - private local file storage provider and streaming access
 - `services/downloads.js` - signed download token generation and verification
 - `services/account-tokens.js` - hashed, expiring password-reset and email-verification tokens
 - `services/email/` - Resend sender, transactional templates, and retryable email outbox
@@ -29,6 +30,32 @@ Run the API from this directory:
 ```powershell
 node server.js
 ```
+
+## Docker Compose
+
+From the repository root, copy `.env.docker.example` to `.env`, set unique
+database passwords and two different stable signing secrets of at least 32
+characters, then start the stack:
+
+```powershell
+Copy-Item .env.docker.example .env
+docker compose up --build -d
+docker compose ps
+```
+
+Open the site at `http://localhost:5500`; the API is available at
+`http://localhost:3000`. MySQL is published only on `127.0.0.1:3307` by default
+and is reachable by the API container on the private Compose network. MySQL
+migrations run automatically when the API starts. The `mysql-data` and
+`app-data` named volumes persist the database, uploaded files, and certificates.
+To stop the stack without deleting data, run `docker compose down`. To remove
+all persisted database and uploaded data, run `docker compose down --volumes`.
+
+Set `PAYSTACK_SECRET_KEY`, `EMAIL_API_KEY`, and `EMAIL_FROM` in `.env` to enable
+payments and email delivery. For deployment behind a reverse proxy, set
+`FRONTEND_ORIGIN`, `FRONTEND_ORIGINS`, `API_PUBLIC_URL`,
+`PAYMENT_CALLBACK_URL`, and `TRUST_PROXY` to the actual trusted public
+configuration before starting the services. Do not commit `.env`.
 
 Initialize or validate the database connection separately:
 
@@ -43,7 +70,14 @@ and requests. Later migrations add the marketplace features and constraints.
 `database.js` only runs pending migrations; it no longer creates tables or
 alters columns outside the migration history. Existing rows are preserved.
 Migration 20 seeds the existing curated stream releases into `stream_releases`;
-the public catalog is served by `GET /api/stream-releases`.
+the public catalog is served by `GET /api/stream-releases`. Administrators can
+create and update releases, delete them, and activate or deactivate publication
+from the dashboard; newly created releases remain unpublished until activated.
+New beat licenses and download access expire one year after purchase. Existing
+licenses retain their original terms and are not given a retroactive expiry.
+Access is available only while the order is fully paid and the license is
+unexpired and unrevoked; a new paid purchase renews an expired license.
+Merchandise remains physical and has no customer download files.
 
 ## Local MySQL setup
 
@@ -61,9 +95,33 @@ From `backend\`, copy `.env.example` to `.env` and set `DB_HOST`, `DB_PORT`,
 `MYSQL_URL`, not both. `PORT` and `NODE_ENV` configure the API runtime.
 Payment and download configuration uses `PAYSTACK_SECRET_KEY`,
 `PAYMENT_CALLBACK_URL`, `API_PUBLIC_URL`, `FRONTEND_ORIGIN`, and
-`DOWNLOAD_SIGNING_SECRET`. Set a separate stable `CERTIFICATE_SIGNING_SECRET`
-for certificate verification links and keep it unchanged so issued certificate
-QR codes remain verifiable; `DOWNLOAD_SIGNING_SECRET` is used as a fallback.
+`DOWNLOAD_SIGNING_SECRET`. Production requires distinct, stable values of at
+least 32 bytes for `DOWNLOAD_SIGNING_SECRET` and
+`CERTIFICATE_SIGNING_SECRET`. Keep the certificate secret stable so issued
+certificate QR codes remain verifiable. Local development may omit these values,
+but generated secrets are not stable across server restarts.
+Set `FRONTEND_ORIGIN` and, when needed, comma-separated `FRONTEND_ORIGINS` to
+the trusted browser origins. Set `TRUST_PROXY` only to the backend's known
+reverse-proxy hop count or trusted proxy addresses.
+
+## Route integration tests
+
+The route integration suite requires a local MySQL-compatible server and a
+dedicated `slaughterhouse_route_test` schema. It applies the backend migrations
+and clears application tables in that schema before exercising every registered
+API route method. Never point `TEST_MYSQL_URL` at a development or production
+database; the suite refuses non-local hosts and any schema other than the
+dedicated test schema.
+
+In PowerShell, configure the test connection and run the suite:
+
+```powershell
+$env:TEST_MYSQL_URL = 'mysql://test_user:test_password@127.0.0.1:3306/slaughterhouse_route_test'
+npm run test:integration
+```
+
+The ordinary `npm test` run skips the integration case when `TEST_MYSQL_URL`
+is not set.
 Email delivery uses `EMAIL_API_KEY` and
 `EMAIL_FROM`. The Paystack and email settings can remain unset for local
 database-only development.
@@ -96,6 +154,26 @@ node --test "test/*.test.js"
 ```
 
 Use `npm test` instead when local PowerShell script execution is enabled.
+
+## Browser workflow tests
+
+The Playwright suite serves the static frontend on `127.0.0.1:4173` and mocks
+API responses in the browser. It exercises signup, login, search, cart,
+checkout, booking, reviews, and administrator review approval without using a
+database, real customer accounts, or a payment provider.
+It also runs axe-core WCAG 2.1 A/AA scans on key storefront pages, the
+administrator dashboard, and account dialog, and checks storefront and
+administrator layouts for horizontal overflow at 360, 768, 1024, and 1440 px.
+
+Install the Chromium test browser once, then run from `backend\`:
+
+```powershell
+npx playwright install chromium
+npm run test:browser
+```
+
+The browser suite is separate from `npm test` and the MySQL route integration
+suite.
 
 Login sessions, password reset tokens, and email verification tokens are stored
 hashed and are single-use or expiry-controlled. Login responses also set
@@ -293,3 +371,35 @@ Administrator accounts are stored in the MySQL `users` table. Set a user's
 `role` to `admin` to allow access to the administrator login; administrator
 credentials are not read from environment variables. Withdrawal confirmation
 uses the authenticated administrator's MySQL password.
+
+## Production secret rotation checklist
+
+- Never put production secret values in source control, support tickets, or logs.
+  Update the deployment's secret store and restart the API after each change.
+- **Paystack:** create or rotate the API key in Paystack, update
+  `PAYSTACK_SECRET_KEY`, verify a test transaction and webhook, then revoke the
+  old key.
+- **Email:** create a replacement provider API key, update `EMAIL_API_KEY`, send
+  a test transactional email, then revoke the old key. Update `EMAIL_FROM` only
+  when the verified sender changes.
+- **Database:** create a replacement database credential with the same required
+  privileges, update `MYSQL_URL` or `DB_USER`/`DB_PASSWORD`, verify the API and
+  migrations connect, then revoke the old credential.
+- **Downloads:** replace `DOWNLOAD_SIGNING_SECRET` with a distinct value of at
+  least 32 bytes. Existing signed download links will stop validating; issue
+  fresh links as needed.
+- **Certificates:** replace `CERTIFICATE_SIGNING_SECRET` with a value distinct
+  from the download secret and at least 32 bytes. Existing certificate
+  verification signatures will no longer validate, so plan certificate
+  reissuance before rotating it.
+- Confirm all new values are in the deployment secret store, not a checked-in
+  `.env` file, and remove old values from the provider after the new
+  configuration is verified.
+
+## Health, monitoring, and recovery
+
+The public liveness and readiness endpoints, administrator-only dependency and
+metrics endpoints, and database backup/restore/verification procedures are
+documented in [`docs/operations.md`](../docs/operations.md).
+Security headers, CORS, CSRF, access-control, storage, and verification details
+are documented in [`docs/security.md`](../docs/security.md).

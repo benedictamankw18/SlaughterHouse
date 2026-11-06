@@ -1,3 +1,5 @@
+const logger = require('./logger');
+
 function recordAudit(database, { userId = null, action, entityType = null, entityId = null, details = null, ipAddress = null }) {
   return new Promise((resolve, reject) => {
     database.run(
@@ -10,7 +12,7 @@ function recordAudit(database, { userId = null, action, entityType = null, entit
 
 function recordAuditSafely(database, entry) {
   return recordAudit(database, entry).catch(error => {
-    console.error('Audit log write failed:', error.code || error.message);
+    logger.error('audit_log_write_failed', { code: error.code });
   });
 }
 

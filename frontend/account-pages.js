@@ -50,6 +50,11 @@ if (accountPageRoot) {
     const content = document.getElementById('account-page-content');
     const status = document.getElementById('account-page-message');
     const token = () => sessionStorage.getItem('customerToken') || '';
+    const csrfHeaders = method => window.ultbigboyCsrfHeaders?.(method) || (() => {
+      if (['GET', 'HEAD', 'OPTIONS'].includes(String(method || 'GET').toUpperCase())) return {};
+      const value = sessionStorage.getItem('customerCsrfToken') || '';
+      return value ? { 'X-CSRF-Token': value } : {};
+    })();
     const request = async (path, options = {}) => {
       const response = await fetch(`${apiBase}${path}`, {
         ...options,
@@ -57,6 +62,7 @@ if (accountPageRoot) {
         headers: {
           ...(options.body ? { 'Content-Type': 'application/json' } : {}),
           ...(token() ? { Authorization: `Bearer ${token()}` } : {}),
+          ...csrfHeaders(options.method),
           ...(options.headers || {})
         }
       });
@@ -81,7 +87,13 @@ if (accountPageRoot) {
         if (pageType === 'licenses') {
           const status = String(item.certificate_status || 'missing').toLowerCase();
           const cover = item.cover_art ? `${apiBase}/api/uploads/${encodeURIComponent(item.cover_art)}` : 'Images/Logo 2.png';
-          return `<article class="account-page-card account-license-card"><img class="account-license-cover" src="${escapeAccountHtml(cover)}" alt="${escapeAccountHtml(item.beat_title || 'Beat')} cover art"><div class="account-license-content"><span class="certificate-status certificate-status-${escapeAccountHtml(status)}">${escapeAccountHtml(status)}</span><h2>${escapeAccountHtml(item.beat_title || 'Beat')}</h2><p>${escapeAccountHtml(item.license_type)} license · Order ${escapeAccountHtml(item.order_reference || '')}</p><p>Purchased ${escapeAccountHtml(item.purchased_at || '')}</p><p>Certificate ${escapeAccountHtml(item.certificate_id || 'Pending issuance')}</p><div class="account-page-actions"><a href="certificate.html?licenseId=${Number(item.id)}">View certificate</a><button type="button" data-account-action="certificate" data-id="${Number(item.id)}">Download PDF</button>${item.verification_url ? `<a href="${escapeAccountHtml(item.verification_url)}" target="_blank" rel="noopener noreferrer">Verify</a>` : ''}</div></div></article>`;
+          const downloads = Array.isArray(item.downloads) ? item.downloads : [];
+          const downloadLinks = downloads.map(file => `<a href="${escapeAccountHtml(file.url)}">${escapeAccountHtml(file.format)} download</a>`).join('');
+          const downloadState = status === 'expired'
+            ? '<p>This one-year license has expired. <a href="beats.html#beat-listing">Purchase it again to renew access.</a></p>'
+            : downloads.length ? `<div class="account-page-actions">${downloadLinks}</div>` : '<p>Downloads are available once payment is fully settled.</p>';
+          const expiry = item.expires_at || 'No expiration';
+          return `<article class="account-page-card account-license-card"><img class="account-license-cover" src="${escapeAccountHtml(cover)}" alt="${escapeAccountHtml(item.beat_title || 'Beat')} cover art"><div class="account-license-content"><span class="certificate-status certificate-status-${escapeAccountHtml(status)}">${escapeAccountHtml(status)}</span><h2>${escapeAccountHtml(item.beat_title || 'Beat')}</h2><p>${escapeAccountHtml(item.license_type)} license · Order ${escapeAccountHtml(item.order_reference || '')}</p><p>Purchased ${escapeAccountHtml(item.purchased_at || '')} · Expires ${escapeAccountHtml(expiry)}</p>${downloadState}<p>Certificate ${escapeAccountHtml(item.certificate_id || 'Pending issuance')}</p><div class="account-page-actions"><a href="certificate.html?licenseId=${Number(item.id)}">View certificate</a><button type="button" data-account-action="certificate" data-id="${Number(item.id)}">Download PDF</button>${item.verification_url ? `<a href="${escapeAccountHtml(item.verification_url)}" target="_blank" rel="noopener noreferrer">Verify</a>` : ''}</div></div></article>`;
         }
         if (pageType === 'downloads') {
           return `<article class="account-page-card"><h2>${escapeAccountHtml(item.beat_title || 'Beat')}</h2><p>${escapeAccountHtml(item.license_type)} license · ${escapeAccountHtml(item.format)} format</p><p>Order ${escapeAccountHtml(item.order_reference || '')} · Downloaded ${escapeAccountHtml(item.created_at || '')}</p></article>`;
@@ -157,6 +169,7 @@ if (accountPageRoot) {
         content.innerHTML = '<div class="account-page-state"><h2>Sign in to view your account</h2><p>Your account pages are private and available after signing in.</p><button class="auth-primary-button" type="button" data-open-login>Sign in</button></div>';
         return;
       }
+      content.setAttribute('aria-busy', 'true');
       content.textContent = 'Loading your account...';
       try {
         const result = await request(page.endpoint);
@@ -166,7 +179,9 @@ if (accountPageRoot) {
         document.getElementById('account-page-customer').textContent = user?.name ? `Signed in as ${user.name}` : '';
         if (pageType === 'profile') renderProfile(result[page.key]);
         else renderRows(result[page.key] || []);
+        content.setAttribute('aria-busy', 'false');
       } catch (error) {
+        content.setAttribute('aria-busy', 'false');
         content.innerHTML = `<div class="account-page-state" role="alert"><h2>Could not load this page</h2><p>${escapeAccountHtml(error.message)}</p><button type="button" data-account-action="reload">Try again</button></div>`;
       }
     };

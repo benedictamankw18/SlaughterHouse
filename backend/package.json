@@ -8,7 +8,14 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "test": "node --test \"test/*.test.js\"",
-    "migrate:mysql": "node migrate-to-mysql.js"
+    "test:integration": "node --test test/routes.integration.test.js",
+    "test:browser": "playwright test -c playwright.config.js",
+    "migrate:mysql": "node migrate-to-mysql.js",
+    "backup": "node scripts/backup.js",
+    "restore": "node scripts/restore.js",
+    "verify:backup": "node scripts/verify-backup.js",
+    "optimize:images": "node scripts/optimize-images.js",
+    "check:secrets": "node scripts/check-secrets.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -16,7 +23,12 @@
     "express": "^4.21.2",
     "mysql2": "^3.14.1",
     "pdfkit": "^0.20.2",
-    "qrcode": "^1.5.4",
-    "sqlite3": "^5.1.7"
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@playwright/test": "^1.65.0",
+    "sharp": "^0.35.5",
+    "sqlite3": "^6.0.1"
   }
 }

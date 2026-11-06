@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const { sendEmail } = require('./sender');
 const { TEMPLATES, renderTemplate } = require('./templates');
+const logger = require('../logger');
 
 const MAX_ATTEMPTS = 8;
 const MAX_BATCH_SIZE = 10;
@@ -14,7 +15,7 @@ function isEmailAddress(value) {
 }
 
 function logOutboxError(message, error) {
-  console.error(message, error?.code || error?.message || 'Unknown error');
+  logger.error('email_outbox_error', { operation: message, code: error?.code });
 }
 
 async function queueEmail(database, { to, template, data = {}, idempotencyKey }) {
@@ -131,7 +132,7 @@ async function processEmailOutbox(database, { send = sendEmail, batchSize = MAX_
 
 function startEmailOutbox(database, { apiKey = process.env.EMAIL_API_KEY, from = process.env.EMAIL_FROM } = {}) {
   if (!apiKey || !from) {
-    console.warn('Transactional email outbox is idle; configure EMAIL_API_KEY and EMAIL_FROM to enable delivery.');
+    logger.warn('email_outbox_idle', { reason: 'EMAIL_API_KEY and EMAIL_FROM are not configured.' });
     return null;
   }
 

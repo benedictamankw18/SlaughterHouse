@@ -33,6 +33,7 @@
     setText('verification-license', certificate.licenseType);
     setText('verification-order', certificate.orderReference);
     setText('verification-purchased', displayDate(certificate.purchasedAt));
+    setText('verification-expires', certificate.expiresAt ? displayDate(certificate.expiresAt) : 'No expiration');
     setText('verification-issued', displayDate(certificate.issuedAt));
     setText('verification-terms-version', certificate.termsVersion);
     const list = document.getElementById('verification-rights');

@@ -1,8 +1,8 @@
 const express = require('express');
-const fs = require('node:fs/promises');
 const path = require('node:path');
 const database = require('../database');
 const config = require('../config');
+const storage = require('../services/storage');
 const sessions = require('../session-store');
 const { databaseError } = require('../services/error-messages');
 const { recordAuditSafely } = require('../services/audit');
@@ -47,7 +47,8 @@ function mapCertificateRecord(row) {
 }
 
 async function getCertificateByLicense(licenseId, userId) {
-  return queryOne(`SELECT c.*, l.purchased_at, l.revoked_at AS license_revoked_at, b.title AS beat_title,
+  return queryOne(`SELECT c.*, l.purchased_at, l.expires_at, (l.expires_at IS NULL OR l.expires_at > CURRENT_TIMESTAMP) AS license_active,
+      l.revoked_at AS license_revoked_at, b.title AS beat_title,
       b.genre, b.bpm, b.musical_key, b.cover_art, u.name AS customer_name, u.email AS customer_email,
       o.reference AS order_reference, o.status AS order_status
     FROM license_certificates c
@@ -60,7 +61,8 @@ async function getCertificateByLicense(licenseId, userId) {
 }
 
 async function getCertificateByRecordId(certificateRecordId) {
-  return queryOne(`SELECT c.*, l.purchased_at, l.revoked_at AS license_revoked_at, b.title AS beat_title,
+  return queryOne(`SELECT c.*, l.purchased_at, l.expires_at, (l.expires_at IS NULL OR l.expires_at > CURRENT_TIMESTAMP) AS license_active,
+      l.revoked_at AS license_revoked_at, b.title AS beat_title,
       b.genre, b.bpm, b.musical_key, b.cover_art, u.name AS customer_name, u.email AS customer_email,
       o.reference AS order_reference, o.status AS order_status, u.id AS customer_id
     FROM license_certificates c
@@ -75,7 +77,8 @@ function certificateCurrentStatus(certificate) {
   if (certificate.status !== 'valid') return certificate.status;
   if (certificate.order_status === 'refunded') return 'refunded';
   if (certificate.license_revoked_at) return 'revoked';
-  if (!['paid', 'partially_refunded'].includes(certificate.order_status)) return 'suspended';
+  if (certificate.order_status !== 'paid') return 'suspended';
+  if (certificate.license_active !== undefined && !Number(certificate.license_active)) return 'expired';
   return 'valid';
 }
 
@@ -83,34 +86,48 @@ async function renderCertificatePdf(certificate) {
   const mapped = mapCertificateRecord(certificate);
   const status = certificateCurrentStatus(certificate);
   const fileName = `${certificate.certificate_id}-${status}.pdf`;
-  const destination = path.join(config.certificateDirectory, fileName);
   let pdf;
   try {
-    pdf = await fs.readFile(destination);
+    await storage.stat(fileName, { area: 'certificates' });
+    pdf = await readStoredFile(fileName, 'certificates');
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
+    let coverImage = null;
+    if (certificate.cover_art) {
+      try {
+        coverImage = await readStoredFile(path.basename(certificate.cover_art), 'uploads');
+      } catch (coverError) {
+        if (coverError.code !== 'ENOENT') throw coverError;
+      }
+    }
     pdf = await createLicenseCertificatePdf({
       license: {
         ...certificate,
         rights: mapped.rights,
         terms_url: mapped.termsUrl,
-        producer_name: 'UltBigBoy Music Production'
+        producer_name: 'UltBigBoy Music Production',
+        cover_image: coverImage
       },
       certificate: { ...certificate, status },
       verificationUrl: mapped.verificationUrl
     });
-    await fs.mkdir(config.certificateDirectory, { recursive: true });
     try {
-      await fs.writeFile(destination, pdf, { flag: 'wx' });
+      await storage.save(pdf, { area: 'certificates', key: fileName });
     } catch (writeError) {
       if (writeError.code !== 'EEXIST') throw writeError;
-      pdf = await fs.readFile(destination);
+      pdf = await readStoredFile(fileName, 'certificates');
     }
   }
   if (certificate.pdf_storage_path !== fileName) {
     await runQuery('UPDATE license_certificates SET pdf_storage_path = ? WHERE id = ?', [fileName, certificate.id]);
   }
   return { pdf, fileName };
+}
+
+async function readStoredFile(key, area) {
+  const chunks = [];
+  for await (const chunk of storage.readStream(key, { area })) chunks.push(chunk);
+  return Buffer.concat(chunks);
 }
 
 function sendCertificatePdf(response, rendered) {
@@ -145,7 +162,8 @@ router.get('/certificates/verify/:token', async (request, response) => {
     const storedHash = certificateTokenHash(token);
     const certificate = await queryOne(`SELECT c.certificate_id, c.verification_token_hash, c.license_type,
         c.license_terms_snapshot, c.terms_version, c.status, c.issued_at, c.revoked_at,
-        l.revoked_at AS license_revoked_at, l.purchased_at, b.title AS beat_title,
+        l.revoked_at AS license_revoked_at, l.purchased_at, l.expires_at,
+        (l.expires_at IS NULL OR l.expires_at > CURRENT_TIMESTAMP) AS license_active, b.title AS beat_title,
         u.name AS customer_name, o.reference AS order_reference, o.status AS order_status
       FROM license_certificates c
       JOIN licenses l ON l.id = c.license_id
@@ -167,6 +185,7 @@ router.get('/certificates/verify/:token', async (request, response) => {
         licenseType: certificate.license_type,
         orderReference: certificate.order_reference,
         purchasedAt: certificate.purchased_at,
+        expiresAt: certificate.expires_at,
         issuedAt: certificate.issued_at,
         termsVersion: certificate.terms_version,
         rights: parseLicenseTerms(certificate.license_terms_snapshot)
@@ -183,10 +202,10 @@ router.get('/customer/licenses/:id/certificate/details', requireCustomer, async 
     const ownedLicense = await queryOne(`SELECT l.id, l.revoked_at, o.status AS order_status
       FROM licenses l JOIN orders o ON o.id = l.order_id
       WHERE l.id = ? AND l.user_id = ?`, [Number(request.params.id), request.customer.id]);
-    if (!ownedLicense || ownedLicense.revoked_at || !['paid', 'partially_refunded'].includes(ownedLicense.order_status)) return response.status(404).json({ error: 'Paid license was not found.' });
+    if (!ownedLicense || ownedLicense.revoked_at || ownedLicense.order_status !== 'paid') return response.status(404).json({ error: 'Paid license was not found.' });
     await ensureCertificateForLicense(database, Number(request.params.id));
     const certificate = await getCertificateByLicense(Number(request.params.id), request.customer.id);
-    if (!certificate || !['paid', 'partially_refunded'].includes(certificate.order_status)) return response.status(404).json({ error: 'Paid license was not found.' });
+    if (!certificate || certificate.order_status !== 'paid') return response.status(404).json({ error: 'Paid license was not found.' });
     response.setHeader('Cache-Control', 'private, no-store');
     response.json({ certificate: mapCertificateRecord({ ...certificate, status: certificateCurrentStatus(certificate) }) });
   } catch (error) {
@@ -200,10 +219,10 @@ router.get('/customer/licenses/:id/certificate', requireCustomer, async (request
     const ownedLicense = await queryOne(`SELECT l.id, l.revoked_at, o.status AS order_status
       FROM licenses l JOIN orders o ON o.id = l.order_id
       WHERE l.id = ? AND l.user_id = ?`, [Number(request.params.id), request.customer.id]);
-    if (!ownedLicense || ownedLicense.revoked_at || !['paid', 'partially_refunded'].includes(ownedLicense.order_status)) return response.status(404).json({ error: 'Paid license was not found.' });
+    if (!ownedLicense || ownedLicense.revoked_at || ownedLicense.order_status !== 'paid') return response.status(404).json({ error: 'Paid license was not found.' });
     await ensureCertificateForLicense(database, Number(request.params.id));
     const certificate = await getCertificateByLicense(Number(request.params.id), request.customer.id);
-    if (!certificate || !['paid', 'partially_refunded'].includes(certificate.order_status)) return response.status(404).json({ error: 'Paid license was not found.' });
+    if (!certificate || certificate.order_status !== 'paid') return response.status(404).json({ error: 'Paid license was not found.' });
     sendCertificatePdf(response, await renderCertificatePdf(certificate));
   } catch (error) {
     response.status(500).json({ error: databaseError('Generating the license certificate failed.', error) });
@@ -217,7 +236,7 @@ router.get('/admin/certificates', requireAdmin, async (request, response) => {
   const from = String(request.query.from || '');
   const to = String(request.query.to || '');
   if (licenseType && !LICENSE_TYPES.has(licenseType)) return response.status(400).json({ error: 'Unknown license type.' });
-  if (status && !['valid', 'revoked', 'reissued', 'suspended', 'refunded'].includes(status)) return response.status(400).json({ error: 'Unknown certificate status.' });
+  if (status && !['valid', 'expired', 'revoked', 'reissued', 'suspended', 'refunded'].includes(status)) return response.status(400).json({ error: 'Unknown certificate status.' });
   if ([from, to].some(value => value && !/^\d{4}-\d{2}-\d{2}$/.test(value)) || (from && to && from > to)) return response.status(400).json({ error: 'Choose a valid, non-reversed issue date range.' });
   const conditions = [];
   const parameters = [];
@@ -228,15 +247,17 @@ router.get('/admin/certificates', requireAdmin, async (request, response) => {
   if (licenseType) { conditions.push('c.license_type = ?'); parameters.push(licenseType); }
   if (from) { conditions.push('DATE(c.issued_at) >= ?'); parameters.push(from); }
   if (to) { conditions.push('DATE(c.issued_at) <= ?'); parameters.push(to); }
-  if (status === 'valid') conditions.push("c.status = 'valid' AND l.revoked_at IS NULL AND o.status IN ('paid', 'partially_refunded')");
+  if (status === 'valid') conditions.push("c.status = 'valid' AND l.revoked_at IS NULL AND (l.expires_at IS NULL OR l.expires_at > CURRENT_TIMESTAMP) AND o.status = 'paid'");
+  else if (status === 'expired') conditions.push("c.status = 'valid' AND l.revoked_at IS NULL AND l.expires_at IS NOT NULL AND l.expires_at <= CURRENT_TIMESTAMP AND o.status = 'paid'");
   else if (status === 'revoked') conditions.push("(c.status = 'revoked' OR (c.status = 'valid' AND l.revoked_at IS NOT NULL AND o.status <> 'refunded'))");
   else if (status === 'refunded') conditions.push("(c.status = 'refunded' OR (c.status = 'valid' AND o.status = 'refunded'))");
-  else if (status === 'suspended') conditions.push("(c.status = 'suspended' OR (c.status = 'valid' AND l.revoked_at IS NULL AND o.status NOT IN ('paid', 'partially_refunded', 'refunded')))");
+  else if (status === 'suspended') conditions.push("(c.status = 'suspended' OR (c.status = 'valid' AND l.revoked_at IS NULL AND o.status NOT IN ('paid', 'refunded')))");
   else if (status) { conditions.push('c.status = ?'); parameters.push(status); }
   try {
     const certificates = await queryRows(`SELECT c.id, c.certificate_id, c.license_id, c.order_id, c.beat_id,
         c.license_type, c.license_terms_snapshot, c.terms_version, c.status, c.reissued_from_id,
-        c.issued_at, c.revoked_at, c.revocation_reason, l.purchased_at, l.revoked_at AS license_revoked_at,
+        c.issued_at, c.revoked_at, c.revocation_reason, l.purchased_at, l.expires_at,
+        (l.expires_at IS NULL OR l.expires_at > CURRENT_TIMESTAMP) AS license_active, l.revoked_at AS license_revoked_at,
         b.title AS beat_title, u.name AS customer_name, u.email AS customer_email,
         o.reference AS order_reference, o.status AS order_status
       FROM license_certificates c
@@ -295,7 +316,8 @@ router.post('/admin/certificates/:id/revoke', requireAdmin, async (request, resp
   if (!reason || reason.length > 500) return response.status(400).json({ error: 'Enter a revocation reason of up to 500 characters.' });
   try {
     const certificate = await database.transaction(async tx => {
-      const current = await tx.get(`SELECT c.*, l.revoked_at AS license_revoked_at, o.status AS order_status
+      const current = await tx.get(`SELECT c.*, l.expires_at,
+          (l.expires_at IS NULL OR l.expires_at > CURRENT_TIMESTAMP) AS license_active, l.revoked_at AS license_revoked_at, o.status AS order_status
         FROM license_certificates c
         JOIN licenses l ON l.id = c.license_id
         JOIN orders o ON o.id = c.order_id

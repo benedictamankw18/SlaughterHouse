@@ -1,7 +1,7 @@
 const express = require('express');
 const path = require('node:path');
 const database = require('../database');
-const config = require('../config');
+const { sendStoredFile } = require('../services/storage/response');
 const { requireCustomer } = require('../session-store');
 const { verifyDownloadToken, isDownloadableOrderStatus } = require('../services/downloads');
 const { databaseError } = require('../services/error-messages');
@@ -19,8 +19,7 @@ router.get('/orders/:reference/downloads/:productId', rateLimit({ windowMs: 60 *
   try {
     const order = await queryOne('SELECT * FROM orders WHERE reference = ?', [request.params.reference]);
     if (!order) return response.status(404).json({ error: `No order was found for reference ${request.params.reference}.` });
-    if (order.status === 'refunded') return response.status(403).json({ error: 'This order was refunded, so its downloads are no longer available.' });
-    if (!isDownloadableOrderStatus(order.status)) return response.status(404).json({ error: `No paid order was found for reference ${request.params.reference}.` });
+    if (!isDownloadableOrderStatus(order.status)) return response.status(403).json({ error: 'Downloads are available only for fully paid orders.' });
     if (request.customer.id === undefined || request.customer.email.toLowerCase() !== String(order.customer_email).toLowerCase()) return response.status(403).json({ error: 'This download belongs to a different customer account.' });
     let items;
     try { items = JSON.parse(order.items_json); } catch { return response.status(500).json({ error: 'Order data is invalid.' }); }
@@ -28,10 +27,12 @@ router.get('/orders/:reference/downloads/:productId', rateLimit({ windowMs: 60 *
     if (!item || item.license !== license) return response.status(403).json({ error: 'Download is not available for this order.' });
 
     const licenseRow = await queryOne(
-      'SELECT id, rights_json, revoked_at FROM licenses WHERE order_id = ? AND beat_id = ? AND license_type = ? AND user_id = ?',
+      'SELECT id, rights_json, revoked_at, (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) AS license_active FROM licenses WHERE order_id = ? AND beat_id = ? AND license_type = ? AND user_id = ?',
       [order.id, item.productId, license, request.customer.id]
     );
+    if (!licenseRow) return response.status(403).json({ error: 'No active license was found for this purchase.' });
     if (licenseRow?.revoked_at) return response.status(403).json({ error: 'This license has been revoked, so the download is no longer available.' });
+    if (!Number(licenseRow.license_active)) return response.status(403).json({ error: 'This license has expired. Purchase the license again to renew access.' });
 
     const rightsRow = await queryOne('SELECT rights_json FROM license_rights WHERE license_type = ?', [license]);
     const rights = rightsForPurchasedLicense(licenseRow?.rights_json, rightsRow?.rights_json, license);
@@ -46,7 +47,10 @@ router.get('/orders/:reference/downloads/:productId', rateLimit({ windowMs: 60 *
       'INSERT INTO download_events (user_id, order_id, beat_id, license_type, format) VALUES (?, ?, ?, ?, ?)',
       [request.customer.id, order.id, item.productId, license, format]
     );
-    response.download(path.join(config.uploadDirectory, path.basename(requestedFile)), path.basename(requestedFile));
+    await sendStoredFile(response, path.basename(requestedFile), {
+      downloadName: path.basename(requestedFile),
+      headers: { 'Cache-Control': 'private, no-store' }
+    });
   } catch (error) {
     response.status(500).json({ error: databaseError('Processing the download failed.', error) });
   }

@@ -1,3 +1,5 @@
+const logger = require('./logger');
+
 function createRunner(connection) {
   const execute = (query, parameters = []) => new Promise((resolve, reject) => {
     connection.execute(query, parameters, (error, result) => error ? reject(error) : resolve(result));
@@ -54,7 +56,7 @@ async function runInTransaction(connection, callback) {
     try {
       await callConnection(connection, 'rollback');
     } catch (rollbackError) {
-      console.error('Transaction rollback failed:', rollbackError.code || rollbackError.message);
+      logger.error('transaction_rollback_failed', { code: rollbackError.code });
     }
     throw error;
   }

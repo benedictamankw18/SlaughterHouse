@@ -2,7 +2,13 @@ const configuredApiUrl = window.ULTBIGBOY_API_URL || new URLSearchParams(locatio
 const API = configuredApiUrl || `${location.protocol}//${location.hostname}:3000`;
 let adminToken = sessionStorage.getItem('adminToken');
 let dashboardData = { sales: [], requests: [], orders: [], reviews: [], artists: [], withdrawals: [], analytics: {} };
+let staffRecords = [];
 const activeAdminSectionKey = 'adminActiveSection';
+const adminCsrfHeaders = method => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(String(method || 'GET').toUpperCase())) return {};
+  const token = sessionStorage.getItem('adminCsrfToken') || '';
+  return token ? { 'X-CSRF-Token': token } : {};
+};
 
 const $ = selector => document.querySelector(selector);
 const message = (id, text, error = false) => { const element = document.getElementById(id); element.textContent = text; element.classList.toggle('error', error); };
@@ -60,7 +66,7 @@ function clearBeatCoverPreview() {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(`${API}${path}`, { ...options, credentials: 'include', headers: { 'Content-Type': 'application/json', ...(adminToken ? { Authorization: 'Bearer ' + adminToken } : {}), ...(options.headers || {}) } });
+  const response = await fetch(`${API}${path}`, { ...options, credentials: 'include', headers: { 'Content-Type': 'application/json', ...adminCsrfHeaders(options.method), ...(adminToken ? { Authorization: 'Bearer ' + adminToken } : {}), ...(options.headers || {}) } });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Request failed.');
   return data;
@@ -89,7 +95,7 @@ populateBeatSelectors($('#beat-form'));
 function renderList(elementId, items, type) {
   const container = document.getElementById(elementId);
   if (!items.length) {
-    container.innerHTML = '<p>No records yet.</p>';
+    container.innerHTML = '<p>No records match these filters.</p>';
     return;
   }
   container.innerHTML = items.map(item => {
@@ -102,7 +108,7 @@ function renderList(elementId, items, type) {
         : `<br>Preferred: ${escapeHtml(item.preferred_date || 'Flexible')} ${escapeHtml(item.preferred_time || '')}`;
       return `<article class="admin-list-item"><strong>${escapeHtml(item.service)}</strong><p>${escapeHtml(item.name)} · ${escapeHtml(item.email)} · ${escapeHtml(item.phone || 'No phone')}<br>Artists: ${escapeHtml(item.artist_count || 1)}${item.song_count ? `<br>Songs: ${escapeHtml(item.song_count)}` : ''}${slotSummary}<br>${escapeHtml(item.details || 'No details provided')}<br>Status: ${escapeHtml(item.status || 'new')}</p><label class="admin-note-field">Admin notes<textarea data-booking-notes="${Number(item.id)}" rows="2" maxlength="5000">${escapeHtml(item.admin_notes || '')}</textarea></label><div class="admin-review-actions"><select data-booking-status="${Number(item.id)}" aria-label="Booking status"><option value="paid" ${item.status === 'paid' ? 'selected' : ''}>Paid</option><option value="confirmed" ${item.status === 'confirmed' ? 'selected' : ''}>Confirmed</option><option value="completed" ${item.status === 'completed' ? 'selected' : ''}>Completed</option><option value="cancelled" ${item.status === 'cancelled' ? 'selected' : ''}>Cancelled</option><option value="rescheduled" ${item.status === 'rescheduled' ? 'selected' : ''}>Rescheduled</option></select><button type="button" data-save-booking-status="${Number(item.id)}">Save status</button></div><p class="admin-message" data-booking-message></p></article>`;
     }
-    if (type === 'requests') return `<article class="admin-list-item"><strong>${escapeHtml(item.product_name || 'Request')}</strong><p>${escapeHtml(item.customer_name)} · ${escapeHtml(item.customer_email)}<br>${item.requested_license ? `License: ${escapeHtml(item.requested_license[0].toUpperCase() + item.requested_license.slice(1))} · ${formatMoney(item.license_price_gsh)}<br>` : ''}${escapeHtml(item.details || 'No details provided')}<br>${item.sample_link ? `<a href="${escapeHtml(item.sample_link)}" target="_blank" rel="noopener noreferrer">Open sample link</a><br>` : ''}${item.sample_audio_file ? `<a href="${API}/api/uploads/${encodeURIComponent(item.sample_audio_file)}" target="_blank" rel="noopener noreferrer">Listen to sample audio</a><br>` : ''}Created: ${escapeHtml(item.created_at || '')}</p><form class="admin-request-editor" data-request-id="${Number(item.id)}"><div class="admin-grid"><label>Status<select name="status"><option value="new" ${item.status === 'new' ? 'selected' : ''}>New</option><option value="reviewing" ${item.status === 'reviewing' ? 'selected' : ''}>Reviewing</option><option value="quoted" ${item.status === 'quoted' ? 'selected' : ''}>Quoted</option><option value="accepted" ${item.status === 'accepted' ? 'selected' : ''}>Accepted</option><option value="rejected" ${item.status === 'rejected' ? 'selected' : ''}>Rejected</option><option value="completed" ${item.status === 'completed' ? 'selected' : ''}>Completed</option></select></label><label>Quote (GHS)<input name="quoteGhs" type="number" min="0" step="0.01" value="${escapeHtml(item.quote_gsh)}"></label></div><label>Admin notes<textarea name="notes" rows="2" maxlength="5000">${escapeHtml(item.admin_notes || '')}</textarea></label><div class="admin-review-actions"><button type="submit">Save request</button></div><p class="admin-message" data-request-message></p></form></article>`;
+    if (type === 'requests') return `<article class="admin-list-item"><strong>${escapeHtml(item.product_name || 'Request')}</strong><p>${escapeHtml(item.customer_name)} · ${escapeHtml(item.customer_email)}<br>${item.requested_license ? `License: ${escapeHtml(item.requested_license[0].toUpperCase() + item.requested_license.slice(1))} · ${formatMoney(item.license_price_gsh)}<br>` : ''}${escapeHtml(item.details || 'No details provided')}<br>${item.sample_link ? `<a href="${escapeHtml(item.sample_link)}" target="_blank" rel="noopener noreferrer">Open sample link</a><br>` : ''}${item.sample_audio_file ? `<a href="${API}/api/admin/uploads/${encodeURIComponent(item.sample_audio_file)}" target="_blank" rel="noopener noreferrer">Listen to sample audio</a><br>` : ''}Created: ${escapeHtml(item.created_at || '')}</p><form class="admin-request-editor" data-request-id="${Number(item.id)}"><div class="admin-grid"><label>Status<select name="status"><option value="new" ${item.status === 'new' ? 'selected' : ''}>New</option><option value="reviewing" ${item.status === 'reviewing' ? 'selected' : ''}>Reviewing</option><option value="quoted" ${item.status === 'quoted' ? 'selected' : ''}>Quoted</option><option value="accepted" ${item.status === 'accepted' ? 'selected' : ''}>Accepted</option><option value="rejected" ${item.status === 'rejected' ? 'selected' : ''}>Rejected</option><option value="completed" ${item.status === 'completed' ? 'selected' : ''}>Completed</option></select></label><label>Quote (GHS)<input name="quoteGhs" type="number" min="0" step="0.01" value="${escapeHtml(item.quote_gsh)}"></label></div><label>Admin notes<textarea name="notes" rows="2" maxlength="5000">${escapeHtml(item.admin_notes || '')}</textarea></label><div class="admin-review-actions"><button type="submit">Save request</button></div><p class="admin-message" data-request-message></p></form></article>`;
     if (type === 'orders') {
       const itemsText = item.items.map(orderItem => `${orderItem.name || 'Item'}${orderItem.license ? ` (${orderItem.license} license)` : ''}`).join(', ') || 'No line items';
       return `<article class="admin-list-item"><strong>${escapeHtml(item.reference)} · ${escapeHtml(item.status)}</strong><p>${escapeHtml(item.customer_name)} · ${escapeHtml(item.customer_email)}<br>${escapeHtml(itemsText)}<br>${formatMoney(item.amount)} · ${escapeHtml(item.created_at || '')}</p></article>`;
@@ -117,6 +123,100 @@ function renderList(elementId, items, type) {
     if (type === 'audit') return `<article class="admin-list-item"><strong>${escapeHtml(item.action)}</strong><p>${escapeHtml(item.actor_email || 'System')} · ${escapeHtml(item.entity_type || 'event')}${item.entity_id ? ` #${escapeHtml(item.entity_id)}` : ''} · ${escapeHtml(item.created_at || '')}</p><small>${escapeHtml(item.details_json || '')}</small></article>`;
     return '';
   }).join('');
+}
+
+function searchRecords(items, query) {
+  const search = String(query || '').trim().toLowerCase();
+  return !search ? items : items.filter(item => JSON.stringify(item).toLowerCase().includes(search));
+}
+
+function filterByDateRange(items, from, to, field = 'created_at') {
+  return items.filter(item => {
+    const date = String(item[field] || '').slice(0, 10);
+    return (!from || (date && date >= from)) && (!to || (date && date <= to));
+  });
+}
+
+function filterContentRecords(items, searchId, statusId, statusField = 'catalog_status') {
+  const query = document.getElementById(searchId).value;
+  const status = document.getElementById(statusId).value;
+  return searchRecords(items, query).filter(item =>
+    !status || (status === 'active' ? item[statusField] === 'published' : item[statusField] !== 'published')
+  );
+}
+
+function filterContent() {
+  const type = document.querySelector('[data-content-type].active')?.dataset.contentType || 'beat';
+  $('#content-beat-filters').hidden = type !== 'beat';
+  $('#content-merchandise-filters').hidden = type !== 'merchandise';
+  $('#content-release-filters').hidden = type !== 'stream-releases';
+  if (type === 'beat') {
+    renderBeatManagement(filterContentRecords(dashboardData.beats || [], 'content-beat-search', 'content-beat-status'));
+  } else if (type === 'merchandise') {
+    renderMerchandiseManagement(filterContentRecords(dashboardData.merchandise || [], 'content-merchandise-search', 'content-merchandise-status'));
+  } else {
+    renderStreamReleaseManagement(filterContentRecords(dashboardData.streamReleases || [], 'content-release-search', 'content-release-status', 'status'));
+  }
+}
+
+function filterSales() {
+  const type = document.querySelector('[data-sale-type].active')?.dataset.saleType || 'beat';
+  let items = (dashboardData.sales || []).filter(item => item.sale_type === type);
+  items = searchRecords(items, $('#sales-search').value);
+  items = filterByDateRange(items, $('#sales-from').value, $('#sales-to').value);
+  renderList('sales-list', items, 'sales');
+}
+
+function filterOrders(type = document.querySelector('[data-order-type].active')?.dataset.orderType || 'all') {
+  let items = type === 'all' ? dashboardData.orders || [] : (dashboardData.orders || []).filter(order =>
+    order.items.some(item => item.type === type)
+  );
+  const status = $('#orders-status').value;
+  if (status) items = items.filter(order => order.status === status);
+  items = searchRecords(items, $('#orders-search').value);
+  renderList('orders-list', items, 'orders');
+}
+
+function filterRequests() {
+  const type = document.querySelector('[data-request-type].active')?.dataset.requestType || 'beat';
+  let items = (dashboardData.requests || []).filter(item => item.request_type === type);
+  const status = $('#requests-status').value;
+  if (status) items = items.filter(item => item.status === status);
+  items = searchRecords(items, $('#requests-search').value);
+  renderList('requests-list', items, 'requests');
+}
+
+function filterReviews() {
+  let items = dashboardData.reviews || [];
+  const status = $('#reviews-status').value;
+  if (status) items = items.filter(item => item.status === status);
+  items = searchRecords(items, $('#reviews-search').value);
+  renderList('reviews-list', items, 'reviews');
+}
+
+function filterCustomers() {
+  let items = dashboardData.customers || [];
+  const role = $('#customers-role').value;
+  const emailStatus = $('#customers-email-status').value;
+  if (role) items = items.filter(item => item.role === role);
+  if (emailStatus) items = items.filter(item => Boolean(item.email_verified_at) === (emailStatus === 'verified'));
+  items = searchRecords(items, $('#customers-search').value);
+  renderList('customers-list', items, 'customers');
+}
+
+function filterArtists() {
+  let items = dashboardData.artists || [];
+  const purchases = $('#artists-purchases').value;
+  if (purchases) items = items.filter(item => purchases === 'has-purchases' ? item.purchases.length > 0 : item.purchases.length === 0);
+  items = searchRecords(items, $('#artists-search').value);
+  renderList('artists-list', items, 'artists');
+}
+
+function filterStaff() {
+  const role = $('#staff-role').value;
+  let items = role ? staffRecords.filter(user => user.role === role) : staffRecords;
+  items = searchRecords(items, $('#staff-search').value);
+  renderStaff(items);
 }
 
 function renderAnalytics(analytics) {
@@ -154,15 +254,14 @@ function renderBusinessSettings(settings, canEdit) {
 
 function renderStaff(staff) {
   const container = $('#staff-list');
-  container.innerHTML = staff.length ? staff.map(user => `<form class="admin-list-item admin-staff-form" data-staff-id="${Number(user.id)}"><strong>${escapeHtml(user.name)} · ${escapeHtml(user.email)}</strong><p>Current role: ${escapeHtml(user.role)} · added ${escapeHtml(user.created_at || '')}</p><label>New role<select name="role"><option value="customer" ${user.role === 'customer' ? 'selected' : ''}>Customer</option><option value="artist" ${user.role === 'artist' ? 'selected' : ''}>Artist (legacy customer role)</option><option value="non_artist" ${user.role === 'non_artist' ? 'selected' : ''}>Non-artist customer (legacy role)</option><option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Admin</option><option value="super_admin" ${user.role === 'super_admin' ? 'selected' : ''}>Super-admin</option></select></label><button type="submit">Update role</button><p class="admin-message" data-staff-message></p></form>`).join('') : '<p>No user accounts found.</p>';
+  container.innerHTML = staff.length ? staff.map(user => `<form class="admin-list-item admin-staff-form" data-staff-id="${Number(user.id)}"><strong>${escapeHtml(user.name)} · ${escapeHtml(user.email)}</strong><p>Current role: ${escapeHtml(user.role)} · added ${escapeHtml(user.created_at || '')}</p><label>New role<select name="role"><option value="customer" ${user.role === 'customer' ? 'selected' : ''}>Customer</option><option value="artist" ${user.role === 'artist' ? 'selected' : ''}>Artist (legacy customer role)</option><option value="non_artist" ${user.role === 'non_artist' ? 'selected' : ''}>Non-artist customer (legacy role)</option><option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Admin</option><option value="super_admin" ${user.role === 'super_admin' ? 'selected' : ''}>Super-admin</option></select></label><button type="submit">Update role</button><p class="admin-message" data-staff-message></p></form>`).join('') : staffRecords.length ? '<p>No staff accounts match these filters.</p>' : '<p>No user accounts found.</p>';
 }
 
-function renderBeatManagement() {
-  const beats = dashboardData.beats || [];
+function renderBeatManagement(beats = dashboardData.beats || []) {
   const container = $('#beat-management-list');
   container.classList.add('admin-beat-grid');
   if (!beats.length) {
-    container.innerHTML = '<p>No beats have been added yet.</p>';
+    container.innerHTML = dashboardData.beats?.length ? '<p>No beats match these filters.</p>' : '<p>No beats have been added yet.</p>';
     return;
   }
   container.innerHTML = beats.map(beat => {
@@ -208,6 +307,51 @@ function renderBeatManagement() {
   }).join('');
 }
 
+function streamReleasePayload(form) {
+  let links;
+  try {
+    links = JSON.parse(form.elements.links.value);
+  } catch {
+    throw new Error('Streaming links must be valid JSON.');
+  }
+  return {
+    title: form.elements.title.value,
+    artist: form.elements.artist.value,
+    credits: form.elements.credits.value.split(/\r?\n/).map(credit => credit.trim()).filter(Boolean),
+    coverUrl: form.elements.coverUrl.value,
+    links
+  };
+}
+
+function renderStreamReleaseManagement(releases = dashboardData.streamReleases || []) {
+  const container = $('#stream-release-management-list');
+  if (!releases.length) {
+    container.innerHTML = dashboardData.streamReleases?.length ? '<p>No stream releases match these filters.</p>' : '<p>No stream releases have been added yet.</p>';
+    return;
+  }
+  container.innerHTML = releases.map(release => {
+    const id = Number(release.id);
+    const active = release.status === 'published';
+    return `<article class="admin-list-item" data-stream-release-id="${id}">
+      <div class="admin-beat-editor-heading"><strong>${escapeHtml(release.title)}</strong><span class="admin-beat-status ${active ? 'is-active' : ''}">${active ? 'Active' : 'Inactive'}</span></div>
+      <p>${escapeHtml(release.artist)}</p>
+      <form class="admin-form admin-stream-release-editor" data-stream-release-id="${id}">
+        <label>Title<input name="title" maxlength="255" value="${escapeHtml(release.title)}" required></label>
+        <label>Artist<input name="artist" maxlength="500" value="${escapeHtml(release.artist)}" required></label>
+        <label>Credits (one per line)<textarea name="credits" rows="3" maxlength="5200">${escapeHtml((release.credits || []).join('\n'))}</textarea></label>
+        <label>Cover image URL<input name="coverUrl" maxlength="1000" value="${escapeHtml(release.cover_url)}" required></label>
+        <label>Streaming links (JSON)<textarea name="links" rows="6" required>${escapeHtml(JSON.stringify(release.links || [], null, 2))}</textarea></label>
+        <div class="admin-review-actions">
+          <button type="submit">Save changes</button>
+          <button type="button" data-stream-release-status="${id}" data-next-status="${active ? 'unpublished' : 'published'}">${active ? 'Deactivate' : 'Activate'}</button>
+          <button type="button" class="admin-beat-delete" data-stream-release-delete="${id}">Delete</button>
+        </div>
+        <p class="admin-message" data-stream-release-item-message role="status"></p>
+      </form>
+    </article>`;
+  }).join('');
+}
+
 function activateAdminSection(sectionName, persist = true) {
   const tabs = [...document.querySelectorAll('.admin-tab')];
   const selectedTab = tabs.find(tab => tab.dataset.section === sectionName && !tab.hidden)
@@ -218,12 +362,11 @@ function activateAdminSection(sectionName, persist = true) {
   if (persist) sessionStorage.setItem(activeAdminSectionKey, selectedTab.dataset.section);
 }
 
-function renderMerchandiseManagement() {
+function renderMerchandiseManagement(merchandise = dashboardData.merchandise || []) {
   const container = $('#merchandise-management-list');
-  const merchandise = dashboardData.merchandise || [];
   container.classList.add('admin-beat-grid');
   if (!merchandise.length) {
-    container.innerHTML = '<p>No merchandise has been added yet.</p>';
+    container.innerHTML = dashboardData.merchandise?.length ? '<p>No merchandise matches these filters.</p>' : '<p>No merchandise has been added yet.</p>';
     return;
   }
   container.innerHTML = merchandise.map(item => {
@@ -411,7 +554,8 @@ async function loadStaff() {
   if (dashboardData.role !== 'super_admin') return;
   try {
     const data = await api('/api/admin/staff');
-    renderStaff(data.staff || []);
+    staffRecords = data.staff || [];
+    filterStaff();
     $('#staff-message').textContent = '';
   } catch (error) {
     message('staff-message', error.message || 'Could not load staff accounts.', true);
@@ -460,16 +604,15 @@ async function loadDashboard() {
   document.querySelector('[data-admin-section="staff"]').hidden = dashboardData.role !== 'super_admin';
   activateAdminSection(sessionStorage.getItem(activeAdminSectionKey) || 'overview', false);
   renderAnalytics(dashboardData.analytics || {});
-  renderBeatManagement();
-  renderMerchandiseManagement();
-  renderList('sales-list', dashboardData.sales.filter(item => item.sale_type === 'beat'), 'sales');
-  renderList('requests-list', dashboardData.requests.filter(item => item.request_type === 'beat'), 'requests');
+  filterContent();
+  filterSales();
+  filterRequests();
   renderList('bookings-list', dashboardData.bookings || [], 'bookings');
-  renderList('orders-list', dashboardData.orders || [], 'orders');
+  filterOrders();
   renderList('overview-orders', (dashboardData.orders || []).slice(0, 5), 'orders');
-  renderList('reviews-list', dashboardData.reviews || [], 'reviews');
-  renderList('customers-list', dashboardData.customers || [], 'customers');
-  renderList('artists-list', dashboardData.artists || [], 'artists');
+  filterReviews();
+  filterCustomers();
+  filterArtists();
   renderList('withdrawals-list', dashboardData.withdrawals || [], 'withdrawals');
   loadAdminAlerts();
   loadLicenseRights();
@@ -485,16 +628,6 @@ async function loadDashboard() {
   }
   loadReports();
   loadAuditLogs();
-  document.querySelectorAll('[data-sale-type]').forEach(button => {
-    const type = button.dataset.saleType;
-    if (button.classList.contains('active')) renderList('sales-list', dashboardData.sales.filter(item => item.sale_type === type), 'sales');
-  });
-  renderList('orders-list', filterOrders('all'), 'orders');
-}
-
-function filterOrders(type) {
-  if (type === 'all') return dashboardData.orders || [];
-  return (dashboardData.orders || []).filter(order => order.items.some(item => item.type === type));
 }
 
 function showDashboard() {
@@ -510,6 +643,7 @@ $('#admin-login-form').addEventListener('submit', async event => {
     const data = await fetch(`${API}/api/admin/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: $('#admin-email').value, password: $('#admin-password').value }) }).then(async response => { const result = await response.json(); if (!response.ok) throw new Error(result.error); return result; });
     adminToken = data.token;
     sessionStorage.setItem('adminToken', adminToken);
+    sessionStorage.setItem('adminCsrfToken', data.csrfToken || '');
     showDashboard();
   } catch (error) { message('admin-login-message', error.message, true); }
 });
@@ -519,6 +653,7 @@ $('#admin-logout').addEventListener('click', async () => {
     console.warn('Admin session could not be invalidated remotely:', error.message);
   }).finally(() => {
     sessionStorage.removeItem('adminToken');
+    sessionStorage.removeItem('adminCsrfToken');
     sessionStorage.removeItem(activeAdminSectionKey);
     location.reload();
   });
@@ -791,6 +926,10 @@ document.querySelectorAll('[data-content-type]').forEach(button => button.addEve
   $('#add-merchandise-button').hidden = button.dataset.contentType !== 'merchandise';
   $('#merchandise-message').hidden = button.dataset.contentType !== 'merchandise';
   $('#merchandise-management').hidden = button.dataset.contentType !== 'merchandise';
+  $('#add-stream-release-button').hidden = button.dataset.contentType !== 'stream-releases';
+  $('#stream-release-message').hidden = button.dataset.contentType !== 'stream-releases';
+  $('#stream-release-management').hidden = button.dataset.contentType !== 'stream-releases';
+  filterContent();
 }));
 
 $('#add-beat-button').addEventListener('click', () => {
@@ -829,9 +968,122 @@ $('#add-merchandise-button').addEventListener('click', () => {
 
 $('#close-add-merchandise').addEventListener('click', () => $('#add-merchandise-dialog').close());
 
-document.querySelectorAll('[data-request-type]').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('[data-request-type]').forEach(item => item.classList.toggle('active', item === button)); renderList('requests-list', dashboardData.requests.filter(item => item.request_type === button.dataset.requestType), 'requests'); }));
-document.querySelectorAll('[data-sale-type]').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('[data-sale-type]').forEach(item => item.classList.toggle('active', item === button)); renderList('sales-list', dashboardData.sales.filter(item => item.sale_type === button.dataset.saleType), 'sales'); }));
-document.querySelectorAll('[data-order-type]').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('[data-order-type]').forEach(item => item.classList.toggle('active', item === button)); renderList('orders-list', filterOrders(button.dataset.orderType), 'orders'); }));
+$('#add-stream-release-button').addEventListener('click', () => {
+  const form = $('#stream-release-form');
+  form.reset();
+  form.elements.links.value = '[{"platform":"Spotify","url":"https://","label":"Listen on Spotify"}]';
+  message('stream-release-form-message', '');
+  $('#add-stream-release-dialog').showModal();
+  form.elements.title.focus();
+});
+
+$('#close-add-stream-release').addEventListener('click', () => $('#add-stream-release-dialog').close());
+
+$('#stream-release-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await api('/api/admin/stream-releases', { method: 'POST', body: JSON.stringify(streamReleasePayload(form)) });
+    $('#add-stream-release-dialog').close();
+    message('stream-release-message', 'Stream release created as inactive. Activate it when it is ready to publish.');
+    await loadDashboard();
+  } catch (error) {
+    message('stream-release-form-message', error.message || 'Could not create stream release.', true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('#stream-release-management-list').addEventListener('submit', async event => {
+  const form = event.target.closest('.admin-stream-release-editor');
+  if (!form) return;
+  event.preventDefault();
+  const statusMessage = form.querySelector('[data-stream-release-item-message]');
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await api(`/api/admin/stream-releases/${form.dataset.streamReleaseId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(streamReleasePayload(form))
+    });
+    message('stream-release-message', 'Stream release updated.');
+    await loadDashboard();
+  } catch (error) {
+    statusMessage.textContent = error.message || 'Could not update stream release.';
+    statusMessage.classList.add('error');
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('#stream-release-management-list').addEventListener('click', async event => {
+  const statusButton = event.target.closest('[data-stream-release-status]');
+  const deleteButton = event.target.closest('[data-stream-release-delete]');
+  const button = statusButton || deleteButton;
+  if (!button) return;
+  const id = statusButton?.dataset.streamReleaseStatus || deleteButton.dataset.streamReleaseDelete;
+  const card = button.closest('[data-stream-release-id]');
+  const statusMessage = card.querySelector('[data-stream-release-item-message]');
+  if (deleteButton && !window.confirm('Delete this stream release? This cannot be undone.')) return;
+  button.disabled = true;
+  try {
+    if (statusButton) {
+      await api(`/api/admin/stream-releases/${id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: statusButton.dataset.nextStatus })
+      });
+      message('stream-release-message', `Stream release ${statusButton.dataset.nextStatus === 'published' ? 'activated' : 'deactivated'}.`);
+    } else {
+      await api(`/api/admin/stream-releases/${id}`, { method: 'DELETE' });
+      message('stream-release-message', 'Stream release deleted.');
+    }
+    await loadDashboard();
+  } catch (error) {
+    statusMessage.textContent = error.message || 'Could not update stream release.';
+    statusMessage.classList.add('error');
+    button.disabled = false;
+  }
+});
+
+document.querySelectorAll('[data-request-type]').forEach(button => button.addEventListener('click', () => {
+  document.querySelectorAll('[data-request-type]').forEach(item => item.classList.toggle('active', item === button));
+  filterRequests();
+}));
+document.querySelectorAll('[data-sale-type]').forEach(button => button.addEventListener('click', () => {
+  document.querySelectorAll('[data-sale-type]').forEach(item => item.classList.toggle('active', item === button));
+  filterSales();
+}));
+document.querySelectorAll('[data-order-type]').forEach(button => button.addEventListener('click', () => {
+  document.querySelectorAll('[data-order-type]').forEach(item => item.classList.toggle('active', item === button));
+  filterOrders(button.dataset.orderType);
+}));
+
+[
+  ['content-beat-search', filterContent], ['content-beat-status', filterContent],
+  ['content-merchandise-search', filterContent], ['content-merchandise-status', filterContent],
+  ['content-release-search', filterContent], ['content-release-status', filterContent],
+  ['sales-search', filterSales], ['sales-from', filterSales], ['sales-to', filterSales],
+  ['orders-search', filterOrders], ['orders-status', filterOrders],
+  ['requests-search', filterRequests], ['requests-status', filterRequests],
+  ['reviews-search', filterReviews], ['reviews-status', filterReviews],
+  ['customers-search', filterCustomers], ['customers-role', filterCustomers], ['customers-email-status', filterCustomers],
+  ['artists-search', filterArtists], ['artists-purchases', filterArtists],
+  ['staff-search', filterStaff], ['staff-role', filterStaff]
+].forEach(([id, filter]) => {
+  const control = document.getElementById(id);
+  control.addEventListener(control.tagName === 'INPUT' && control.type === 'search' ? 'input' : 'change', () => filter());
+});
+
+let certificateSearchTimer;
+$('#certificate-filter').elements.q.addEventListener('input', () => {
+  clearTimeout(certificateSearchTimer);
+  certificateSearchTimer = setTimeout(loadCertificates, 250);
+});
+$('#certificate-filter').querySelectorAll('select, input[type="date"]').forEach(control =>
+  control.addEventListener('change', loadCertificates)
+);
 
 $('#export-orders').addEventListener('click', async event => {
   const button = event.currentTarget;

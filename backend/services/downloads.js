@@ -3,10 +3,7 @@ const path = require('node:path');
 const config = require('../config');
 const { DEFAULT_LICENSE_RIGHTS, rightsFor, allowedFormats } = require('./license-rights');
 
-// A partial refund deliberately keeps the customer's entitlements, so those
-// orders must remain downloadable. Only a full refund (status "refunded")
-// removes access.
-const DOWNLOADABLE_ORDER_STATUSES = Object.freeze(['paid', 'partially_refunded']);
+const DOWNLOADABLE_ORDER_STATUSES = Object.freeze(['paid']);
 
 function isDownloadableOrderStatus(status) {
   return DOWNLOADABLE_ORDER_STATUSES.includes(String(status || '').toLowerCase());
@@ -35,6 +32,7 @@ function verifyDownloadToken(token, reference, productId, license, format) {
 function getDownloadItems(order, apiPublicUrl, licenseRights = null) {
   const rightsMap = licenseRights || DEFAULT_LICENSE_RIGHTS;
   return JSON.parse(order.items_json).filter(item => !item.type || item.type === 'beat').map(item => ({
+    productId: item.productId,
     name: item.name,
     license: item.license,
     files: [...allowedFormats(rightsFor(rightsMap, item.license))].map(format => {

@@ -99,6 +99,34 @@ test('migration 23 stores certificates and immutable administrative history', ()
   assert.match(sql, /ON DELETE RESTRICT/);
 });
 
+test('migration 24 adds a nullable CSRF token hash to existing sessions', () => {
+  const migration = migrations.find(candidate => candidate.version === 24);
+  assert.ok(migration, 'migration 24 must exist');
+  assert.deepEqual(migration.statements[0].ensureColumn, {
+    table: 'user_sessions',
+    column: 'csrf_token_hash',
+    definition: 'CHAR(64) NULL'
+  });
+});
+
+test('migration 25 adds an optional expiry without changing existing licenses', () => {
+  const migration = migrations.find(candidate => candidate.version === 25);
+  assert.ok(migration, 'migration 25 must exist');
+  assert.equal(migration.statements.length, 1);
+  assert.deepEqual(migration.statements[0].ensureColumn, {
+    table: 'licenses',
+    column: 'expires_at',
+    definition: 'DATETIME NULL'
+  });
+});
+
+test('migration 26 keeps the license expiry optional on upgraded databases', () => {
+  const migration = migrations.find(candidate => candidate.version === 26);
+  assert.deepEqual(migration?.statements, [
+    'ALTER TABLE licenses MODIFY COLUMN expires_at DATETIME NULL'
+  ]);
+});
+
 test('migration 11 adds an idempotent per-order-line key to sales', () => {
   const migration = migrations.find(candidate => candidate.version === 11);
   assert.ok(migration, 'migration 11 must exist');
@@ -209,7 +237,10 @@ test('applyMigrations resumes from the last recorded version', async () => {
     migrations.find(migration => migration.version === 20).statements,
     migrations.find(migration => migration.version === 21).statements,
     migrations.find(migration => migration.version === 22).statements,
-    migrations.find(migration => migration.version === 23).statements
+    migrations.find(migration => migration.version === 23).statements,
+    'ALTER TABLE `user_sessions` ADD COLUMN `csrf_token_hash` CHAR(64) NULL',
+    'ALTER TABLE `licenses` ADD COLUMN `expires_at` DATETIME NULL',
+    'ALTER TABLE licenses MODIFY COLUMN expires_at DATETIME NULL'
   );
   assert.deepEqual(pool.statements, expected);
 });
@@ -225,6 +256,9 @@ test('applyMigrations skips existing legacy columns and applies the next migrati
     ...migrations.find(migration => migration.version === 20).statements,
     ...migrations.find(migration => migration.version === 21).statements,
     ...migrations.find(migration => migration.version === 22).statements,
-    ...migrations.find(migration => migration.version === 23).statements
+    ...migrations.find(migration => migration.version === 23).statements,
+    'ALTER TABLE `user_sessions` ADD COLUMN `csrf_token_hash` CHAR(64) NULL',
+    'ALTER TABLE `licenses` ADD COLUMN `expires_at` DATETIME NULL',
+    'ALTER TABLE licenses MODIFY COLUMN expires_at DATETIME NULL'
   ]);
 });

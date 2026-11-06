@@ -7,6 +7,11 @@
 .admin-tabs, .admin-toggle { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
 .admin-toggle label { display: grid; gap: 6px; color: rgba(255,255,255,.72); font-size: .75rem; text-transform: uppercase; }
 .admin-toggle input, .admin-toggle select, .admin-staff-form select { min-width: 150px; padding: 9px; border: 1px solid rgba(255,255,255,.22); border-radius: 6px; background: #0b0b0b; color: #fff; font: inherit; }
+.admin-list-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 0 0 20px; }
+.admin-list-filters[hidden] { display: none; }
+.admin-list-filters label { display: grid; min-width: min(220px, 100%); gap: 6px; color: rgba(255,255,255,.72); font-size: .75rem; text-transform: uppercase; }
+.admin-list-filters input, .admin-list-filters select { box-sizing: border-box; min-width: 180px; padding: 10px; border: 1px solid rgba(255,255,255,.22); border-radius: 6px; background: #0b0b0b; color: #fff; font: inherit; }
+.admin-list-filters input[type="search"] { min-width: min(300px, calc(100vw - 64px)); }
 .admin-staff-form { display: grid; gap: 10px; }
 .admin-tab, .admin-toggle button, .admin-secondary-button { padding: 10px 14px; border: 1px solid rgba(255,255,255,.24); border-radius: 6px; background: transparent; color: #fff; cursor: pointer; font: inherit; }
 .admin-tab.active, .admin-toggle button.active, .admin-secondary-button:hover { border-color: #22c55e; background: #22c55e; color: #07130a; }

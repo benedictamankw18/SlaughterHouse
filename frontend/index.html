@@ -9,9 +9,33 @@
   <meta property="og:description" content="Original beats, production services, studio sessions, and releases from UltBigBoy.">
   <meta property="og:type" content="website">
   <meta property="og:image" content="Images/Hero1.png">
+  <meta property="og:site_name" content="UltBigBoy">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="UltBigBoy | Premium Beats and Production">
+  <meta name="twitter:description" content="Original beats, production services, studio sessions, and releases from UltBigBoy.">
+  <meta name="twitter:image" content="Images/Hero1.png">
   <meta name="theme-color" content="#080808">
   <title>UltBigBoy | Premium Beats and Production</title>
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Organization",
+          "name": "UltBigBoy",
+          "logo": "Images/Logo 2.png",
+          "description": "Music production studio offering original beats, beat licenses, studio sessions, and artist services."
+        },
+        {
+          "@type": "WebSite",
+          "name": "UltBigBoy",
+          "description": "Premium beats, licenses, studio sessions, and releases from UltBigBoy."
+        }
+      ]
+    }
+  </script>
   <link rel="icon" type="image/png" href="Images/Logo 2.png">
+  <link rel="preload" as="image" href="Images/Hero1.webp" type="image/webp" fetchpriority="high">
   <link rel="stylesheet" href="style.css">
   <script>
     if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
@@ -65,7 +89,7 @@
   <!-- Currency Switcher -->
   <div class="currency-switcher">
     <img id="flagIcon" src="https://flagcdn.com/20x15/gh.png" alt="Currency flag">
-    <select id="currency">
+    <select id="currency" aria-label="Display currency">
       <option value="GHS" data-flag="https://flagcdn.com/20x15/gh.png">GHS (₵)</option>
       <option value="USD" data-flag="https://flagcdn.com/20x15/us.png">USD ($)</option>
       <option value="GBP" data-flag="https://flagcdn.com/20x15/gb.png">GBP (£)</option>
@@ -95,6 +119,7 @@
     </ul>
   </nav>
 
+<main>
 <!-- Hero Section -->
 <section class="hero">
   <div class="hero-overlay">
@@ -246,6 +271,8 @@
 </section>
 
 <div class="cart-toast" id="cart-toast" role="status" aria-live="polite"></div>
+
+</main>
 
 <footer class="site-footer">
   <div class="site-footer-inner">

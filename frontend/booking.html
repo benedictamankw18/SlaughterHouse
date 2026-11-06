@@ -7,7 +7,24 @@
   <meta property="og:title" content="Book a Studio Session | UltBigBoy">
   <meta property="og:description" content="Book studio time and production services with UltBigBoy.">
   <meta property="og:type" content="website">
+  <meta property="og:image" content="Images/Hero1.png">
+  <meta property="og:site_name" content="UltBigBoy">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Book a Studio Session | UltBigBoy">
+  <meta name="twitter:description" content="Book studio time and production services with UltBigBoy.">
+  <meta name="twitter:image" content="Images/Hero1.png">
   <title>Book a Session | UltBigBoy</title>
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Service",
+      "name": "UltBigBoy studio session and music production",
+      "serviceType": "Music recording and production",
+      "description": "Book a 2 hour 20 minute studio session or production service with UltBigBoy.",
+      "provider": { "@type": "Organization", "name": "UltBigBoy" },
+      "areaServed": "Ghana"
+    }
+  </script>
   <link rel="icon" type="image/png" href="Images/Logo 2.png">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -67,6 +84,19 @@
     const bookingSlots = document.getElementById('booking-slots');
     const availableBookingDays = new Set([0, 2, 3, 4]);
     let bookingFees = {};
+    let bookingFeesLoaded = false;
+    let bookingFeesLoading = false;
+    let bookingFeesError = '';
+
+    function renderBookingFeesUnavailable(message) {
+      bookingPrice.classList.add('error');
+      const retryButton = document.createElement('button');
+      retryButton.className = 'inline-retry-button';
+      retryButton.type = 'button';
+      retryButton.textContent = 'Try again';
+      retryButton.addEventListener('click', loadBookingFees, { once: true });
+      bookingPrice.replaceChildren(document.createTextNode(`${message} `), retryButton);
+    }
 
     function updateBookingPrice() {
       const service = bookingService.value;
@@ -81,35 +111,63 @@
       if (isReleaseBooking && Number.isFinite(fullProductionRate) && fullProductionRate > 0) {
         const perSongRate = fullProductionRate * 0.8;
         fee = Number.isInteger(songCount) && songCount > 0 && songCount <= 12 ? perSongRate * songCount : null;
+        bookingPrice.classList.remove('error');
         bookingPrice.textContent = Number.isInteger(songCount) && songCount > 0 && songCount <= 12
           ? `EP / Album (20% discount): ${songCount} songs x GHS ${perSongRate.toFixed(2)} = GHS ${fee.toFixed(2)}`
           : `EP / Album rate after 20% discount: GHS ${perSongRate.toFixed(2)} per song. Choose up to 12 songs for your total.`;
       } else if (isReleaseBooking) {
         fee = null;
-        bookingPrice.textContent = 'Booking fees are unavailable right now. Please try again later.';
+        if (bookingFeesLoading) {
+          bookingPrice.classList.remove('error');
+          bookingPrice.textContent = 'Loading booking fees...';
+        } else if (bookingFeesError) {
+          renderBookingFeesUnavailable(bookingFeesError);
+        } else {
+          bookingPrice.textContent = 'Booking fees are unavailable right now. Please try again later.';
+        }
+      } else if (fee) {
+        bookingPrice.classList.remove('error');
+        bookingPrice.textContent = `Booking fee: GHS ${fee.toFixed(2)}`;
+      } else if (bookingFeesLoading) {
+        bookingPrice.classList.remove('error');
+        bookingPrice.textContent = 'Loading booking fees...';
+      } else if (bookingFeesError) {
+        renderBookingFeesUnavailable(bookingFeesError);
       } else {
-        bookingPrice.textContent = fee
-          ? `Booking fee: GHS ${fee.toFixed(2)}`
-          : service ? 'Booking fees are unavailable right now. Please try again later.' : 'Choose a service to see the booking fee.';
+        bookingPrice.classList.remove('error');
+        bookingPrice.textContent = service ? 'Booking fees are unavailable right now. Please try again later.' : 'Choose a service to see the booking fee.';
       }
-      bookingSubmit.disabled = !Number.isFinite(fee) || fee <= 0;
-      bookingPrice.classList.toggle('error', Boolean(service && (!Number.isFinite(fee) || fee <= 0) && !isReleaseBooking));
+      bookingSubmit.disabled = !bookingFeesLoaded || !Number.isFinite(fee) || fee <= 0;
       renderBookingSlots();
     }
 
     bookingService.addEventListener('change', updateBookingPrice);
     bookingSongCount.addEventListener('change', updateBookingPrice);
-    fetch(`${bookingApiBaseUrl}/api/bookings/fees`)
-      .then(async response => {
+    async function loadBookingFees() {
+      bookingFeesLoading = true;
+      bookingFeesError = '';
+      bookingPrice.classList.remove('error');
+      bookingPrice.textContent = 'Loading booking fees...';
+      try {
+        const response = await fetch(`${bookingApiBaseUrl}/api/bookings/fees`);
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Could not load booking fees.');
         bookingFees = data.fees || {};
+        bookingFeesLoaded = true;
+        bookingFeesLoading = false;
         updateBookingPrice();
-      })
-      .catch(() => {
-        bookingPrice.textContent = 'Booking fees are unavailable right now. Please try again later.';
-        bookingPrice.classList.add('error');
-      });
+      } catch (error) {
+        const message = error?.message && !/failed to fetch|networkerror|load failed/i.test(error.message)
+          ? error.message
+          : 'Booking fees are unavailable right now.';
+        bookingFeesLoaded = false;
+        bookingFeesLoading = false;
+        bookingFeesError = message;
+        bookingSubmit.disabled = true;
+        updateBookingPrice();
+      }
+    }
+    loadBookingFees();
 
     function isAvailableBookingSlot(dateValue, timeValue) {
       const selectedDate = new Date(`${dateValue}T12:00:00`);

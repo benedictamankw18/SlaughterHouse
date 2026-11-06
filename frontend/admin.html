@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
   <title>Admin Dashboard | UltBigBoy</title>
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="admin.css">
@@ -45,7 +46,7 @@
       </section>
 
       <section class="admin-section" data-admin-section="content">
-        <div class="admin-toggle" role="group" aria-label="Content type"><button class="active" data-content-type="beat" type="button">Beat</button><button data-content-type="merchandise" type="button">Merchandise</button></div>
+        <div class="admin-toggle" role="group" aria-label="Content type"><button class="active" data-content-type="beat" type="button">Beat</button><button data-content-type="merchandise" type="button">Merchandise</button><button data-content-type="stream-releases" type="button">Stream releases</button></div>
         <button id="add-beat-button" class="auth-primary-button admin-add-beat-button" type="button">Add beat</button>
         <p id="beat-message" class="admin-message" role="status"></p>
         <dialog id="add-beat-dialog" class="admin-dialog" aria-labelledby="add-beat-title">
@@ -72,6 +73,10 @@
         </dialog>
         <div id="beat-management">
           <h2>Manage beats</h2>
+          <div id="content-beat-filters" class="admin-list-filters">
+            <label>Search beats<input id="content-beat-search" type="search" placeholder="Title, genre, key, or mood"></label>
+            <label>Status<select id="content-beat-status"><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
+          </div>
           <div id="beat-management-list" class="admin-list"></div>
         </div>
         <button id="add-merchandise-button" class="auth-primary-button admin-add-beat-button" type="button" hidden>Add Merchandise</button>
@@ -87,15 +92,30 @@
             <p id="merchandise-form-message" class="admin-message" role="status"></p>
           </form>
         </dialog>
-        <div id="merchandise-management" hidden><h2>Manage Merchandise</h2><div id="merchandise-management-list" class="admin-list"></div></div>
+        <div id="merchandise-management" hidden><h2>Manage Merchandise</h2><div id="content-merchandise-filters" class="admin-list-filters" hidden><label>Search merchandise<input id="content-merchandise-search" type="search" placeholder="Title or description"></label><label>Status<select id="content-merchandise-status"><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label></div><div id="merchandise-management-list" class="admin-list"></div></div>
+        <button id="add-stream-release-button" class="auth-primary-button admin-add-beat-button" type="button" hidden>Add stream release</button>
+        <p id="stream-release-message" class="admin-message" role="status" hidden></p>
+        <dialog id="add-stream-release-dialog" class="admin-dialog" aria-labelledby="add-stream-release-title">
+          <div class="admin-dialog-header"><h2 id="add-stream-release-title">Add stream release</h2><button id="close-add-stream-release" class="admin-secondary-button" type="button" aria-label="Close add stream release form">Close</button></div>
+          <form id="stream-release-form" class="admin-form">
+            <label>Title<input name="title" maxlength="255" required></label>
+            <label>Artist<input name="artist" maxlength="500" required></label>
+            <label>Credits (one per line)<textarea name="credits" rows="3" maxlength="5200"></textarea></label>
+            <label>Cover image URL<input name="coverUrl" maxlength="1000" placeholder="https://... or Images/cover.jpg" required></label>
+            <label>Streaming links (JSON)<textarea name="links" rows="6" required>[{"platform":"Spotify","url":"https://","label":"Listen on Spotify"}]</textarea></label>
+            <button class="auth-primary-button" type="submit">Create stream release</button>
+            <p id="stream-release-form-message" class="admin-message" role="status"></p>
+          </form>
+        </dialog>
+        <div id="stream-release-management" hidden><h2>Manage stream releases</h2><div id="content-release-filters" class="admin-list-filters" hidden><label>Search releases<input id="content-release-search" type="search" placeholder="Title or artist"></label><label>Status<select id="content-release-status"><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label></div><div id="stream-release-management-list" class="admin-list"></div></div>
       </section>
 
-      <section class="admin-section" data-admin-section="sales"><div class="admin-toggle" role="group" aria-label="Sale type"><button class="active" data-sale-type="beat" type="button">Beat sales</button><button data-sale-type="merchandise" type="button">Merchandise sales</button></div><div id="sales-list" class="admin-list"></div></section>
-      <section class="admin-section" data-admin-section="orders"><div class="admin-toggle" role="group" aria-label="Order type"><button class="active" data-order-type="all" type="button">All orders</button><button data-order-type="merchandise" type="button">Merchandise</button><button data-order-type="beat" type="button">Beat licenses</button><button id="export-orders" class="admin-secondary-button" type="button">Export CSV</button></div><div id="orders-list" class="admin-list"></div></section>
-      <section class="admin-section" data-admin-section="requests"><div class="admin-toggle" role="group" aria-label="Request type"><button class="active" data-request-type="beat" type="button">Beat requests</button><button data-request-type="merchandise" type="button">Merchandise requests</button></div><div id="requests-list" class="admin-list"></div><h2>Session bookings</h2><form id="booking-availability-form" class="admin-toggle"><label>Date<input name="date" type="date" required></label><label>Start time<input name="time" type="time" min="11:00" max="18:40" step="600" required></label><label>Slot state<select name="status"><option value="available">Available</option><option value="blocked">Blocked</option></select></label><button type="submit">Save availability</button><button id="remove-booking-slot" type="button" class="admin-secondary-button">Remove slot override</button></form><p id="booking-availability-message" class="admin-message" role="status"></p><div id="bookings-list" class="admin-list"></div></section>
-      <section class="admin-section" data-admin-section="reviews"><p>Customer reviews are hidden from the public until approved.</p><div id="reviews-list" class="admin-list"></div></section>
-      <section class="admin-section" data-admin-section="customers"><h2>Customer accounts</h2><p id="customers-message" class="admin-message" role="status"></p><div id="customers-list" class="admin-list"></div></section>
-      <section class="admin-section" data-admin-section="artists"><p>Beat licenses and purchases are matched to registered artist accounts by email.</p><div id="artists-list" class="admin-list"></div></section>
+      <section class="admin-section" data-admin-section="sales"><div class="admin-toggle" role="group" aria-label="Sale type"><button class="active" data-sale-type="beat" type="button">Beat sales</button><button data-sale-type="merchandise" type="button">Merchandise sales</button></div><div class="admin-list-filters"><label>Search sales<input id="sales-search" type="search" placeholder="Product, buyer, or email"></label><label>From<input id="sales-from" type="date"></label><label>To<input id="sales-to" type="date"></label></div><div id="sales-list" class="admin-list"></div></section>
+      <section class="admin-section" data-admin-section="orders"><div class="admin-toggle" role="group" aria-label="Order type"><button class="active" data-order-type="all" type="button">All orders</button><button data-order-type="merchandise" type="button">Merchandise</button><button data-order-type="beat" type="button">Beat licenses</button><button id="export-orders" class="admin-secondary-button" type="button">Export CSV</button></div><div class="admin-list-filters"><label>Search orders<input id="orders-search" type="search" placeholder="Reference, customer, or item"></label><label>Payment status<select id="orders-status"><option value="">All statuses</option><option value="pending">Pending</option><option value="paid">Paid</option><option value="partially_refunded">Partially refunded</option><option value="refunded">Refunded</option><option value="failed">Failed</option><option value="abandoned">Abandoned</option><option value="reversed">Reversed</option></select></label></div><div id="orders-list" class="admin-list"></div></section>
+      <section class="admin-section" data-admin-section="requests"><div class="admin-toggle" role="group" aria-label="Request type"><button class="active" data-request-type="beat" type="button">Beat requests</button><button data-request-type="merchandise" type="button">Merchandise requests</button></div><div class="admin-list-filters"><label>Search requests<input id="requests-search" type="search" placeholder="Product, customer, or details"></label><label>Request status<select id="requests-status"><option value="">All statuses</option><option value="new">New</option><option value="reviewing">Reviewing</option><option value="quoted">Quoted</option><option value="accepted">Accepted</option><option value="rejected">Rejected</option><option value="completed">Completed</option></select></label></div><div id="requests-list" class="admin-list"></div><h2>Session bookings</h2><form id="booking-availability-form" class="admin-toggle"><label>Date<input name="date" type="date" required></label><label>Start time<input name="time" type="time" min="11:00" max="18:40" step="600" required></label><label>Slot state<select name="status"><option value="available">Available</option><option value="blocked">Blocked</option></select></label><button type="submit">Save availability</button><button id="remove-booking-slot" type="button" class="admin-secondary-button">Remove slot override</button></form><p id="booking-availability-message" class="admin-message" role="status"></p><div id="bookings-list" class="admin-list"></div></section>
+      <section class="admin-section" data-admin-section="reviews"><p>Customer reviews are hidden from the public until approved.</p><div class="admin-list-filters"><label>Search reviews<input id="reviews-search" type="search" placeholder="Customer, email, or review text"></label><label>Review status<select id="reviews-status"><option value="">All statuses</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="removed">Removed</option></select></label></div><div id="reviews-list" class="admin-list"></div></section>
+      <section class="admin-section" data-admin-section="customers"><h2>Customer accounts</h2><p id="customers-message" class="admin-message" role="status"></p><div class="admin-list-filters"><label>Search customers<input id="customers-search" type="search" placeholder="Name, artist name, or email"></label><label>Account role<select id="customers-role"><option value="">All roles</option><option value="customer">Customer</option><option value="artist">Artist</option><option value="non_artist">Non-artist</option></select></label><label>Email status<select id="customers-email-status"><option value="">All email statuses</option><option value="verified">Verified</option><option value="unverified">Unverified</option></select></label></div><div id="customers-list" class="admin-list"></div></section>
+      <section class="admin-section" data-admin-section="artists"><p>Beat licenses and purchases are matched to registered artist accounts by email.</p><div class="admin-list-filters"><label>Search artists<input id="artists-search" type="search" placeholder="Artist name or email"></label><label>Purchase activity<select id="artists-purchases"><option value="">All artists</option><option value="has-purchases">With purchases</option><option value="no-purchases">Without purchases</option></select></label></div><div id="artists-list" class="admin-list"></div></section>
       <section class="admin-section" data-admin-section="license-rights">
         <h2>License definitions</h2>
         <p>Current definitions are used for new purchases. Existing licenses keep the rights snapshot saved at purchase.</p>
@@ -116,8 +136,8 @@
         <h2>Beat license certificates</h2>
         <p>Search issued records, inspect immutable purchase terms and history, download PDFs, and revoke or reissue certificates with an audit reason.</p>
         <form id="certificate-filter" class="admin-toggle">
-          <label>Search<input name="q" maxlength="100" placeholder="Certificate, customer, or beat"></label>
-          <label>Status<select name="status"><option value="">All statuses</option><option value="valid">Valid</option><option value="revoked">Revoked</option><option value="reissued">Reissued</option><option value="suspended">Suspended</option><option value="refunded">Refunded</option></select></label>
+          <label>Search certificates<input name="q" type="search" maxlength="100" placeholder="Certificate, customer, or beat"></label>
+          <label>Status<select name="status"><option value="">All statuses</option><option value="valid">Valid</option><option value="expired">Expired</option><option value="revoked">Revoked</option><option value="reissued">Reissued</option><option value="suspended">Suspended</option><option value="refunded">Refunded</option></select></label>
           <label>License tier<select name="licenseType"><option value="">All tiers</option><option value="basic">Basic</option><option value="premium">Premium</option><option value="unlimited">Unlimited</option><option value="exclusive">Exclusive</option></select></label>
           <label>From<input name="from" type="date"></label><label>To<input name="to" type="date"></label>
           <button type="submit">Search certificates</button>
@@ -126,7 +146,7 @@
         <div id="certificate-list" class="admin-list"></div>
       </section>
       <section class="admin-section" data-admin-section="settings"><h2>Business settings</h2><p>Price changes apply to future checkouts and requests. Existing beat prices remain unchanged.</p><form id="business-settings-form" class="admin-form admin-card"></form><p id="business-settings-message" class="admin-message" role="status"></p></section>
-      <section class="admin-section" data-admin-section="staff"><h2>Super-admin staff management</h2><p>Changing a role revokes the user's active sessions. The last super-admin cannot be demoted.</p><p id="staff-message" class="admin-message" role="status"></p><div id="staff-list" class="admin-list"></div></section>
+      <section class="admin-section" data-admin-section="staff"><h2>Super-admin staff management</h2><p>Changing a role revokes the user's active sessions. The last super-admin cannot be demoted.</p><p id="staff-message" class="admin-message" role="status"></p><div class="admin-list-filters"><label>Search staff<input id="staff-search" type="search" placeholder="Name or email"></label><label>Staff role<select id="staff-role"><option value="">All roles</option><option value="customer">Customer</option><option value="artist">Artist</option><option value="non_artist">Non-artist</option><option value="admin">Admin</option><option value="super_admin">Super-admin</option></select></label></div><div id="staff-list" class="admin-list"></div></section>
       <section class="admin-section" data-admin-section="alerts">
         <h2>Administrator notifications</h2><p id="admin-alert-message" class="admin-message" role="status"></p><div id="admin-notifications-list" class="admin-list"></div>
         <h2>Email delivery status</h2><div id="email-delivery-counts" class="admin-metrics"></div><div id="email-deliveries-list" class="admin-list"></div>

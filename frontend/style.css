@@ -30,6 +30,35 @@ body {
   color: #07130a;
 }
 
+.data-state {
+  grid-column: 1 / -1;
+  margin: 8px 0 0;
+  padding: 28px;
+  border: 1px dashed rgba(34, 197, 94, 0.45);
+  color: rgba(255, 255, 255, 0.68);
+  text-align: center;
+}
+
+.data-state-error {
+  border-color: rgba(248, 113, 113, 0.55);
+  color: #fca5a5;
+}
+
+.inline-retry-button {
+  padding: 6px 10px;
+  border: 1px solid #22c55e;
+  border-radius: 5px;
+  background: #101810;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.inline-retry-button:hover {
+  background: #22c55e;
+  color: #07130a;
+}
+
 header {
   position: relative;
   display: flex;
@@ -260,7 +289,7 @@ header {
 .account-license-content { display: grid; align-content: start; gap: 9px; min-width: 0; }
 .account-license-content h2 { margin: 0; }
 .certificate-status { display: inline-block; width: fit-content; padding: 4px 9px; border: 1px solid rgba(34,197,94,.5); border-radius: 999px; background: rgba(34,197,94,.12); color: #bbf7d0; font-size: .72rem; font-weight: 700; text-transform: uppercase; }
-.certificate-status-revoked, .certificate-status-refunded, .certificate-status-suspended, .certificate-status-reissued { border-color: rgba(248,113,113,.5); background: rgba(248,113,113,.12); color: #fecaca; }
+.certificate-status-revoked, .certificate-status-refunded, .certificate-status-suspended, .certificate-status-reissued, .certificate-status-expired { border-color: rgba(248,113,113,.5); background: rgba(248,113,113,.12); color: #fecaca; }
 .account-page-card h2, .account-page-state h2 { margin: 0; font-size: 1.05rem; }
 .account-page-card p, .account-page-state p { margin: 0; color: rgba(255,255,255,.7); font-size: .88rem; line-height: 1.55; overflow-wrap: anywhere; }
 .account-page-card small { color: rgba(255,255,255,.5); }
@@ -495,6 +524,15 @@ header {
   filter: blur(8px) brightness(0.7);
   transform: scale(1.15);
   z-index: 0;
+}
+
+@supports (background-image: image-set(url("Images/Hero1.png") 1x)) {
+  .hero::before {
+    background-image: image-set(
+      var(--hero-bg-webp, url("Images/Hero1.webp")) type("image/webp"),
+      var(--hero-bg, url("Images/Hero1.png")) type("image/png")
+    );
+  }
 }
 
 .hero::after {

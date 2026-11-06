@@ -38,8 +38,8 @@
 .certificate-verify strong { color: #174b32; font-size: .78rem; }
 .certificate-status { display: inline-block; width: fit-content; padding: 4px 9px; border: 1px solid rgba(34,197,94,.5); border-radius: 999px; background: rgba(34,197,94,.12); color: #bbf7d0; font-size: .72rem; font-weight: 700; text-transform: uppercase; }
 .certificate-document .certificate-status { color: #174b32; }
-.certificate-status-revoked, .certificate-status-refunded, .certificate-status-suspended, .certificate-status-reissued { border-color: rgba(248,113,113,.5); background: rgba(248,113,113,.12); color: #fecaca; }
-.certificate-document .certificate-status-revoked, .certificate-document .certificate-status-refunded, .certificate-document .certificate-status-suspended, .certificate-document .certificate-status-reissued { color: #8b2525; }
+.certificate-status-revoked, .certificate-status-refunded, .certificate-status-suspended, .certificate-status-reissued, .certificate-status-expired { border-color: rgba(248,113,113,.5); background: rgba(248,113,113,.12); color: #fecaca; }
+.certificate-document .certificate-status-revoked, .certificate-document .certificate-status-refunded, .certificate-document .certificate-status-suspended, .certificate-document .certificate-status-reissued, .certificate-document .certificate-status-expired { color: #8b2525; }
 .certificate-document-footer { grid-column: 1 / -1; padding-top: 14px; border-top: 1px solid #d5c9a8; }
 .certificate-document-footer > p { max-width: 780px; font-size: .82rem; }
 .certificate-document-footer > div { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: 14px 0 9px; }

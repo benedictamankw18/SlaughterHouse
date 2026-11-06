@@ -1,8 +1,10 @@
 const express = require('express');
+const path = require('node:path');
 const database = require('../database');
+const config = require('../config');
 const sessions = require('../session-store');
 const { passwordMatches } = require('../services/security');
-const { saveUpload } = require('../services/uploads');
+const { saveUpload, deleteUploads } = require('../services/uploads');
 const { databaseError } = require('../services/error-messages');
 const validators = require('../services/input-validation');
 const { rateLimit } = require('../services/rate-limit');
@@ -13,6 +15,11 @@ const { isAvailableBookingSlot } = require('../services/booking');
 const { LICENSE_TYPES, loadLicenseRights, loadLicenseDefinitions, saveLicenseRights } = require('../services/license-rights');
 const { FULFILLMENT_STATUSES, updateFulfillmentStatus } = require('../services/fulfillment');
 const { BUSINESS_SETTINGS, validateDateRange, validateSettingUpdates } = require('../services/admin-controls');
+const logger = require('../services/logger');
+const monitoring = require('../services/monitoring');
+const { checkReadiness } = require('../services/health');
+const storage = require('../services/storage');
+const { sendStoredFile } = require('../services/storage/response');
 
 const router = express.Router();
 router.use(rateLimit({ windowMs: 60 * 1000, max: 60, message: 'Too many administrator requests. Try again shortly.' }));
@@ -23,6 +30,50 @@ const csvCell = value => {
   const safe = typeof value === 'string' && /^[\t\r ]*[=+\-@]/.test(value) ? `'${raw}` : raw;
   return `"${safe.replace(/"/g, '""')}"`;
 };
+function streamReleaseInput(body = {}) {
+  const titleError = validators.text(body.title, 'Release title', { required: true, max: 255 });
+  const artistError = validators.text(body.artist, 'Artist', { required: true, max: 500 });
+  const coverError = validators.text(body.coverUrl, 'Cover URL', { required: true, max: 1000 });
+  if (titleError || artistError || coverError) return { error: titleError || artistError || coverError };
+  if (!Array.isArray(body.credits) || body.credits.length > 20 || body.credits.some(credit =>
+    typeof credit !== 'string' || validators.text(credit, 'Credit', { required: true, max: 255 }))) {
+    return { error: 'Credits must be a list of up to 20 non-empty lines, each no longer than 255 characters.' };
+  }
+  if (!Array.isArray(body.links) || body.links.length < 1 || body.links.length > 10) {
+    return { error: 'Provide between 1 and 10 streaming links.' };
+  }
+  const links = [];
+  for (const link of body.links) {
+    const platformError = validators.text(link?.platform, 'Platform', { required: true, max: 50 });
+    const labelError = validators.text(link?.label, 'Link label', { required: true, max: 255 });
+    const urlError = validators.text(link?.url, 'Link URL', { required: true, max: 1000 });
+    if (platformError || labelError || urlError) return { error: platformError || labelError || urlError };
+    try {
+      if (new URL(link.url).protocol !== 'https:') throw new Error('invalid protocol');
+    } catch {
+      return { error: 'Streaming link URLs must be valid HTTPS URLs.' };
+    }
+    links.push({ platform: link.platform.trim(), url: link.url.trim(), label: link.label.trim() });
+  }
+  const coverUrl = body.coverUrl.trim();
+  try {
+    const parsedCover = new URL(coverUrl, 'https://slaughterhouse.invalid');
+    if (parsedCover.protocol !== 'https:' || coverUrl.startsWith('//')) throw new Error('invalid cover URL');
+    if (parsedCover.origin !== 'https://slaughterhouse.invalid' && !coverUrl.startsWith('https://')) throw new Error('invalid cover URL');
+  } catch {
+    return { error: 'Cover URL must be an HTTPS URL or a site-relative path.' };
+  }
+  return {
+    value: {
+      title: body.title.trim(),
+      artist: body.artist.trim(),
+      credits: body.credits.map(credit => credit.trim()),
+      coverUrl,
+      links
+    }
+  };
+}
+const parseStreamReleaseJson = value => typeof value === 'string' ? JSON.parse(value) : value;
 
 router.get('/admin/data', sessions.requireAdmin, (request, response) => {
   Promise.all([
@@ -34,9 +85,15 @@ router.get('/admin/data', sessions.requireAdmin, (request, response) => {
     queryRows('SELECT * FROM orders ORDER BY created_at DESC'),
     queryRows('SELECT * FROM withdrawals ORDER BY created_at DESC'),
     queryRows('SELECT * FROM customer_reviews ORDER BY created_at DESC'),
+    queryRows('SELECT id, title, artist, credits_json, cover_url, links_json, sort_order, status FROM stream_releases ORDER BY sort_order, id'),
     queryRows("SELECT id, name, artist_name, email FROM users WHERE role = 'artist' ORDER BY name"),
     queryRows("SELECT id, name, artist_name, email, role, created_at, email_verified_at FROM users WHERE role NOT IN ('admin', 'super_admin') ORDER BY created_at DESC LIMIT 1000")
-  ]).then(([beats, merchandise, sales, requests, bookings, rawOrders, withdrawals, reviews, artists, customers]) => {
+  ]).then(([beats, merchandise, sales, requests, bookings, rawOrders, withdrawals, reviews, streamReleases, artists, customers]) => {
+    streamReleases = streamReleases.map(release => ({
+      ...release,
+      credits: parseStreamReleaseJson(release.credits_json),
+      links: parseStreamReleaseJson(release.links_json)
+    }));
     const orders = rawOrders.map(order => {
       let items = [];
       try { items = JSON.parse(order.items_json).map(item => ({ ...item, type: item.type || 'beat' })); } catch {}
@@ -71,8 +128,96 @@ router.get('/admin/data', sessions.requireAdmin, (request, response) => {
       withdrawals: withdrawals.reduce((sum, withdrawal) => sum + Number(withdrawal.amount || 0), 0),
       monthlySales: Object.entries(monthlySales).sort(([left], [right]) => left.localeCompare(right)).slice(-6).map(([month, amount]) => ({ month, amount }))
     };
-    response.json({ role: request.role, beats, merchandise, sales, requests, bookings, orders, merchandiseOrders, reviews, artists: artistsWithPurchases, customers, withdrawals, analytics });
+    response.json({ role: request.role, beats, merchandise, sales, requests, bookings, orders, merchandiseOrders, reviews, streamReleases, artists: artistsWithPurchases, customers, withdrawals, analytics });
   }).catch(error => response.status(500).json({ error: databaseError('Loading administrator data failed.', error) }));
+});
+
+router.get('/admin/metrics', sessions.requireAdmin, (request, response) => {
+  response.json({ metrics: monitoring.snapshot() });
+});
+
+router.get('/admin/health/dependencies', sessions.requireAdmin, async (request, response) => {
+  const readiness = await checkReadiness(database, config, storage);
+  response.status(readiness.ready ? 200 : 503).json(readiness);
+});
+
+router.post('/admin/stream-releases', sessions.requireAdmin, async (request, response) => {
+  const validation = streamReleaseInput(request.body);
+  if (validation.error) return response.status(400).json({ error: validation.error });
+  const release = validation.value;
+  try {
+    const sortRows = await queryRows('SELECT COALESCE(MAX(sort_order), 0) + 1 AS nextOrder FROM stream_releases');
+    const result = await runQuery(
+      'INSERT INTO stream_releases (title, artist, credits_json, cover_url, links_json, sort_order, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [release.title, release.artist, JSON.stringify(release.credits), release.coverUrl, JSON.stringify(release.links), sortRows[0].nextOrder, 'unpublished']
+    );
+    recordAuditSafely(database, { userId: request.admin.id, action: 'stream_release_created', entityType: 'stream_release', entityId: result.lastID, ipAddress: request.ip });
+    response.status(201).json({ id: result.lastID, title: release.title, status: 'unpublished' });
+  } catch (error) {
+    if (error.code === 'ER_DUP_ENTRY') return response.status(409).json({ error: 'A stream release with this title already exists.' });
+    response.status(500).json({ error: databaseError('Saving the stream release failed.', error) });
+  }
+});
+
+router.patch('/admin/stream-releases/:id', sessions.requireAdmin, async (request, response) => {
+  if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) return response.status(400).json({ error: 'Stream release ID must be a positive whole number.' });
+  const validation = streamReleaseInput(request.body);
+  if (validation.error) return response.status(400).json({ error: validation.error });
+  const release = validation.value;
+  const id = Number(request.params.id);
+  try {
+    const existing = await queryRows('SELECT id FROM stream_releases WHERE id = ?', [id]);
+    if (!existing.length) return response.status(404).json({ error: `No stream release was found with ID ${id}.` });
+    await runQuery(
+      'UPDATE stream_releases SET title = ?, artist = ?, credits_json = ?, cover_url = ?, links_json = ? WHERE id = ?',
+      [release.title, release.artist, JSON.stringify(release.credits), release.coverUrl, JSON.stringify(release.links), id]
+    );
+    recordAuditSafely(database, { userId: request.admin.id, action: 'stream_release_updated', entityType: 'stream_release', entityId: id, ipAddress: request.ip });
+    response.json({ id, title: release.title });
+  } catch (error) {
+    if (error.code === 'ER_DUP_ENTRY') return response.status(409).json({ error: 'A stream release with this title already exists.' });
+    response.status(500).json({ error: databaseError('Updating the stream release failed.', error) });
+  }
+});
+
+router.patch('/admin/stream-releases/:id/status', sessions.requireAdmin, async (request, response) => {
+  if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) return response.status(400).json({ error: 'Stream release ID must be a positive whole number.' });
+  const status = String(request.body.status || '').toLowerCase();
+  if (!['published', 'unpublished'].includes(status)) return response.status(400).json({ error: 'Stream release status must be published or unpublished.' });
+  const id = Number(request.params.id);
+  try {
+    const existing = await queryRows('SELECT id FROM stream_releases WHERE id = ?', [id]);
+    if (!existing.length) return response.status(404).json({ error: `No stream release was found with ID ${id}.` });
+    await runQuery('UPDATE stream_releases SET status = ? WHERE id = ?', [status, id]);
+    recordAuditSafely(database, { userId: request.admin.id, action: 'stream_release_status_changed', entityType: 'stream_release', entityId: id, details: { status }, ipAddress: request.ip });
+    response.json({ id, status });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Updating the stream release status failed.', error) });
+  }
+});
+
+router.delete('/admin/stream-releases/:id', sessions.requireAdmin, async (request, response) => {
+  if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) return response.status(400).json({ error: 'Stream release ID must be a positive whole number.' });
+  const id = Number(request.params.id);
+  try {
+    const result = await runQuery('DELETE FROM stream_releases WHERE id = ?', [id]);
+    if (!result.changes) return response.status(404).json({ error: `No stream release was found with ID ${id}.` });
+    recordAuditSafely(database, { userId: request.admin.id, action: 'stream_release_deleted', entityType: 'stream_release', entityId: id, ipAddress: request.ip });
+    response.json({ id, deleted: true });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Deleting the stream release failed.', error) });
+  }
+});
+
+// Customer-uploaded sample audio is private: only authenticated administrators may stream it.
+router.get('/admin/uploads/:filename', sessions.requireAdmin, async (request, response) => {
+  const filename = request.params.filename;
+  if (path.basename(filename) !== filename || !/^sample-audio-/i.test(filename)) return response.sendStatus(404);
+  try {
+    await sendStoredFile(response, filename, { headers: { 'Cache-Control': 'private, no-store' } });
+  } catch {
+    if (!response.headersSent) response.sendStatus(500);
+  }
 });
 
 router.get('/admin/settings', sessions.requireAdmin, async (request, response) => {
@@ -492,7 +637,7 @@ router.patch('/admin/orders/:reference/fulfillment', sessions.requireAdmin, (req
   });
 });
 
-router.post('/admin/beats', sessions.requireAdmin, (request, response) => {
+router.post('/admin/beats', sessions.requireAdmin, async (request, response) => {
   const { title, bpm, musicalKey, genre, mood, previewDurationSeconds, prices, files } = request.body;
   const titleError = validators.text(title, 'Beat title', { required: true, max: 255 });
   const bpmError = validators.integer(bpm, 'BPM', { min: 1, max: 400, required: false });
@@ -500,22 +645,28 @@ router.post('/admin/beats', sessions.requireAdmin, (request, response) => {
   const priceError = Object.entries(prices || {}).map(([license, value]) => validators.money(value, `${license} price`, { required: false })).find(Boolean);
   if (titleError || bpmError || durationError || priceError) return response.status(400).json({ error: titleError || bpmError || durationError || priceError });
   if (!files?.preview || !files?.mp3 || !files?.wav || !files?.stems) return response.status(400).json({ error: 'Preview, MP3, WAV, and stems files are all required.' });
+  let savedFiles;
   try {
-    const savedFiles = {
-      cover_art: saveUpload(files.cover, 'cover', 'image'),
-      preview_file: saveUpload(files.preview, 'preview', 'audio'),
-      mp3_file: saveUpload(files.mp3, 'mp3', 'audio'),
-      wav_file: saveUpload(files.wav, 'wav', 'audio'),
-      stems_file: saveUpload(files.stems, 'stems', 'audio')
-    };
-    database.run('INSERT INTO beats (title, bpm, musical_key, genre, mood, cover_art, preview_file, preview_duration_seconds, mp3_file, wav_file, stems_file, basic_price, premium_price, unlimited_price, exclusive_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [title.trim(), bpm || null, musicalKey || null, genre || null, mood || null, savedFiles.cover_art, savedFiles.preview_file, previewDurationSeconds || null, savedFiles.mp3_file, savedFiles.wav_file, savedFiles.stems_file, prices?.basic || 0, prices?.premium || 0, prices?.unlimited || 0, prices?.exclusive || 0], function (error) {
-      if (error) return response.status(500).json({ error: databaseError('Saving the beat failed.', error) });
-      recordAuditSafely(database, { userId: request.admin.id, action: 'beat_created', entityType: 'beat', entityId: this.lastID, ipAddress: request.ip });
-      response.status(201).json({ id: this.lastID, title: title.trim() });
-    });
-
+    savedFiles = {};
+    savedFiles.cover_art = await saveUpload(files.cover, 'cover', 'image');
+    savedFiles.preview_file = await saveUpload(files.preview, 'preview', 'audio');
+    savedFiles.mp3_file = await saveUpload(files.mp3, 'mp3', 'audio');
+    savedFiles.wav_file = await saveUpload(files.wav, 'wav', 'audio');
+    savedFiles.stems_file = await saveUpload(files.stems, 'stems', 'audio');
   } catch (error) {
-    response.status(400).json({ error: error.message });
+    await deleteUploads(Object.values(savedFiles || {}));
+    return response.status(400).json({ error: error.message });
+  }
+  try {
+    const result = await runQuery(
+      'INSERT INTO beats (title, bpm, musical_key, genre, mood, cover_art, preview_file, preview_duration_seconds, mp3_file, wav_file, stems_file, basic_price, premium_price, unlimited_price, exclusive_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [title.trim(), bpm || null, musicalKey || null, genre || null, mood || null, savedFiles.cover_art, savedFiles.preview_file, previewDurationSeconds || null, savedFiles.mp3_file, savedFiles.wav_file, savedFiles.stems_file, prices?.basic || 0, prices?.premium || 0, prices?.unlimited || 0, prices?.exclusive || 0]
+    );
+    recordAuditSafely(database, { userId: request.admin.id, action: 'beat_created', entityType: 'beat', entityId: result.lastID, ipAddress: request.ip });
+    response.status(201).json({ id: result.lastID, title: title.trim() });
+  } catch (error) {
+    await deleteUploads(Object.values(savedFiles));
+    response.status(500).json({ error: databaseError('Saving the beat failed.', error) });
   }
 });
 
@@ -585,44 +736,53 @@ router.patch('/admin/beats/:id', sessions.requireAdmin, (request, response) => {
   );
 });
 
-router.post('/admin/merchandise', sessions.requireAdmin, (request, response) => {
+router.post('/admin/merchandise', sessions.requireAdmin, async (request, response) => {
   const { title, description, price, photo } = request.body;
   const titleError = validators.text(title, 'Merchandise title', { required: true, max: 255 });
   const priceError = validators.money(price, 'Merchandise price');
   if (titleError || priceError) return response.status(400).json({ error: titleError || priceError });
+  let photoFile;
   try {
-    const photoFile = saveUpload(photo, 'merchandise', 'image');
-    database.run('INSERT INTO merchandise (title, description, price, photo) VALUES (?, ?, ?, ?)', [title.trim(), description || '', Number(price), photoFile], function (error) {
-      if (error) return response.status(500).json({ error: databaseError('Saving the merchandise failed.', error) });
-      recordAuditSafely(database, { userId: request.admin.id, action: 'merchandise_created', entityType: 'merchandise', entityId: this.lastID, ipAddress: request.ip });
-      response.status(201).json({ id: this.lastID, title: title.trim() });
-    });
-
+    photoFile = await saveUpload(photo, 'merchandise', 'image');
   } catch (error) {
-    response.status(400).json({ error: error.message });
+    return response.status(400).json({ error: error.message });
+  }
+  try {
+    const result = await runQuery('INSERT INTO merchandise (title, description, price, photo) VALUES (?, ?, ?, ?)', [title.trim(), description || '', Number(price), photoFile]);
+    recordAuditSafely(database, { userId: request.admin.id, action: 'merchandise_created', entityType: 'merchandise', entityId: result.lastID, ipAddress: request.ip });
+    response.status(201).json({ id: result.lastID, title: title.trim() });
+  } catch (error) {
+    await deleteUploads([photoFile]);
+    response.status(500).json({ error: databaseError('Saving the merchandise failed.', error) });
   }
 });
 
-router.patch('/admin/merchandise/:id', sessions.requireAdmin, (request, response) => {
+router.patch('/admin/merchandise/:id', sessions.requireAdmin, async (request, response) => {
   if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) return response.status(400).json({ error: 'Merchandise ID must be a positive whole number.' });
   const { title, description, price, photo } = request.body;
   const titleError = validators.text(title, 'Merchandise title', { required: true, max: 255 });
   const priceError = validators.money(price, 'Merchandise price');
   if (titleError || priceError) return response.status(400).json({ error: titleError || priceError });
+  let photoFile = null;
   try {
-    const photoFile = photo ? saveUpload(photo, 'merchandise', 'image') : null;
-    database.run(
-      'UPDATE merchandise SET title = ?, description = ?, price = ?, photo = COALESCE(?, photo) WHERE id = ?',
-      [title.trim(), String(description || '').trim(), Number(price), photoFile, Number(request.params.id)],
-      function (error) {
-        if (error) return response.status(500).json({ error: databaseError('Updating merchandise failed.', error) });
-        if (!this.changes) return response.status(404).json({ error: `No merchandise was found with ID ${request.params.id}.` });
-        recordAuditSafely(database, { userId: request.admin.id, action: 'merchandise_updated', entityType: 'merchandise', entityId: Number(request.params.id), ipAddress: request.ip });
-        response.json({ id: Number(request.params.id), title: title.trim() });
-      }
-    );
+    photoFile = photo ? await saveUpload(photo, 'merchandise', 'image') : null;
   } catch (error) {
-    response.status(400).json({ error: error.message });
+    return response.status(400).json({ error: error.message });
+  }
+  try {
+    const result = await runQuery(
+      'UPDATE merchandise SET title = ?, description = ?, price = ?, photo = COALESCE(?, photo) WHERE id = ?',
+      [title.trim(), String(description || '').trim(), Number(price), photoFile, Number(request.params.id)]
+    );
+    if (!result.changes) {
+      await deleteUploads([photoFile]);
+      return response.status(404).json({ error: `No merchandise was found with ID ${request.params.id}.` });
+    }
+    recordAuditSafely(database, { userId: request.admin.id, action: 'merchandise_updated', entityType: 'merchandise', entityId: Number(request.params.id), ipAddress: request.ip });
+    response.json({ id: Number(request.params.id), title: title.trim() });
+  } catch (error) {
+    await deleteUploads([photoFile]);
+    response.status(500).json({ error: databaseError('Updating merchandise failed.', error) });
   }
 });
 
@@ -712,7 +872,7 @@ router.post('/admin/withdraw', sessions.requireAdmin, async (request, response) 
   try {
     matches = admin ? await passwordMatches(password, admin.password_hash) : false;
   } catch (error) {
-    console.error('Withdrawal password verification failed:', error.code || error.message);
+    logger.error('withdrawal_password_verification_failed', { code: error.code });
   }
   if (!matches) {
     recordAuditSafely(database, { userId: request.admin.id, action: 'withdrawal_rejected', entityType: 'withdrawal', details: { reason: 'password_mismatch' }, ipAddress: request.ip });
@@ -771,7 +931,7 @@ router.patch('/admin/bookings/:id/status', sessions.requireAdmin, (request, resp
               const parsedSlots = JSON.parse(updatedBooking.booking_slots_json || '[]');
               if (Array.isArray(parsedSlots)) slots = parsedSlots;
             } catch (error) {
-              console.error('Booking cancellation email slot data is invalid:', error.message);
+              logger.error('booking_cancellation_slot_data_invalid', { bookingId: Number(request.params.id) });
             }
             await queueEmailSafely(database, {
               to: updatedBooking.email,

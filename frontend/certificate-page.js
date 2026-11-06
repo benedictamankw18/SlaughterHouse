@@ -2,6 +2,15 @@
   const apiBase = window.ULTBIGBOY_API_URL || `${location.protocol}//${location.hostname}:3000`;
   const message = document.getElementById('certificate-message');
   if (!message) return;
+  const certificateFetch = (url, options = {}) => {
+    const method = String(options.method || 'GET').toUpperCase();
+    const csrfToken = sessionStorage.getItem('customerCsrfToken') || '';
+    const headers = new Headers(options.headers || {});
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && csrfToken && !headers.has('X-CSRF-Token')) {
+      headers.set('X-CSRF-Token', csrfToken);
+    }
+    return fetch(url, { ...options, headers });
+  };
   const displayDate = value => value ? new Date(value).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }) : 'Not recorded';
   const rightRows = rights => {
     const rows = [];
@@ -16,11 +25,27 @@
   };
   const setText = (id, value) => { document.getElementById(id).textContent = value || 'Not recorded'; };
 
+  function showCertificateError(error) {
+    message.textContent = error.message || 'Could not load this license certificate.';
+    message.classList.add('is-error');
+    const retryButton = document.createElement('button');
+    retryButton.className = 'inline-retry-button';
+    retryButton.type = 'button';
+    retryButton.textContent = 'Try again';
+    retryButton.addEventListener('click', () => {
+      retryButton.remove();
+      loadCertificate().catch(showCertificateError);
+    }, { once: true });
+    message.append(document.createTextNode(' '), retryButton);
+  }
+
   async function loadCertificate() {
+    message.classList.remove('is-error');
+    message.textContent = 'Loading your certificate…';
     const licenseId = new URLSearchParams(location.search).get('licenseId');
     if (!/^[1-9]\d*$/.test(licenseId || '')) throw new Error('A valid license ID is required.');
     const token = sessionStorage.getItem('customerToken') || '';
-    const response = await fetch(`${apiBase}/api/customer/licenses/${encodeURIComponent(licenseId)}/certificate/details`, {
+    const response = await certificateFetch(`${apiBase}/api/customer/licenses/${encodeURIComponent(licenseId)}/certificate/details`, {
       credentials: 'include',
       headers: token ? { Authorization: `Bearer ${token}` } : {}
     });
@@ -37,6 +62,7 @@
     setText('certificate-license-type', certificate.license_type);
     setText('certificate-order', certificate.order_reference);
     setText('certificate-purchased', displayDate(certificate.purchased_at));
+    setText('certificate-expires', certificate.expires_at ? displayDate(certificate.expires_at) : 'No expiration');
     setText('certificate-issued', displayDate(certificate.issued_at));
     const status = document.getElementById('certificate-status');
     status.textContent = `STATUS: ${String(certificate.status || 'unknown').toUpperCase()}`;
@@ -54,41 +80,41 @@
     qr.src = `${apiBase}/api/certificates/qr/${encodeURIComponent(qrToken)}`;
     qr.alt = `QR code to verify certificate ${certificate.certificate_id}`;
     const download = document.getElementById('certificate-download');
-    download.addEventListener('click', async event => {
-      event.preventDefault();
-      download.setAttribute('aria-disabled', 'true');
-      try {
-        const pdfResponse = await fetch(`${apiBase}/api/customer/licenses/${encodeURIComponent(licenseId)}/certificate`, {
-          credentials: 'include',
-          headers: token ? { Authorization: `Bearer ${token}` } : {}
-        });
-        if (!pdfResponse.ok) {
-          const errorResult = await pdfResponse.json();
-          throw new Error(errorResult.error || 'Could not download the certificate PDF.');
+    if (download.dataset.listenerAttached !== 'true') {
+      download.dataset.listenerAttached = 'true';
+      download.addEventListener('click', async event => {
+        event.preventDefault();
+        download.setAttribute('aria-disabled', 'true');
+        try {
+          const pdfResponse = await certificateFetch(`${apiBase}/api/customer/licenses/${encodeURIComponent(licenseId)}/certificate`, {
+            credentials: 'include',
+            headers: token ? { Authorization: `Bearer ${token}` } : {}
+          });
+          if (!pdfResponse.ok) {
+            const errorResult = await pdfResponse.json();
+            throw new Error(errorResult.error || 'Could not download the certificate PDF.');
+          }
+          const blob = await pdfResponse.blob();
+          const objectUrl = URL.createObjectURL(blob);
+          const anchor = document.createElement('a');
+          anchor.href = objectUrl;
+          anchor.download = `${certificate.certificate_id}.pdf`;
+          document.body.append(anchor);
+          anchor.click();
+          anchor.remove();
+          window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+        } catch (error) {
+          message.textContent = error.message || 'Could not download the certificate PDF.';
+          message.classList.add('is-error');
+        } finally {
+          download.removeAttribute('aria-disabled');
         }
-        const blob = await pdfResponse.blob();
-        const objectUrl = URL.createObjectURL(blob);
-        const anchor = document.createElement('a');
-        anchor.href = objectUrl;
-        anchor.download = `${certificate.certificate_id}.pdf`;
-        document.body.append(anchor);
-        anchor.click();
-        anchor.remove();
-        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-      } catch (error) {
-        message.textContent = error.message || 'Could not download the certificate PDF.';
-        message.classList.add('is-error');
-      } finally {
-        download.removeAttribute('aria-disabled');
-      }
-    });
+      });
+    }
     message.textContent = certificate.status === 'valid'
       ? 'This certificate is tied to your saved purchase-time license terms.'
       : `This certificate is currently ${String(certificate.status || 'unknown')}.`;
   }
 
-  loadCertificate().catch(error => {
-    message.textContent = error.message || 'Could not load this license certificate.';
-    message.classList.add('is-error');
-  });
+  loadCertificate().catch(showCertificateError);
 })();

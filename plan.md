@@ -267,15 +267,18 @@ The existing implementation should be preserved while the SRS features are compl
 
 - [x] Replace remaining hardcoded catalog and content data with APIs.
 - [x] Move the existing curated stream-release catalog into the database and serve it from `GET /api/stream-releases`.
+- [x] Add administrator create, update, delete, activate, and deactivate workflows for stream releases.
+- [x] Require fully paid orders for beat downloads, expire new beat licenses and downloads after one year, preserve existing license durations, and allow renewal through a new paid purchase.
+- [x] Keep merchandise physical; no merchandise download access is provided.
 - [x] Keep dark premium visual language, glass surfaces, typography, and artwork hierarchy.
 - [x] Add responsive layouts for mobile, tablet, laptop, and desktop.
 - [x] Fix the produced-page horizontal overflow found during narrow viewport checks.
 - [x] Add keyboard navigation, visible focus, screen-reader labels, and reduced-motion behavior.
-- [ ] Add loading, empty, retry, and error states to every data-driven section.
-- [ ] Add SEO metadata, Open Graph tags, sitemap, canonical URLs, and structured data.
+- [x] Add loading, empty, retry, and error states to every data-driven section. (Public storefront and customer account pages; admin dashboard states deferred.)
+- [ ] Add SEO metadata, Open Graph tags, sitemap, canonical URLs, and structured data. (Descriptions, Open Graph/Twitter tags, structured data, robots rules, and runtime canonical URLs are done; XML sitemap and absolute canonical URLs are pending a production domain.)
 - [x] Add page descriptions and basic Open Graph title/description metadata to the storefront catalog, stream, booking, and merchandise pages.
-- [ ] Optimize images, audio loading, caching, and lazy loading.
-- [ ] Use animation libraries only where they improve usability and performance.
+- [x] Optimize images, audio loading, caching, and lazy loading. (WebP hero images, lazy-loaded images with intrinsic dimensions, `preload="none"` audio, and upload `Cache-Control`.)
+- [x] Use animation libraries only where they improve usability and performance. (No animation library added; hero rotation respects reduced motion and pauses on hidden tabs.)
 
 ### Acceptance
 
@@ -286,16 +289,50 @@ The existing implementation should be preserved while the SRS features are compl
 
 ## 14. Phase 12 — Security, Reliability, and Operations
 
+### Stage 1 — Repository and secret hygiene
+
+- [x] Untrack uploads and certificates while preserving local files and `data/.gitkeep`.
+- [x] Ignore local uploads, certificates, backups, logs, and environment files.
+- [x] Move `sqlite3` to development dependencies and apply compatible audit fixes.
+- [x] Require distinct production download and certificate signing secrets of at least 32 bytes.
+- [x] Add the tracked-file secret scan and production secret-rotation checklist.
+- [x] Restrict public uploads to approved assets and require admin authentication for sample audio.
+
+### Stage 2 — Request hardening
+
+- [x] Add security headers, production HSTS, and no-store for authenticated JSON.
+- [x] Enforce a configurable frontend-origin CORS allowlist and mutation Origin/Referer checks.
+- [x] Add session-bound, server-verified CSRF tokens for cookie-authenticated unsafe methods.
+- [x] Add explicit global and route-specific JSON limits, disable URL-encoded input, and set server timeouts.
+- [x] Configure Express proxy trust through the explicit `TRUST_PROXY` setting.
+- [x] Add centralized JSON-body validation and error codes/request IDs.
+
 ### Tasks
 
-- [ ] Add centralized request validation and consistent error responses.
-- [ ] Add security headers, strict CORS, CSRF protection where cookies are used, and request limits.
-- [ ] Add structured logging with secret redaction.
-- [ ] Add health, readiness, database, and dependency checks.
-- [ ] Add backups, restore procedures, and migration rollback guidance.
+- [x] Add centralized request validation and consistent error responses.
+- [x] Add security headers, strict CORS, CSRF protection where cookies are used, and request limits.
+- [x] Add structured logging with secret redaction and request IDs.
+- [x] Add liveness, readiness, database, and admin-only dependency checks.
+- [x] Add database backup/restore/verification scripts and forward-only migration recovery guidance; restore-to-scratch verification passed against the dedicated local route-test database.
 - [ ] Move production file storage to private object storage.
-- [ ] Add monitoring for payment failures, database errors, upload failures, and suspicious access.
-- [ ] Review all secrets and rotate any credentials exposed during development.
+- [x] Add process-local monitoring for payment failures, database errors, upload failures, and unauthorized/forbidden responses.
+- [x] Review tracked files for secrets and rotate any exposed credentials (none detected).
+
+### Stage 4 — Storage hardening (provider deferred)
+
+- [x] Add a local storage provider with save, stream, delete, stat, and public-URL operations.
+- [x] Route uploads, certificates, and licensed downloads through the storage interface.
+- [x] Keep local files outside the frontend web root and restrict public access to approved artwork/preview prefixes.
+- [x] Keep customer sample audio admin-authenticated and licensed masters behind authenticated download checks.
+- [ ] Configure a private object-storage provider for production.
+
+### Stage 5 — Verification and documentation
+
+- [x] Test security headers, CORS, CSRF, JSON limits, readiness, log redaction, upload allowlisting, and the role permission matrix.
+- [x] Document security controls and update the backend README.
+- [x] Run JavaScript syntax checks, `npm test`, `npm audit --omit=dev`, and the tracked-file secret scan.
+- [x] Resolve the development-dependency advisories by upgrading the dev-only SQLite migration dependency; `npm audit` reports 0 vulnerabilities.
+- [x] Rerun MySQL route integration tests with `TEST_MYSQL_URL` set to the dedicated local test schema; all 90 registered API route methods passed.
 
 ### Acceptance
 
@@ -308,15 +345,15 @@ The existing implementation should be preserved while the SRS features are compl
 
 - [x] Unit-test validators, pricing fallback, booking slot validation, password hashing, and download token signing.
 - [x] Unit-test database-backed license rights, editable definitions, and purchase snapshots.
-- [ ] Integration-test every route with a test database.
+- [x] Integration-test every registered API route method with the dedicated MySQL test database.
 - [x] Unit-test customer/admin/super-admin permission boundaries.
-- [ ] Test duplicate signup, invalid JSON, malformed uploads, invalid payment methods, and invalid IDs.
-- [ ] Test Paystack success, failure, mismatch, duplicate webhook, and refund scenarios.
-- [ ] Test concurrent booking and inventory operations.
+- [x] Test duplicate signup, invalid JSON, malformed uploads, invalid payment methods, and invalid IDs.
+- [x] Test Paystack success, failure, mismatch, duplicate webhook, and refund scenarios.
+- [x] Test concurrent booking and inventory operations against MySQL.
 - [x] Unit-test download token scoping across orders, products, licenses, formats, and expiry.
   Route-level authorization against a test database remains covered by the integration item above.
-- [ ] Add browser tests for signup, login, search, cart, checkout, booking, reviews, and admin workflows.
-- [ ] Run accessibility checks and responsive visual checks.
+- [x] Add browser tests for signup, login, search, cart, checkout, booking, reviews, and admin workflows.
+- [x] Run accessibility checks and responsive visual checks.
 
 ## 16. Recommended Execution Order
 

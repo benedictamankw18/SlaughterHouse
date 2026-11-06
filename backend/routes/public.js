@@ -1,16 +1,19 @@
 const express = require('express');
 const fs = require('node:fs');
-const path = require('node:path');
 const database = require('../database');
 const config = require('../config');
+const storage = require('../services/storage');
+const { sendStoredFile } = require('../services/storage/response');
 const sessions = require('../session-store');
 const { requireCustomer } = sessions;
 const { databaseError } = require('../services/error-messages');
 const validators = require('../services/input-validation');
 const { rateLimit } = require('../services/rate-limit');
 const { notifyAdminsSafely } = require('../services/notifications');
-const { DEFAULT_LICENSE_RIGHTS, loadLicenseDefinitions } = require('../services/license-rights');
+const { DEFAULT_LICENSE_RIGHTS, loadLicenseDefinitions, loadLicenseRights } = require('../services/license-rights');
 const { ensureCertificateForLicense, certificateToken } = require('../services/license-certificates');
+const { checkReadiness } = require('../services/health');
+const { getDownloadItems } = require('../services/downloads');
 
 const router = express.Router();
 const queryRows = (query, parameters = []) => new Promise((resolve, reject) => database.all(query, parameters, (error, rows) => error ? reject(error) : resolve(rows || [])));
@@ -40,13 +43,21 @@ function mapBeat(beat, defaults, activeLicenseTypes) {
   };
   return {
     ...beat,
-    previewUrl: beat.previewFile ? new URL(`/api/uploads/${encodeURIComponent(beat.previewFile)}`, config.apiPublicUrl).toString() : null,
+    previewUrl: storage.publicUrl(beat.previewFile),
     previewDurationSeconds: beat.previewDurationSeconds === null ? null : Number(beat.previewDurationSeconds),
     prices: Object.fromEntries(activeLicenseTypes.filter(type => Object.hasOwn(prices, type)).map(type => [type, prices[type]]))
   };
 }
 
-router.get('/health', sessions.allowVisitor, (request, response) => response.json({ status: 'ok' }));
+router.get('/health', (request, response) => response.json({ status: 'ok' }));
+
+router.get('/ready', async (request, response) => {
+  const readiness = await checkReadiness(database, config, storage);
+  response.status(readiness.ready ? 200 : 503).json({
+    status: readiness.ready ? 'ready' : 'not_ready',
+    checks: readiness.checks
+  });
+});
 
 router.get('/license-definitions', sessions.allowVisitor, async (request, response) => {
   try {
@@ -195,7 +206,8 @@ router.get('/customer/licenses', requireCustomer, async (request, response) => {
     let licenses = await queryRows(
       `SELECT l.id, l.beat_id, b.title AS beat_title, b.genre, b.bpm, b.musical_key, b.cover_art,
               l.order_id, o.reference AS order_reference, l.license_type, l.rights_json,
-              l.purchased_at, c.id AS certificate_record_id, c.certificate_id,
+              l.purchased_at, l.expires_at, (l.expires_at IS NULL OR l.expires_at > CURRENT_TIMESTAMP) AS license_active,
+              o.items_json, c.id AS certificate_record_id, c.certificate_id,
               c.terms_version, c.status AS certificate_status, c.issued_at
        FROM licenses l
        JOIN beats b ON b.id = l.beat_id
@@ -204,17 +216,19 @@ router.get('/customer/licenses', requireCustomer, async (request, response) => {
          SELECT latest.id FROM license_certificates latest
          WHERE latest.license_id = l.id ORDER BY latest.issued_at DESC, latest.id DESC LIMIT 1
        )
-       WHERE l.user_id = ? AND l.revoked_at IS NULL AND o.status IN ('paid', 'partially_refunded')
+       WHERE l.user_id = ? AND l.revoked_at IS NULL AND o.status = 'paid'
        ORDER BY l.purchased_at DESC`,
       [request.customer.id]
     );
-    await Promise.all(licenses.filter(license => !license.certificate_record_id)
-      .map(license => ensureCertificateForLicense(database, license.id)));
+    for (const license of licenses.filter(item => !item.certificate_record_id)) {
+      await ensureCertificateForLicense(database, license.id);
+    }
     if (licenses.some(license => !license.certificate_record_id)) {
       licenses = await queryRows(
         `SELECT l.id, l.beat_id, b.title AS beat_title, b.genre, b.bpm, b.musical_key, b.cover_art,
                 l.order_id, o.reference AS order_reference, l.license_type, l.rights_json,
-                l.purchased_at, c.id AS certificate_record_id, c.certificate_id,
+                l.purchased_at, l.expires_at, (l.expires_at IS NULL OR l.expires_at > CURRENT_TIMESTAMP) AS license_active,
+                o.items_json, c.id AS certificate_record_id, c.certificate_id,
                 c.terms_version, c.status AS certificate_status, c.issued_at
          FROM licenses l
          JOIN beats b ON b.id = l.beat_id
@@ -223,11 +237,13 @@ router.get('/customer/licenses', requireCustomer, async (request, response) => {
            SELECT latest.id FROM license_certificates latest
            WHERE latest.license_id = l.id ORDER BY latest.issued_at DESC, latest.id DESC LIMIT 1
          )
-         WHERE l.user_id = ? AND l.revoked_at IS NULL AND o.status IN ('paid', 'partially_refunded')
+         WHERE l.user_id = ? AND l.revoked_at IS NULL AND o.status = 'paid'
          ORDER BY l.purchased_at DESC`,
         [request.customer.id]
       );
     }
+    const licenseRights = await loadLicenseRights(database);
+    const downloadsByOrder = new Map();
     licenses = licenses.map(license => {
       let verificationUrl = null;
       if (license.certificate_id) {
@@ -235,10 +251,22 @@ router.get('/customer/licenses', requireCustomer, async (request, response) => {
         url.searchParams.set('token', certificateToken(license.certificate_id));
         verificationUrl = url.toString();
       }
+      let downloads = [];
+      if (Number(license.license_active)) {
+        if (!downloadsByOrder.has(license.order_id)) {
+          downloadsByOrder.set(license.order_id, getDownloadItems({
+            reference: license.order_reference,
+            items_json: license.items_json
+          }, config.apiPublicUrl, licenseRights));
+        }
+        downloads = downloadsByOrder.get(license.order_id)
+          .find(item => Number(item.productId) === Number(license.beat_id) && item.license === license.license_type)?.files || [];
+      }
       return {
         ...license,
-        certificate_status: license.certificate_status || 'missing',
-        verification_url: verificationUrl
+        certificate_status: !Number(license.license_active) ? 'expired' : license.certificate_status || 'missing',
+        verification_url: verificationUrl,
+        downloads
       };
     });
     response.json({ licenses });
@@ -392,12 +420,19 @@ router.get('/merchandise', (request, response) => {
   });
 });
 
-router.get('/uploads/:filename', (request, response) => {
-  const filename = path.basename(request.params.filename);
-  if (filename !== request.params.filename || /^(mp3|wav|stems)-/i.test(filename)) return response.sendStatus(404);
-  response.sendFile(path.join(config.uploadDirectory, filename), error => {
-    if (error && !response.headersSent) response.sendStatus(404);
-  });
+router.get('/uploads/:filename', async (request, response) => {
+  const filename = request.params.filename;
+  // Only catalogue artwork and public previews are served without authentication.
+  // Master, stems, sample-audio, and certificate assets are never exposed here.
+  if (!storage.publicUrl(filename)) return response.sendStatus(404);
+  // Upload filenames are unique per write, so public images and previews can be cached permanently.
+  try {
+    await sendStoredFile(response, filename, {
+      headers: { 'Cache-Control': 'public, max-age=31536000, immutable' }
+    });
+  } catch {
+    if (!response.headersSent) response.sendStatus(500);
+  }
 });
 
 module.exports = router;

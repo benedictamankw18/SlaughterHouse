@@ -6,7 +6,40 @@ const defaultApiUrl = location.protocol === 'file:'
     : location.origin;
 window.ULTBIGBOY_API_URL = window.ULTBIGBOY_API_URL || configuredApiUrl || defaultApiUrl;
 const API = window.ULTBIGBOY_API_URL;
-if (location.origin !== 'null') {
+window.ultbigboyCsrfHeaders = method => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(String(method || 'GET').toUpperCase())) return {};
+  const token = sessionStorage.getItem('customerCsrfToken') || sessionStorage.getItem('adminCsrfToken') || '';
+  return token ? { 'X-CSRF-Token': token } : {};
+};
+const nativeFetch = window.fetch.bind(window);
+window.fetch = (input, options = {}) => {
+  const method = String(options.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
+  const csrfHeaders = window.ultbigboyCsrfHeaders(method);
+  if (Object.keys(csrfHeaders).length) {
+    const headers = new Headers(input instanceof Request ? input.headers : undefined);
+    new Headers(options.headers || {}).forEach((value, name) => headers.set(name, value));
+    if (!headers.has('X-CSRF-Token')) headers.set('X-CSRF-Token', csrfHeaders['X-CSRF-Token']);
+    options = { ...options, headers };
+  }
+  return nativeFetch(input, options);
+};
+const privatePageNames = new Set([
+  'admin.html',
+  'alerts.html',
+  'bookings.html',
+  'certificate.html',
+  'downloads.html',
+  'licenses.html',
+  'orders.html',
+  'payment-success.html',
+  'profile.html',
+  'purchases.html',
+  'requests.html',
+  'wishlist.html'
+]);
+const currentPageName = location.pathname.split('/').pop() || 'index.html';
+const isPrivatePage = privatePageNames.has(currentPageName);
+if (location.origin !== 'null' && !isPrivatePage) {
   const canonicalUrl = new URL(location.pathname, location.origin);
   let canonical = document.querySelector('link[rel="canonical"]');
   if (!canonical) {
@@ -46,8 +79,23 @@ if (location.origin !== 'null') {
 const menuIcon = document.getElementById('menuIcon');
 const dropdownMenu = document.getElementById('dropdownMenu');
 const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+function setLoadingState(container, message) {
+  if (!container) return;
+  container.setAttribute('aria-busy', 'true');
+  const status = document.createElement('p');
+  status.className = 'data-state';
+  status.setAttribute('role', 'status');
+  status.textContent = message;
+  container.replaceChildren(status);
+}
+function clearLoadingState(container) {
+  container?.setAttribute('aria-busy', 'false');
+}
 function showRetryState(container, message, retry) {
+  if (!container) return;
+  container.setAttribute('aria-busy', 'false');
   const error = document.createElement('p');
+  error.className = 'data-state data-state-error';
   error.setAttribute('role', 'alert');
   error.textContent = message;
   const button = document.createElement('button');
@@ -56,6 +104,17 @@ function showRetryState(container, message, retry) {
   button.textContent = 'Try again';
   button.addEventListener('click', retry, { once: true });
   container.replaceChildren(error, button);
+}
+function showInlineRetry(messageElement, message, retry) {
+  if (!messageElement) return;
+  messageElement.classList.add('error');
+  messageElement.setAttribute('role', 'status');
+  const button = document.createElement('button');
+  button.className = 'inline-retry-button';
+  button.type = 'button';
+  button.textContent = 'Try again';
+  button.addEventListener('click', retry, { once: true });
+  messageElement.replaceChildren(document.createTextNode(`${message} `), button);
 }
 const siteSearch = document.getElementById('site-search');
 
@@ -479,6 +538,7 @@ if (loginButton) {
       customerUser = null;
       sessionStorage.removeItem('customerUser');
       sessionStorage.removeItem('customerToken');
+      sessionStorage.removeItem('customerCsrfToken');
       window.dispatchEvent(new Event('ultbigboy:auth-changed'));
       refreshReviewAccess();
       refreshAuthPanel();
@@ -518,6 +578,7 @@ if (loginButton) {
       if (adminResult.ok) {
         const adminData = await adminResult.json();
         sessionStorage.setItem('adminToken', adminData.token);
+        sessionStorage.setItem('adminCsrfToken', adminData.csrfToken || '');
         window.location.href = 'admin.html';
         return;
       }
@@ -532,6 +593,7 @@ if (loginButton) {
       customerUser = data.user;
       sessionStorage.setItem('customerUser', JSON.stringify(customerUser));
       sessionStorage.setItem('customerToken', data.token);
+      sessionStorage.setItem('customerCsrfToken', data.csrfToken || '');
       window.dispatchEvent(new Event('ultbigboy:auth-changed'));
       refreshAuthPanel();
       setAuthView('account');
@@ -964,6 +1026,8 @@ function renderProducedPage(releases, page) {
     image.alt = `${release.title} cover artwork`;
     image.loading = 'lazy';
     image.decoding = 'async';
+    image.width = 600;
+    image.height = 600;
     const coverLabel = document.createElement('span');
     coverLabel.className = 'song-cover-label';
     coverLabel.textContent = release.title;
@@ -1203,9 +1267,50 @@ function renderCatalogPagination(pagination) {
   }));
 }
 
+function renderBeatStructuredData(beats) {
+  if (!Array.isArray(beats) || !document.querySelector('.catalog-page')) return;
+  const pageUrl = location.origin === 'null' ? null : `${location.origin}${location.pathname}`;
+  const itemListElement = beats.slice(0, 20).map((beat, index) => {
+    const prices = Object.values(beat.prices || {}).map(Number).filter(price => Number.isFinite(price) && price > 0);
+    const product = {
+      '@type': 'Product',
+      name: beat.title,
+      description: [beat.genre, beat.mood, beat.bpm ? `${beat.bpm} BPM` : '', beat.musicalKey].filter(Boolean).join(' · '),
+      image: beat.coverArt ? `${API}/api/uploads/${encodeURIComponent(beat.coverArt)}` : undefined
+    };
+    if (pageUrl) product.url = `${pageUrl}?search=${encodeURIComponent(beat.title)}#beat-listing`;
+    if (prices.length) {
+      product.offers = {
+        '@type': 'AggregateOffer',
+        priceCurrency: 'GHS',
+        lowPrice: Math.min(...prices).toFixed(2),
+        highPrice: Math.max(...prices).toFixed(2),
+        offerCount: prices.length,
+        availability: 'https://schema.org/InStock'
+      };
+    }
+    return { '@type': 'ListItem', position: index + 1, item: product };
+  });
+  let script = document.getElementById('beat-structured-data');
+  if (!script) {
+    script = document.createElement('script');
+    script.type = 'application/ld+json';
+    script.id = 'beat-structured-data';
+    document.head.append(script);
+  }
+  script.textContent = JSON.stringify({
+    '@context': 'https://schema.org',
+    '@type': 'ItemList',
+    name: 'UltBigBoy beats',
+    itemListElement
+  });
+}
+
 async function loadDatabaseBeatCatalog() {
   const catalogList = document.getElementById('beat-list');
   if (!catalogList || !document.querySelector('.catalog-page')) return;
+  if (catalogList.querySelector('.beat-card')) catalogList.setAttribute('aria-busy', 'true');
+  else setLoadingState(catalogList, 'Loading beats...');
   const query = new URLSearchParams({
     page: String(currentCatalogPage),
     pageSize: '11',
@@ -1233,14 +1338,20 @@ async function loadDatabaseBeatCatalog() {
       card.dataset.mood = String(beat.mood || '').toLowerCase();
       const duration = beat.previewDurationSeconds ? ` • ${Math.floor(beat.previewDurationSeconds / 60)}:${String(beat.previewDurationSeconds % 60).padStart(2, '0')}` : '';
       card.innerHTML = `<button class="beat-cover" type="button" aria-label="Play ${escapeHTML(beat.title)} preview"><img src="${escapeHTML(cover)}" alt="${escapeHTML(beat.title)} cover art"><span class="play-icon" aria-hidden="true">&#9654;</span></button><div class="beat-details"><h3>${escapeHTML(beat.title)}</h3><p class="beat-meta"><span class="meta-item">${escapeHTML(beat.bpm || '—')} BPM</span><span class="meta-item">${escapeHTML(beat.musicalKey || 'Key not set')}</span><span class="meta-item">${escapeHTML(beat.genre || 'Genre not set')}</span><span class="meta-item">${escapeHTML(beat.mood || 'Mood not set')}</span><span class="meta-item">${duration}</span></p><audio class="beat-audio" src="${escapeHTML(preview)}" preload="none"></audio><label class="license-label">License Type</label><select class="license-select">${Object.entries(prices).map(([license, price]) => `<option value="${license}" data-price="${Number(price)}">${license[0].toUpperCase() + license.slice(1)}</option>`).join('')}</select></div><div class="beat-purchase"><strong class="beat-price"></strong><button class="beat-cart-button" type="button" aria-label="Add ${escapeHTML(beat.title)} to cart"><span aria-hidden="true">&#128722;</span></button></div>`;
-      card.querySelector('.beat-cover img').loading = 'lazy';
-      card.querySelector('.beat-cover img').decoding = 'async';
+      card.querySelector('.license-select').setAttribute('aria-label', `License type for ${beat.title}`);
+      const coverImage = card.querySelector('.beat-cover img');
+      coverImage.loading = 'lazy';
+      coverImage.decoding = 'async';
+      coverImage.width = 600;
+      coverImage.height = 600;
       card.dataset.productId = beat.id;
       setupPreviewCard(card);
       return card;
     });
     if (cards.length) catalogList.replaceChildren(...cards);
     else catalogList.innerHTML = '<p class="filter-empty-state">No beats match those filters. Try broadening your search.</p>';
+    renderBeatStructuredData(data.beats);
+    clearLoadingState(catalogList);
     const pagination = data.pagination || { page: currentCatalogPage, pages: 1, total: data.beats.length };
     const total = Number(pagination.total || data.beats.length);
     document.getElementById('beat-result-count').textContent = `${total} ${total === 1 ? 'beat' : 'beats'} found`;
@@ -1266,6 +1377,8 @@ async function loadDatabaseBeatCatalog() {
 async function loadFeaturedBeatCatalog() {
   const catalogList = document.getElementById('beat-list');
   if (!catalogList || document.querySelector('.catalog-page')) return;
+  if (catalogList.querySelector('.beat-card')) catalogList.setAttribute('aria-busy', 'true');
+  else setLoadingState(catalogList, 'Loading featured beats...');
   try {
     const response = await fetch(`${API}/api/beats?page=1&pageSize=6`);
     const data = await response.json();
@@ -1286,11 +1399,17 @@ async function loadFeaturedBeatCatalog() {
       card.dataset.genre = String(beat.genre || '').toLowerCase();
       card.dataset.mood = String(beat.mood || '').toLowerCase();
       card.innerHTML = `<button class="beat-cover" type="button" aria-label="Play ${escapeHTML(beat.title)} preview"><img src="${escapeHTML(cover)}" alt="${escapeHTML(beat.title)} cover art"><span class="play-icon" aria-hidden="true">&#9654;</span></button><div class="beat-details"><h3>${escapeHTML(beat.title)}</h3><p class="beat-meta"><span class="meta-item">${escapeHTML(beat.bpm || '—')} BPM</span><span class="meta-item">${escapeHTML(beat.musicalKey || 'Key not set')}</span><span class="meta-item">${escapeHTML(beat.genre || 'Genre not set')}</span><span class="meta-item">${escapeHTML(beat.mood || 'Mood not set')}</span><span class="meta-item">${duration}</span></p><audio class="beat-audio" src="${escapeHTML(preview)}" preload="none"></audio><label class="license-label">License Type</label><select class="license-select">${Object.entries(prices).map(([license, price]) => `<option value="${license}" data-price="${Number(price)}">${license[0].toUpperCase() + license.slice(1)}</option>`).join('')}</select></div><div class="beat-purchase"><strong class="beat-price"></strong><button class="beat-cart-button" type="button" aria-label="Add ${escapeHTML(beat.title)} to cart"><span aria-hidden="true">&#128722;</span></button></div>`;
-      card.querySelector('.beat-cover img').loading = 'lazy';
-      card.querySelector('.beat-cover img').decoding = 'async';
+      card.querySelector('.license-select').setAttribute('aria-label', `License type for ${beat.title}`);
+      const coverImage = card.querySelector('.beat-cover img');
+      coverImage.loading = 'lazy';
+      coverImage.decoding = 'async';
+      coverImage.width = 600;
+      coverImage.height = 600;
       setupPreviewCard(card);
       return card;
     }));
+    if (!data.beats.length) catalogList.innerHTML = '<p class="filter-empty-state">No featured beats are published yet. Browse all beats to explore the catalog.</p>';
+    clearLoadingState(catalogList);
     catalogList.querySelectorAll('.license-select').forEach(select => select.addEventListener('change', () => {
       updateBeatPrices();
       syncCartProductButtons();
@@ -1492,6 +1611,8 @@ if (merchandiseLists.length) {
       image.alt = `${product.title} merchandise`;
       image.loading = 'lazy';
       image.decoding = 'async';
+      image.width = 600;
+      image.height = 500;
       const details = document.createElement('div');
       details.className = 'storefront-merchandise-details';
       const title = document.createElement('h3');
@@ -1542,6 +1663,7 @@ let beatRequestLicensePrices = {};
 
 function updateBeatRequestLicensePrice() {
   const price = beatRequestLicensePrices[beatRequestLicense?.value];
+  beatRequestLicensePrice?.classList.remove('error');
   beatRequestLicensePrice.textContent = Number.isFinite(price)
     ? `License request price: GHS ${price.toFixed(2)}`
     : 'Choose a license to see its price.';
@@ -1549,17 +1671,20 @@ function updateBeatRequestLicensePrice() {
 
 if (beatRequestLicense && beatRequestLicensePrice) {
   beatRequestLicense.addEventListener('change', updateBeatRequestLicensePrice);
-  fetch(`${API}/api/requests/beat-license-prices`)
-    .then(async response => {
+  const loadBeatRequestLicensePrices = async () => {
+    beatRequestLicensePrice.classList.remove('error');
+    beatRequestLicensePrice.textContent = 'Loading license prices...';
+    try {
+      const response = await fetch(`${API}/api/requests/beat-license-prices`);
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not load license prices.');
       beatRequestLicensePrices = data.prices || {};
       updateBeatRequestLicensePrice();
-    })
-    .catch(() => {
-      beatRequestLicensePrice.textContent = 'License prices are unavailable right now. Please try again later.';
-      beatRequestLicensePrice.classList.add('error');
-    });
+    } catch (error) {
+      showInlineRetry(beatRequestLicensePrice, error.message || 'License prices are unavailable right now.', loadBeatRequestLicensePrices);
+    }
+  };
+  loadBeatRequestLicensePrices();
 }
 
 beatRequestForm?.addEventListener('submit', async event => {
@@ -1860,25 +1985,64 @@ document.getElementById('merchandise')?.addEventListener('keydown', event => {
 
 updateMerchandiseSlide(0);
 
-// Replace these with your uploaded image paths
-const images = [
-  "Images/Hero1.png",
-  "Images/Hero2.png",
-  "Images/Hero3.png",
-  "Images/Hero4.png",
-  "Images/Hero5.png",
+// Hero images. WebP variants are generated by backend/scripts/optimize-images.js.
+const heroImages = [
+  { png: 'Images/Hero1.png', webp: 'Images/Hero1.webp' },
+  { png: 'Images/Hero2.png', webp: 'Images/Hero2.webp' },
+  { png: 'Images/Hero3.png', webp: 'Images/Hero3.webp' },
+  { png: 'Images/Hero4.png', webp: 'Images/Hero4.webp' },
+  { png: 'Images/Hero5.png', webp: 'Images/Hero5.webp' }
 ];
 
 let currentIndex = 0;
-const heroSection = document.querySelector(".hero");
+let heroRotationTimer;
+let heroPrefetchTimer;
+const heroSection = document.querySelector('.hero');
+const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
 
-function changeBackground() {
-  heroSection?.style.setProperty('--hero-bg', `url("${images[currentIndex]}")`);
-  currentIndex = (currentIndex + 1) % images.length;
+function preloadHeroImage(index) {
+  const image = heroImages[index % heroImages.length];
+  if (!image?.webp) return;
+  const preload = new Image();
+  preload.decoding = 'async';
+  preload.src = image.webp;
 }
 
-// Initial background
+function changeBackground() {
+  if (!heroSection) return;
+  const image = heroImages[currentIndex];
+  heroSection.style.setProperty('--hero-bg', `url("${image.png}")`);
+  heroSection.style.setProperty('--hero-bg-webp', `url("${image.webp}")`);
+  currentIndex = (currentIndex + 1) % heroImages.length;
+  window.clearTimeout(heroPrefetchTimer);
+  heroPrefetchTimer = window.setTimeout(() => preloadHeroImage(currentIndex), 1200);
+}
+
+function startHeroRotation() {
+  if (!heroSection || reducedMotionQuery.matches || heroRotationTimer || document.hidden) return;
+  heroRotationTimer = window.setInterval(changeBackground, 5000);
+}
+
+function stopHeroRotation() {
+  window.clearInterval(heroRotationTimer);
+  heroRotationTimer = undefined;
+}
+
 if (heroSection) {
   changeBackground();
-  setInterval(changeBackground, 5000);
+  if (document.readyState === 'complete') startHeroRotation();
+  else window.addEventListener('load', startHeroRotation, { once: true });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) stopHeroRotation();
+    else startHeroRotation();
+  });
+  const handleReducedMotionChange = () => {
+    if (reducedMotionQuery.matches) stopHeroRotation();
+    else startHeroRotation();
+  };
+  if (typeof reducedMotionQuery.addEventListener === 'function') {
+    reducedMotionQuery.addEventListener('change', handleReducedMotionChange);
+  } else if (typeof reducedMotionQuery.addListener === 'function') {
+    reducedMotionQuery.addListener(handleReducedMotionChange);
+  }
 }

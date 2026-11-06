@@ -3,7 +3,6 @@ const path = require('node:path');
 const PDFDocument = require('pdfkit');
 const QRCode = require('qrcode');
 
-const config = require('../config');
 
 const PAGE_WIDTH = 841.89;
 const PAGE_HEIGHT = 595.28;
@@ -91,10 +90,7 @@ function createLicenseCertificatePdf({ license, certificate, verificationUrl }) 
       drawLabelValue(doc, 'Beat ID', license.beat_id, 620, 250, 70, { valueSize: 8, height: 24 });
       const meta = [license.genre, license.bpm ? `${license.bpm} BPM` : null, license.musical_key].filter(Boolean).join('  |  ') || 'Genre, BPM, or musical key not recorded';
       doc.font('Helvetica').fontSize(8).fillColor(COLORS.muted).text(meta, 455, 276, { width: 330, height: 20, ellipsis: true });
-      if (license.cover_art) {
-        const coverPath = path.join(config.uploadDirectory, path.basename(license.cover_art));
-        if (fs.existsSync(coverPath)) doc.image(coverPath, 740, 214, { fit: [48, 48] });
-      }
+      if (license.cover_image) doc.image(license.cover_image, 740, 214, { fit: [48, 48] });
 
       doc.moveTo(48, 301).lineTo(793, 301).lineWidth(1).stroke(COLORS.gold);
       doc.font('Helvetica-Bold').fontSize(9).fillColor(COLORS.green).text('LICENSE PERMISSIONS & RESTRICTIONS', 48, 312);
@@ -121,8 +117,10 @@ function createLicenseCertificatePdf({ license, certificate, verificationUrl }) 
         48, termsY + 21, { width: 510, height: 28, ellipsis: true }
       );
       doc.font('Helvetica').fontSize(6.5).fillColor(COLORS.muted)
-        .text(`TERMS VERSION  ${certificate.terms_version}   |   PURCHASED  ${String(license.purchased_at || 'Not recorded')}   |   ORDER  ${license.order_reference || 'Not recorded'}`, 48, termsY + 52, { width: 520, height: 12, ellipsis: true });
-      doc.fillColor(COLORS.brightGreen).fontSize(7).text('Complete license terms: UltBigBoy license terms', 48, termsY + 67, { link: license.terms_url, underline: true });
+        .text(`PURCHASED  ${String(license.purchased_at || 'Not recorded')}   |   EXPIRES  ${String(license.expires_at || 'No expiration')}`, 48, termsY + 51, { width: 520, height: 10, ellipsis: true });
+      doc.font('Helvetica').fontSize(6.5).fillColor(COLORS.muted)
+        .text(`TERMS VERSION  ${certificate.terms_version}   |   ORDER  ${license.order_reference || 'Not recorded'}`, 48, termsY + 61, { width: 520, height: 10, ellipsis: true });
+      doc.fillColor(COLORS.brightGreen).fontSize(7).text('Complete license terms: UltBigBoy license terms', 48, termsY + 73, { link: license.terms_url, underline: true });
 
       doc.image(qr, 714, termsY + 9, { fit: [58, 58] });
       doc.font('Helvetica-Bold').fontSize(6.5).fillColor(COLORS.green).text('VERIFY CERTIFICATE', 675, termsY + 70, { width: 135, align: 'center' });

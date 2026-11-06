@@ -1,15 +1,18 @@
 const express = require('express');
-const fs = require('node:fs');
 const path = require('node:path');
 const database = require('../database');
 const config = require('../config');
 const { getPricing } = require('../services/pricing');
-const { saveUpload } = require('../services/uploads');
+const { saveUpload, deleteUploads } = require('../services/uploads');
 const { databaseError } = require('../services/error-messages');
 const validators = require('../services/input-validation');
 const sessions = require('../session-store');
 
 const router = express.Router();
+const queryOne = (query, parameters = []) => new Promise((resolve, reject) => database.get(query, parameters, (error, row) => error ? reject(error) : resolve(row)));
+const runQuery = (query, parameters = []) => new Promise((resolve, reject) => database.run(query, parameters, function (error) {
+  error ? reject(error) : resolve({ lastID: this.lastID, changes: this.changes });
+}));
 
 router.get('/requests/beat-license-prices', (request, response) => {
   getPricing(database).then(({ beatRequestLicensePrices: prices }) => {
@@ -49,19 +52,28 @@ router.post('/requests', async (request, response) => {
       const allowedAudioTypes = new Set(['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/mp4', 'audio/x-m4a', 'video/mp4', 'application/octet-stream']);
       if (!match || !allowedExtensions.has(extension) || !allowedAudioTypes.has(match[1].toLowerCase())) return response.status(400).json({ error: 'Upload an MP3, M4A, MP4, WAV, or OGG audio file.' });
       if (Buffer.from(match[2], 'base64').length > 15 * 1024 * 1024) return response.status(400).json({ error: 'Audio files must be 15 MB or smaller.' });
-      sampleAudioFile = saveUpload(sampleAudio, 'sample-audio', 'audio');
+      sampleAudioFile = await saveUpload(sampleAudio, 'sample-audio', 'audio');
     }
   } catch (error) {
     return response.status(400).json({ error: error.message || 'The sample audio could not be saved. Check the file type and size, then try again.' });
   }
-  database.get("SELECT id FROM users WHERE lower(email) = lower(?) AND role NOT IN ('admin', 'super_admin')", [String(email).trim()], (lookupError, user) => {
-    if (lookupError) return response.status(500).json({ error: databaseError('Looking up the request customer failed.', lookupError) });
-    database.run('INSERT INTO customization_requests (user_id, request_type, customer_name, customer_email, product_name, details, sample_audio_file, sample_link, requested_license, license_price_gsh) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [user?.id || null, normalizedRequestType, name.trim(), email.trim().toLowerCase(), productName || null, details.trim(), sampleAudioFile, sampleLink, requestedLicense, licensePrice], function (error) {
-      if (error && sampleAudioFile) fs.unlinkSync(path.join(config.uploadDirectory, sampleAudioFile));
-      if (error) return response.status(500).json({ error: databaseError('Saving the customization request failed.', error) });
-      response.status(201).json({ id: this.lastID });
-    });
-  });
+  let user;
+  try {
+    user = await queryOne("SELECT id FROM users WHERE lower(email) = lower(?) AND role NOT IN ('admin', 'super_admin')", [String(email).trim()]);
+  } catch (error) {
+    await deleteUploads([sampleAudioFile]);
+    return response.status(500).json({ error: databaseError('Looking up the request customer failed.', error) });
+  }
+  try {
+    const result = await runQuery(
+      'INSERT INTO customization_requests (user_id, request_type, customer_name, customer_email, product_name, details, sample_audio_file, sample_link, requested_license, license_price_gsh) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [user?.id || null, normalizedRequestType, name.trim(), email.trim().toLowerCase(), productName || null, details.trim(), sampleAudioFile, sampleLink, requestedLicense, licensePrice]
+    );
+    response.status(201).json({ id: result.lastID });
+  } catch (error) {
+    await deleteUploads([sampleAudioFile]);
+    response.status(500).json({ error: databaseError('Saving the customization request failed.', error) });
+  }
 });
 
 router.get('/customer/requests', sessions.requireCustomer, (request, response) => {

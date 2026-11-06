@@ -2,15 +2,33 @@ const crypto = require('node:crypto');
 const config = require('./config');
 const database = require('./database');
 const { normalizeRole, hasRoleAccess, hasPermission } = require('./services/roles');
+const logger = require('./services/logger');
 
 const adminLoginAttempts = new Map();
 const customerLoginAttempts = new Map();
 
+function getAuthToken(request) {
+  const authorization = request.get('Authorization');
+  const bearer = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
+  if (bearer) return { token: bearer, source: 'bearer' };
+  const cookies = {};
+  for (const part of String(request.get('Cookie') || '').split(';')) {
+    const separator = part.indexOf('=');
+    if (separator < 0) continue;
+    try {
+      cookies[part.slice(0, separator).trim()] = decodeURIComponent(part.slice(separator + 1).trim());
+    } catch {
+      continue;
+    }
+  }
+  const cookieToken = cookies[config.sessionCookieNames.customer] || cookies[config.sessionCookieNames.admin];
+  return cookieToken ? { token: cookieToken, source: 'cookie' } : { token: null, source: null };
+}
+
 function getBearerToken(request) {
-  const bearer = request.get('Authorization')?.replace(/^Bearer\s+/i, '');
-  if (bearer) return bearer;
-  const cookies = Object.fromEntries(String(request.get('Cookie') || '').split(';').map(part => part.trim().split('=').map(decodeURIComponent)).filter(parts => parts.length === 2));
-  return cookies[config.sessionCookieNames.customer] || cookies[config.sessionCookieNames.admin];
+  const auth = getAuthToken(request);
+  request.authSource = auth.source;
+  return auth.token;
 }
 
 function createToken() {
@@ -38,11 +56,12 @@ function get(query, parameters = []) {
 
 async function createSession(value) {
   const token = createToken();
+  const csrfToken = createToken();
   await run(
-    'INSERT INTO user_sessions (user_id, token_hash, role, expires_at) VALUES (?, ?, ?, ?)',
-    [value.id, hashToken(token), value.role, new Date(Date.now() + config.sessionDurationMs)]
+    'INSERT INTO user_sessions (user_id, token_hash, csrf_token_hash, role, expires_at) VALUES (?, ?, ?, ?, ?)',
+    [value.id, hashToken(token), hashToken(csrfToken), value.role, new Date(Date.now() + config.sessionDurationMs)]
   );
-  return token;
+  return { token, csrfToken };
 }
 
 async function deleteSession(token) {
@@ -64,7 +83,7 @@ function identifySession(request, response, { optional = false, requiredRole = n
     return response.status(401).json({ error: loginMessage });
   }
   get(
-    `SELECT s.user_id AS id, u.name, u.email, u.phone, u.role, u.email_verified_at AS emailVerifiedAt
+    `SELECT s.user_id AS id, s.csrf_token_hash AS csrfTokenHash, u.name, u.email, u.phone, u.role, u.email_verified_at AS emailVerifiedAt
      FROM user_sessions s
      JOIN users u ON u.id = s.user_id
      WHERE s.token_hash = ? AND s.expires_at > CURRENT_TIMESTAMP`,
@@ -108,7 +127,7 @@ function identifySession(request, response, { optional = false, requiredRole = n
     if (!property && (role === 'admin' || role === 'super_admin')) request.admin = session;
     next();
   }).catch(error => {
-    console.error('Session validation failed:', error.code || error.message);
+    logger.error('session_validation_failed', { code: error.code });
     response.status(500).json({ error: 'Could not validate the login session. Try again.' });
   });
 }

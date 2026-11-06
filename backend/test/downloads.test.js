@@ -7,12 +7,13 @@ const { DOWNLOADABLE_ORDER_STATUSES, isDownloadableOrderStatus, createDownloadTo
 const reference = 'UBB-123-abc';
 const productId = 42;
 
-test('partial refunds keep downloads available while full refunds do not', () => {
-  assert.deepEqual([...DOWNLOADABLE_ORDER_STATUSES], ['paid', 'partially_refunded']);
+test('only fully paid orders can download purchased files', () => {
+  assert.deepEqual([...DOWNLOADABLE_ORDER_STATUSES], ['paid']);
   assert.equal(isDownloadableOrderStatus('paid'), true);
-  assert.equal(isDownloadableOrderStatus('PARTIALLY_REFUNDED'), true);
+  assert.equal(isDownloadableOrderStatus('PARTIALLY_REFUNDED'), false);
   assert.equal(isDownloadableOrderStatus('refunded'), false);
   assert.equal(isDownloadableOrderStatus('pending'), false);
+  assert.equal(isDownloadableOrderStatus('failed'), false);
   assert.equal(isDownloadableOrderStatus(undefined), false);
 });
 

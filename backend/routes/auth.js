@@ -9,6 +9,7 @@ const { issueToken, consumeToken } = require('../services/account-tokens');
 const { recordAuditSafely } = require('../services/audit');
 const { rateLimit } = require('../services/rate-limit');
 const { createEmailIdempotencyKey, queueEmailSafely } = require('../services/email/outbox');
+const logger = require('../services/logger');
 
 const router = express.Router();
 const authRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 30, message: 'Too many authentication requests. Try again later.' });
@@ -82,7 +83,7 @@ router.post('/auth/signup', authRateLimit, async (request, response) => {
               : 'An account with these details already exists.';
           return response.status(409).json({ error: message });
         }
-        console.error('Account creation failed:', error.code, error.sqlMessage || error.message);
+        logger.error('account_creation_failed', { code: error.code });
         const databaseMessages = {
           ER_NO_SUCH_TABLE: 'The users table is missing. Run node database.js to initialize the database.',
           ER_BAD_FIELD_ERROR: 'The users table is missing a required column. Run node database.js to update the database.',
@@ -113,7 +114,7 @@ router.post('/auth/signup', authRateLimit, async (request, response) => {
         if (process.env.NODE_ENV !== 'production') result.verificationToken = verificationToken;
         response.status(201).json(result);
       } catch (tokenError) {
-        console.error('Email verification token creation failed:', tokenError.code || tokenError.message);
+        logger.error('email_verification_token_creation_failed', { code: tokenError.code });
         response.status(201).json({ user: { id: this.lastID, name, email: normalizedEmail, role: normalizedRole }, message: 'Account created, but the verification message could not be prepared. Request a new verification email.' });
       }
     }
@@ -146,9 +147,9 @@ router.post('/auth/login', loginRateLimit, (request, response) => {
     }
     recordAuditSafely(database, { userId: user.id, action: 'customer_login', entityType: 'user', entityId: user.id, ipAddress: request.ip });
     sessions.createSession({ id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role })
-      .then(token => {
+      .then(({ token, csrfToken }) => {
         response.setHeader('Set-Cookie', cookieOptions(config.sessionCookieNames.customer, token));
-        response.json({ token, user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role } });
+        response.json({ token, csrfToken, user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role } });
       })
       .catch(sessionError => response.status(500).json({ error: databaseError('Creating the customer login session failed.', sessionError) }));
   });
@@ -334,9 +335,9 @@ router.post('/admin/login', loginRateLimit, (request, response) => {
         name: admin.name,
         email: admin.email,
         role: admin.role
-      }).then(token => {
+      }).then(({ token, csrfToken }) => {
         response.setHeader('Set-Cookie', cookieOptions(config.sessionCookieNames.admin, token));
-        response.json({ token, email: admin.email, role: admin.role });
+        response.json({ token, csrfToken, email: admin.email, role: admin.role });
       })
         .catch(sessionError => response.status(500).json({ error: databaseError('Creating the administrator login session failed.', sessionError) }));
     }

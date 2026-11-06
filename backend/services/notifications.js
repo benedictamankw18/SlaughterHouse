@@ -1,3 +1,5 @@
+const logger = require('./logger');
+
 function createNotificationSafely(database, { userId, type, title, message, dedupeKey = null }) {
   if (!userId || !type || !title || !message) return Promise.resolve(false);
   return new Promise(resolve => {
@@ -18,7 +20,7 @@ function createNotificationSafely(database, { userId, type, title, message, dedu
       query,
       parameters,
       error => {
-        if (error) console.error('Notification creation failed:', error.code || error.message);
+        if (error) logger.error('notification_creation_failed', { code: error.code });
         resolve(!error);
       }
     );
@@ -35,7 +37,7 @@ function notifyAdminsSafely(database, { type, title, message, dedupeKey }) {
        ON DUPLICATE KEY UPDATE dedupe_key = VALUES(dedupe_key)`,
       [type, title, message, dedupeKey],
       error => {
-        if (error) console.error('Administrator notification creation failed:', error.code || error.message);
+        if (error) logger.error('administrator_notification_creation_failed', { code: error.code });
         resolve(!error);
       }
     );

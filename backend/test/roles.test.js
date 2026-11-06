@@ -28,3 +28,20 @@ test('role access keeps super-admin-only permissions separate from admin access'
   assert.equal(hasPermission('customer', 'customer:self'), true);
   assert.equal(hasPermission('visitor', 'customer:self'), false);
 });
+
+test('authorization matrix distinguishes public, customer, admin, and super-admin access', () => {
+  const matrix = [
+    { role: 'visitor', customer: false, admin: false, superAdmin: false, manageSettings: false },
+    { role: 'customer', customer: true, admin: false, superAdmin: false, manageSettings: false },
+    { role: 'admin', customer: true, admin: true, superAdmin: false, manageSettings: false },
+    { role: 'super_admin', customer: true, admin: true, superAdmin: true, manageSettings: true }
+  ];
+
+  for (const access of matrix) {
+    assert.equal(hasPermission(access.role, 'public:read'), true, `${access.role} can read public data`);
+    assert.equal(hasPermission(access.role, 'customer:self'), access.customer, `${access.role} customer access`);
+    assert.equal(hasRoleAccess(access.role, 'admin'), access.admin, `${access.role} administrator access`);
+    assert.equal(hasRoleAccess(access.role, 'super_admin'), access.superAdmin, `${access.role} super-admin access`);
+    assert.equal(hasPermission(access.role, 'admin:manage_settings'), access.manageSettings, `${access.role} settings access`);
+  }
+});

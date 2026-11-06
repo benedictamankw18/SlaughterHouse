@@ -5,6 +5,7 @@ process.env.CERTIFICATE_SIGNING_SECRET = 'test-certificate-signing-secret-that-i
 
 const { DEFAULT_LICENSE_RIGHTS, validateRightsDefinition } = require('../services/license-rights');
 const {
+  TERMS_VERSION,
   certificateToken,
   certificateTokenHash,
   ensureCertificateForLicense,
@@ -13,6 +14,10 @@ const {
   tokenMatchesHash
 } = require('../services/license-certificates');
 const { createLicenseCertificatePdf, getRightsRows } = require('../services/license-certificate');
+
+test('new purchases use the updated license terms version', () => {
+  assert.equal(TERMS_VERSION, 'UBB-MUSIC-LICENSE-2026-11-V2');
+});
 
 test('purchase-time license rights are validated without consulting current definitions', () => {
   const savedRights = {
@@ -102,7 +107,7 @@ test('certificate PDF is a printable landscape PDF with a verification code', as
     },
     certificate: {
       certificate_id: 'UBB-CERT-2026-0123456789ABCDEF',
-      terms_version: 'UBB-MUSIC-LICENSE-2026-11-V1',
+      terms_version: 'UBB-MUSIC-LICENSE-2026-11-V2',
       issued_at: '2026-11-04',
       status: 'valid'
     },

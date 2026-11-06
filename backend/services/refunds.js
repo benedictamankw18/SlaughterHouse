@@ -1,6 +1,7 @@
 const { createNotificationSafely } = require('./notifications');
 const { isEmailAddress, queueEmailSafely } = require('./email/outbox');
 const config = require('../config');
+const logger = require('./logger');
 
 const FULL_REFUND_TOLERANCE = 0.005;
 
@@ -40,7 +41,7 @@ async function emailAdmins(db, order, refundedAmount) {
   try {
     admins = await db.all("SELECT id, name, email FROM users WHERE role IN ('admin', 'super_admin')");
   } catch (error) {
-    console.error('Could not load administrator recipients for refund email:', error.code || error.message);
+    logger.error('refund_admin_recipients_load_failed', { code: error.code });
     return;
   }
   for (const admin of admins || []) {
