@@ -6,16 +6,21 @@ test('business settings accepts only known non-negative currency values', () => 
   const result = validateSettingUpdates({
     booking_fee_mixtape_ghs: '750.50',
     beat_default_exclusive_usd: 420,
-    beat_request_license_basic_ghs: 1.15
+    beat_request_license_basic_ghs: 1.15,
+    usd_to_ghs_rate: '12.345678'
   });
   assert.deepEqual(result.value, [
     ['booking_fee_mixtape_ghs', '750.50'],
     ['beat_default_exclusive_usd', '420.00'],
-    ['beat_request_license_basic_ghs', '1.15']
+    ['beat_request_license_basic_ghs', '1.15'],
+    ['usd_to_ghs_rate', '12.345678']
   ]);
   assert.equal(validateSettingUpdates({ unknown_setting: 1 }).error.includes('cannot be changed'), true);
   assert.equal(validateSettingUpdates({ beat_default_basic_usd: -1 }).error.includes('non-negative'), true);
   assert.equal(validateSettingUpdates({ beat_default_basic_usd: 1.001 }).error.includes('two decimal places'), true);
+  assert.equal(validateSettingUpdates({ usd_to_ghs_rate: 0 }).error.includes('greater than zero'), true);
+  assert.equal(validateSettingUpdates({ usd_to_ghs_rate: 1000000 }).error.includes('less than 1000000'), true);
+  assert.equal(validateSettingUpdates({ usd_to_ghs_rate: 1.0000001 }).error.includes('at most 6 decimal places'), true);
   assert.equal(validateSettingUpdates([]).error.includes('object'), true);
   assert.ok(Object.keys(BUSINESS_SETTINGS).length > 0);
 });

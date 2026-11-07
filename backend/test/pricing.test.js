@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { getPricing } = require('../services/pricing');
+const { getPricing, getUsdGhsRate, isUsdGhsRateFresh, USD_GHS_RATE_MAX_AGE_MS } = require('../services/pricing');
 
 const settingRows = [
   { setting_key: 'booking_fee_mixtape_ghs', setting_value: '700' },
@@ -53,4 +53,36 @@ test('getPricing rejects when the settings query fails', async () => {
     }
   };
   await assert.rejects(() => getPricing(database), /boom/);
+});
+
+test('getUsdGhsRate returns a validated fresh centrally managed rate', async () => {
+  const now = Date.now();
+  const database = {
+    get(query, parameters, callback) {
+      assert.match(query, /setting_value, updated_at/);
+      assert.deepEqual(parameters, ['usd_to_ghs_rate']);
+      callback(null, { setting_value: '12.3456', updated_at: new Date(now - 1000) });
+    }
+  };
+  assert.deepEqual(await getUsdGhsRate(database, now), {
+    rate: 12.3456,
+    updatedAt: new Date(now - 1000).toISOString()
+  });
+  assert.equal(USD_GHS_RATE_MAX_AGE_MS, 24 * 60 * 60 * 1000);
+  assert.equal(isUsdGhsRateFresh(new Date(now), now), true);
+  assert.equal(isUsdGhsRateFresh(new Date(now - USD_GHS_RATE_MAX_AGE_MS - 1), now), false);
+});
+
+test('getUsdGhsRate rejects missing, invalid, and stale rates', async () => {
+  for (const [row, code] of [
+    [null, 'USD_GHS_RATE_INVALID'],
+    [{ setting_value: '0', updated_at: new Date() }, 'USD_GHS_RATE_INVALID'],
+    [{ setting_value: '12.1234567', updated_at: new Date() }, 'USD_GHS_RATE_INVALID'],
+    [{ setting_value: '12', updated_at: new Date(Date.now() - USD_GHS_RATE_MAX_AGE_MS - 1) }, 'USD_GHS_RATE_STALE']
+  ]) {
+    const database = {
+      get(query, parameters, callback) { callback(null, row); }
+    };
+    await assert.rejects(getUsdGhsRate(database), error => error.code === code);
+  }
 });

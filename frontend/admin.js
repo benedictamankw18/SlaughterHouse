@@ -135,7 +135,7 @@ function renderList(elementId, items, type) {
     if (type === 'reviews') return `<article class="admin-list-item"><strong>${escapeHtml(item.customer_name)} · ${'★'.repeat(Number(item.rating) || 0)}${'☆'.repeat(Math.max(0, 5 - Number(item.rating || 0)))}</strong><p>${escapeHtml(item.customer_email)} · ${escapeHtml(item.status)} · ${escapeHtml(item.created_at || '')}</p><blockquote>${escapeHtml(item.review_text)}</blockquote><div class="admin-review-actions">${item.status === 'pending' ? '<button type="button" data-review-status="approved">Approve</button><button type="button" data-review-status="rejected">Reject</button>' : ''}${item.status !== 'removed' ? '<button type="button" data-review-status="removed">Remove</button>' : ''}</div><p class="admin-message" data-review-message></p><span data-review-id="${Number(item.id)}" hidden></span></article>`;
     if (type === 'customers') return `<article class="admin-list-item"><strong>${escapeHtml(item.name || item.artist_name || 'Customer')}</strong><p>${escapeHtml(item.email)} · ${escapeHtml(item.role)} · joined ${escapeHtml(item.created_at || '')} · email ${item.email_verified_at ? 'verified' : 'unverified'}</p></article>`;
     if (type === 'artists') {
-      const purchases = item.purchases.length ? item.purchases.map(purchase => `<li>${escapeHtml(purchase.beat_title)} · ${escapeHtml(purchase.license)} license · ${formatMoney(Number(purchase.amount) * 10)} · ${escapeHtml(purchase.purchased_at || '')}</li>`).join('') : '<li>No beat purchases yet.</li>';
+      const purchases = item.purchases.length ? item.purchases.map(purchase => `<li>${escapeHtml(purchase.beat_title)} · ${escapeHtml(purchase.license)} license · ${purchase.amount === null ? 'GHS amount unavailable' : formatMoney(purchase.amount)}${purchase.exchange_rate ? ` · USD/GHS ${escapeHtml(purchase.exchange_rate)}` : ''} · ${escapeHtml(purchase.purchased_at || '')}</li>`).join('') : '<li>No beat purchases yet.</li>';
       return `<article class="admin-list-item"><strong>${escapeHtml(item.artist_name || item.name)}</strong><p>${escapeHtml(item.email)} · ${item.purchases.length} license purchase(s)</p><ul>${purchases}</ul></article>`;
     }
     if (type === 'withdrawals') return `<article class="admin-list-item"><strong>${formatMoney(item.amount)}</strong><p>${escapeHtml(item.created_at || '')}</p></article>`;
@@ -268,7 +268,14 @@ function renderReport(report) {
 
 function renderBusinessSettings(settings, canEdit) {
   const form = $('#business-settings-form');
-  form.innerHTML = `${settings.map(setting => `<label>${escapeHtml(setting.label)}<input name="${escapeHtml(setting.key)}" type="number" min="0" max="100000000" step="0.01" value="${escapeHtml(setting.value)}" ${canEdit ? 'required' : 'disabled'}></label>`).join('')}${canEdit ? '<button class="auth-primary-button" type="submit">Save business settings</button>' : '<p>Only a super-admin can edit business settings.</p>'}`;
+  form.innerHTML = `${settings.map(setting => {
+    const exchangeRate = setting.key === 'usd_to_ghs_rate';
+    const updatedAt = setting.updatedAt ? new Date(setting.updatedAt).toLocaleString() : null;
+    const rateStatus = exchangeRate
+      ? `<small>${!updatedAt ? 'No exchange rate is configured. Beat checkout is unavailable until one is saved.' : setting.fresh ? `Current rate updated ${escapeHtml(updatedAt)}.` : `STALE: last updated ${escapeHtml(updatedAt)}. Beat checkout is disabled until refreshed.`} Rates expire after 24 hours.</small>`
+      : '';
+    return `<label>${escapeHtml(setting.label)}<input name="${escapeHtml(setting.key)}" type="number" min="${exchangeRate ? '0.000001' : '0'}" max="${exchangeRate ? '999999.999999' : '100000000'}" step="${exchangeRate ? '0.000001' : '0.01'}" value="${escapeHtml(setting.value)}" ${canEdit ? 'required' : 'disabled'}>${rateStatus}</label>`;
+  }).join('')}${canEdit ? '<button class="auth-primary-button" type="submit">Save business settings</button>' : '<p>Only a super-admin can edit business settings.</p>'}`;
 }
 
 function renderStaff(staff) {
@@ -763,7 +770,7 @@ $('#business-settings-form').addEventListener('submit', async event => {
   event.preventDefault();
   const form = event.currentTarget;
   const settings = Object.fromEntries([...form.elements].filter(element => element.name && element.type === 'number').map(element => [element.name, element.value]));
-  if (!window.confirm('Save these business price changes? They affect future checkouts and requests.')) return;
+  if (!window.confirm('Save these business settings? Price and exchange-rate changes affect future checkouts and requests.')) return;
   const button = form.querySelector('button[type="submit"]');
   button.disabled = true;
   try {

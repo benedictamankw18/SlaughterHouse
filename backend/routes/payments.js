@@ -2,7 +2,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const database = require('../database');
 const config = require('../config');
-const { getPricing } = require('../services/pricing');
+const { getPricing, getUsdGhsRate } = require('../services/pricing');
 const { getDownloadItems } = require('../services/downloads');
 const { databaseError } = require('../services/error-messages');
 const validators = require('../services/input-validation');
@@ -17,7 +17,7 @@ const { fulfillPaidBooking } = require('../services/booking-fulfillment');
 const logger = require('../services/logger');
 
 const router = express.Router();
-const { apiPublicUrl, paymentCallbackUrl, paystackSecretKey, usdToGhsRate } = config;
+const { apiPublicUrl, paymentCallbackUrl, paystackSecretKey } = config;
 const LOW_STOCK_THRESHOLD = 5;
 const queryRows = (query, parameters = []) => new Promise((resolve, reject) => database.all(query, parameters, (error, rows) => error ? reject(error) : resolve(rows || [])));
 const run = (query, parameters = []) => new Promise((resolve, reject) => database.run(query, parameters, function (error) { error ? reject(error) : resolve(this); }));
@@ -67,14 +67,49 @@ async function decrementMerchandiseStock(db, items, orderReference) {
 function saleAmount(item) {
   if (item.type === 'merchandise') return item.priceGhs;
   if (item.type === 'booking') return item.feeGhs;
-  return item.priceUsd * usdToGhsRate;
+  return item.priceGhs !== null && item.priceGhs !== undefined && Number.isFinite(Number(item.priceGhs))
+    ? Number(item.priceGhs)
+    : null;
+}
+
+function amountToCents(amount) {
+  return Math.round(Number(amount) * 100);
+}
+
+function snapshotLegacyBeatPrices(order, items) {
+  const missing = items.filter(item => (item.type || 'beat') === 'beat'
+    && (item.priceGhs === null || item.priceGhs === undefined || !Number.isFinite(Number(item.priceGhs))));
+  if (!missing.length) return items;
+  const missingSet = new Set(missing);
+  const knownAmount = items.reduce((sum, item) => {
+    if (missingSet.has(item)) return sum;
+    const amount = item.type === 'booking' ? item.feeGhs : item.priceGhs;
+    return sum + (Number.isFinite(Number(amount)) ? amountToCents(amount) : 0);
+  }, 0);
+  const remainingCents = amountToCents(order.amount) - knownAmount;
+  const totalUsd = missing.reduce((sum, item) => sum + Number(item.priceUsd), 0);
+  if (!Number.isFinite(remainingCents) || remainingCents <= 0 || !Number.isFinite(totalUsd) || totalUsd <= 0 || missing.some(item => !Number.isFinite(Number(item.priceUsd)) || Number(item.priceUsd) <= 0)) {
+    throw Object.assign(new Error('The saved order prices cannot be reconciled to its quoted total.'), { code: 'ORDER_PRICING_INVALID' });
+  }
+  const rate = remainingCents / 100 / totalUsd;
+  let allocatedCents = 0;
+  let remainingItems = missing.length;
+  return items.map(item => {
+    if (!missingSet.has(item)) return item;
+    remainingItems -= 1;
+    const priceCents = remainingItems === 0
+      ? remainingCents - allocatedCents
+      : Math.round(remainingCents * Number(item.priceUsd) / totalUsd);
+    allocatedCents += priceCents;
+    return { ...item, priceGhs: priceCents / 100, exchangeRate: rate };
+  });
 }
 
 // Idempotent per order line: a retried verification/webhook cannot double-count revenue.
 async function recordOrderSales(db, order, items) {
   for (const [lineIndex, item] of items.entries()) {
     const amount = saleAmount(item);
-    if (!Number.isFinite(Number(amount))) continue;
+    if (amount === null || amount === undefined || !Number.isFinite(Number(amount))) continue;
     await db.run(
       `INSERT INTO sales (order_reference, line_index, sale_type, product_id, product_name, buyer_name, buyer_email, amount)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -97,10 +132,10 @@ async function normalizePaidOrder(db, order, items, paymentData) {
   for (const item of items) {
     if (item.type === 'booking') continue;
     await db.run(
-      `INSERT INTO order_items (order_id, product_type, product_id, product_name, license_type, unit_amount, currency, quantity)
-       SELECT ?, ?, ?, ?, ?, ?, ?, 1
+      `INSERT INTO order_items (order_id, product_type, product_id, product_name, license_type, unit_amount, currency, exchange_rate, quantity)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, 1
        WHERE NOT EXISTS (SELECT 1 FROM order_items WHERE order_id = ? AND product_type = ? AND product_id = ? AND COALESCE(license_type, '') = COALESCE(?, ''))`,
-      [order.id, item.type || 'beat', item.productId, item.name, item.license || null, item.type === 'merchandise' ? item.priceGhs : item.priceUsd * usdToGhsRate, 'GHS', order.id, item.type || 'beat', item.productId, item.license || null]
+      [order.id, item.type || 'beat', item.productId, item.name, item.license || null, item.priceGhs, 'GHS', item.exchangeRate || null, order.id, item.type || 'beat', item.productId, item.license || null]
     );
   }
 
@@ -161,7 +196,7 @@ async function normalizePaidOrder(db, order, items, paymentData) {
 
 async function completePaidOrder(db, order, items, paymentData) {
   await decrementMerchandiseStock(db, items, order.reference);
-  await db.run('UPDATE orders SET status = ? WHERE reference = ? AND status <> ?', ['paid', order.reference, 'paid']);
+  await db.run('UPDATE orders SET status = ?, items_json = ? WHERE reference = ? AND status <> ?', ['paid', JSON.stringify(items), order.reference, 'paid']);
   await recordOrderSales(db, order, items);
   await normalizePaidOrder(db, order, items, paymentData);
   if (!items.some(item => item.type === 'booking')) await notifyAdminsSafely(db, {
@@ -191,8 +226,8 @@ async function completePaidOrder(db, order, items, paymentData) {
 
 async function markBookingForReview(db, order, items, paymentData, reason = 'booking_slot_unavailable') {
   await db.run(
-    'UPDATE orders SET status = ?, fulfillment_review_required = TRUE, fulfillment_review_reason = ? WHERE id = ?',
-    ['paid', reason, order.id]
+    'UPDATE orders SET status = ?, items_json = ?, fulfillment_review_required = TRUE, fulfillment_review_reason = ? WHERE id = ?',
+    ['paid', JSON.stringify(items), reason, order.id]
   );
   await db.run(
     `INSERT INTO payments (order_id, provider, provider_reference, status, amount, currency, provider_payload, verified_at)
@@ -316,7 +351,9 @@ router.post('/payments/webhook', async (request, response) => {
       };
       if (Number(event.data.amount) !== Math.round(Number(order.amount) * 100) || event.data.currency !== order.currency) rejectWebhook(400, { error: 'Payment webhook amount could not be reconciled.' });
       let items;
-      try { items = JSON.parse(order.items_json); } catch { rejectWebhook(500, { error: 'Order data is invalid.' }); }
+      try { items = snapshotLegacyBeatPrices(order, JSON.parse(order.items_json)); } catch (error) {
+        rejectWebhook(500, { error: error.code === 'ORDER_PRICING_INVALID' ? error.message : 'Order data is invalid.' });
+      }
       await lockExclusiveBeats(tx, items);
       const conflictingBeatId = await hasConflictingExclusiveSale(tx, items, order.reference);
       if (conflictingBeatId) {
@@ -438,9 +475,21 @@ router.post('/payments/initialize', async (request, response) => {
           .catch(reject);
       });
     })));
-    const amountGhs = validatedItems.reduce((total, item) => total + (item.type === 'merchandise' ? item.priceGhs : item.priceUsd * usdToGhsRate), 0);
+    const exchangeRate = validatedItems.some(item => item.type === 'beat')
+      ? await getUsdGhsRate(database)
+      : null;
+    const pricedItems = validatedItems.map(item => {
+      if (item.type !== 'beat') return { ...item, priceGhs: amountToCents(item.priceGhs) / 100 };
+      return {
+        ...item,
+        priceGhs: amountToCents(Number(item.priceUsd) * exchangeRate.rate) / 100,
+        exchangeRate: exchangeRate.rate
+      };
+    });
+    const amountCents = pricedItems.reduce((total, item) => total + amountToCents(item.priceGhs), 0);
+    const amountGhs = amountCents / 100;
     const reference = `UBB-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
-    await run('INSERT INTO orders (reference, customer_name, customer_email, amount, currency, items_json) VALUES (?, ?, ?, ?, ?, ?)', [reference, String(name).trim(), normalizedEmail, amountGhs, 'GHS', JSON.stringify(validatedItems)]);
+    await run('INSERT INTO orders (reference, customer_name, customer_email, amount, currency, items_json) VALUES (?, ?, ?, ?, ?, ?)', [reference, String(name).trim(), normalizedEmail, amountGhs, 'GHS', JSON.stringify(pricedItems)]);
     const paystackResponse = await fetch('https://api.paystack.co/transaction/initialize', { method: 'POST', headers: { Authorization: `Bearer ${paystackSecretKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ email: normalizedEmail, amount: Math.round(amountGhs * 100), currency: 'GHS', reference, channels: [paymentMethod], callback_url: paymentCallbackUrl.toString() }) });
     const payment = await paystackResponse.json();
     if (!paystackResponse.ok || !payment.status) throw new Error(payment.message || 'Could not start payment.');
@@ -453,7 +502,8 @@ router.post('/payments/initialize', async (request, response) => {
     );
     response.json({ authorizationUrl: payment.data.authorization_url, reference });
   } catch (error) {
-    response.status(400).json({ error: error.message || 'Store payment initialization failed because the order could not be prepared.' });
+    const status = ['USD_GHS_RATE_INVALID', 'USD_GHS_RATE_STALE'].includes(error.code) ? 503 : 400;
+    response.status(status).json({ error: error.message || 'Store payment initialization failed because the order could not be prepared.' });
   }
 });
 
@@ -495,7 +545,9 @@ router.get('/payments/verify/:reference', async (request, response) => {
       const order = await tx.get('SELECT * FROM orders WHERE reference = ? FOR UPDATE', [request.params.reference]);
       if (!order) return { httpStatus: 404, body: { error: `No order was found for payment reference ${request.params.reference}.` } };
       let items;
-      try { items = JSON.parse(order.items_json); } catch { return { httpStatus: 500, body: { error: 'Order data is invalid.' } }; }
+      try { items = snapshotLegacyBeatPrices(order, JSON.parse(order.items_json)); } catch (error) {
+        return { httpStatus: 500, body: { error: error.code === 'ORDER_PRICING_INVALID' ? error.message : 'Order data is invalid.' } };
+      }
       const bookingItem = items.find(item => item.type === 'booking');
       const licenseRights = await loadLicenseRights(tx);
       const success = () => ({

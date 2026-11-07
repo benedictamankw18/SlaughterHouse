@@ -336,7 +336,6 @@ test('unsupported payment methods are rejected before payment setup', async () =
       apiPublicUrl: 'https://api.example.test',
       paymentCallbackUrl: new URL('https://store.example.test/payment-success.html'),
       paystackSecretKey: 'configured-test-secret',
-      usdToGhsRate: 10,
       bookingServiceLabels: {}
     }
   });

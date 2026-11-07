@@ -127,7 +127,6 @@ function testConfig() {
     sessionDurationMs: 60 * 60 * 1000,
     sessionCookieNames: { customer: 'customer_session', admin: 'admin_session' },
     secureCookies: false,
-    usdToGhsRate: 10,
     bookingServiceLabels: {
       mixtape: 'Mixtape',
       'full-production': 'Full production',
@@ -318,11 +317,12 @@ async function seedSettings(pool) {
     ['beat_default_basic_usd', '25'],
     ['beat_default_premium_usd', '45'],
     ['beat_default_unlimited_usd', '150'],
-    ['beat_default_exclusive_usd', '420']
+    ['beat_default_exclusive_usd', '420'],
+    ['usd_to_ghs_rate', '10']
   ];
   for (const [key, value] of settings) {
     await pool.execute(
-      'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value',
+      'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = CURRENT_TIMESTAMP',
       [key, value]
     );
   }

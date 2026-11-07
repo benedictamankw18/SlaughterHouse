@@ -127,6 +127,15 @@ test('migration 31 adds durable paid-order fulfillment review fields', () => {
   assert.match(migration.statements[3], /idx_orders_fulfillment_review/);
 });
 
+test('migration 32 timestamps pricing updates and snapshots order exchange rates', () => {
+  const migration = migrations.find(candidate => candidate.version === 32);
+  assert.ok(migration, 'migration 32 must exist');
+  assert.deepEqual(migration.statements.map(statement => statement.ensureColumn), [
+    { table: 'settings', column: 'updated_at', definition: 'TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP' },
+    { table: 'order_items', column: 'exchange_rate', definition: 'DECIMAL(12,6) NULL' }
+  ]);
+});
+
 test('migration 23 stores certificates and immutable administrative history', () => {
   const migration = migrations.find(candidate => candidate.version === 23);
   assert.ok(migration, 'migration 23 must exist');
