@@ -163,6 +163,65 @@ test('duplicate signup returns a conflict for MySQL and PostgreSQL unique violat
   }
 });
 
+test('successful password reset revokes the user sessions in the password update transaction', async () => {
+  const statements = [];
+  const loaded = loadRouter('../routes/auth', {
+    '../database': {
+      transaction: async callback => callback({
+        async run(query, parameters) {
+          statements.push({ query, parameters });
+          return { changes: 1 };
+        }
+      })
+    },
+    '../session-store': {
+      customerLoginAttempts: new Map(),
+      adminLoginAttempts: new Map(),
+      requireCustomer: (request, response, next) => next(),
+      requireAdmin: (request, response, next) => next(),
+      deleteSession: async () => {}
+    },
+    '../config': {
+      secureCookies: false,
+      sessionDurationMs: 3600000,
+      sessionCookieNames: { customer: 'customer', admin: 'admin' },
+      frontendOrigin: 'https://store.example.test',
+      apiPublicUrl: 'https://api.example.test'
+    },
+    '../services/security': {
+      hashPassword: async password => `hashed:${password}`,
+      passwordMatches: async () => false,
+      validatePassword: () => null
+    },
+    '../services/error-messages': { databaseError: () => 'database error' },
+    '../services/account-tokens': {
+      issueToken: async () => 'verification-token',
+      consumeToken: async () => ({ user_id: 17 })
+    },
+    '../services/audit': { recordAuditSafely: async () => {} },
+    '../services/rate-limit': { rateLimit: () => (request, response, next) => next() },
+    '../services/email/outbox': {
+      createEmailIdempotencyKey: () => 'verification-key',
+      queueEmailSafely: async () => true
+    },
+    '../services/logger': { error() {}, info() {}, warn() {} }
+  });
+
+  try {
+    const result = await requestFrom(loaded.router, '/auth/reset-password', {
+      body: { token: 'a'.repeat(64), password: 'NewPassword123' }
+    });
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body, { message: 'Password reset completed. You can now sign in with the new password.' });
+    assert.deepEqual(statements, [
+      { query: 'UPDATE users SET password_hash = ? WHERE id = ?', parameters: ['hashed:NewPassword123', 17] },
+      { query: 'DELETE FROM user_sessions WHERE user_id = ?', parameters: [17] }
+    ]);
+  } finally {
+    loaded.restore();
+  }
+});
+
 test('verified PostgreSQL users can sign in despite folded unquoted aliases', async () => {
   const loaded = loadRouter('../routes/auth', {
     '../database': {
