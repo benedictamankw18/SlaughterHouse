@@ -44,6 +44,7 @@ test('failed and abandoned payments transition only unsettled orders and notify 
   assert.match(calls[0].query, /INSERT INTO payments/);
   assert.match(calls[1].query, /UPDATE orders SET status = \?/);
   assert.equal(calls[1].parameters[0], 'failed');
+  assert.ok(calls.some(call => /booking_order_reference = \?/.test(call.query) && call.parameters.includes('ORDER-10')));
   assert.ok(calls.some(call => /INSERT INTO notifications/.test(call.query) && call.parameters.includes('payment_failed')));
 });
 

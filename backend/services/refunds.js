@@ -2,6 +2,7 @@ const { createNotificationSafely } = require('./notifications');
 const { isEmailAddress, queueEmailSafely } = require('./email/outbox');
 const config = require('../config');
 const logger = require('./logger');
+const { releaseBookingHold } = require('./booking-reservations');
 
 const FULL_REFUND_TOLERANCE = 0.005;
 
@@ -182,6 +183,7 @@ async function applyPaymentReversal(db, order, { reference, paymentData }) {
       'UPDATE orders SET status = ?, refunded_amount = amount, refunded_at = CURRENT_TIMESTAMP WHERE id = ?',
       ['refunded', order.id]
     );
+    await releaseBookingHold(db, reference);
     await notifyAdmins(db, {
       type: 'payment_reversed',
       title: 'Payment reversed',

@@ -373,10 +373,14 @@ recorded transactionally in `order_fulfillment_history` (migration 18).
 
 Paystack `POST /api/payments/webhook` validates the `x-paystack-signature`
 HMAC, records webhook deliveries idempotently, and reconciles successful
-non-booking orders. Booking payments continue through the slot-reserving
-verification path. Pending provider payments are recorded during initialization,
-and non-success webhook events update payment/order status without unlocking
-the order. Successful orders write one sales row per order line, keyed by
+non-booking orders. Booking payments use an atomic slot reservation from
+initialization through verification. A booking slot is reserved with its pending
+order before Paystack initialization, and each reservation expires after 30 minutes.
+Failed or abandoned payments release their holds immediately; timed-out holds
+are released when availability is checked or another booking attempts the slot.
+Successful payment consumes the matching hold. Pending provider payments are
+recorded during initialization, and non-success webhook events update
+payment/order status without unlocking paid entitlements. Successful orders write one sales row per order line, keyed by
 `order_reference` and `line_index`, so retried verifications or webhook
 deliveries cannot double-count revenue.
 

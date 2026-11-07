@@ -105,6 +105,17 @@ test('migration 29 creates shared rate-limit storage', () => {
   assert.match(migration.statements[1], /idx_rate_limit_buckets_expiry/);
 });
 
+test('migration 30 adds expiring booking holds and lookup indexes', () => {
+  const migration = migrations.find(candidate => candidate.version === 30);
+  assert.ok(migration, 'migration 30 must exist');
+  assert.deepEqual(migration.statements.slice(0, 2).map(statement => statement.ensureColumn), [
+    { table: 'booking_availability', column: 'booking_order_reference', definition: 'VARCHAR(255) NULL' },
+    { table: 'booking_availability', column: 'hold_expires_at', definition: 'TIMESTAMP NULL' }
+  ]);
+  assert.match(migration.statements[2], /idx_booking_availability_hold_expiry/);
+  assert.match(migration.statements[3], /idx_booking_availability_order_reference/);
+});
+
 test('migration 23 stores certificates and immutable administrative history', () => {
   const migration = migrations.find(candidate => candidate.version === 23);
   assert.ok(migration, 'migration 23 must exist');
