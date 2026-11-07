@@ -291,7 +291,11 @@ router.post('/auth/reset-password', resetRateLimit, async (request, response) =>
   try {
     const accountToken = await consumeToken(database, token, 'password_reset');
     if (!accountToken) return response.status(400).json({ error: 'This password reset token is invalid, expired, or already used.' });
-    await new Promise((resolve, reject) => hashPassword(password).then(passwordHash => database.run('UPDATE users SET password_hash = ? WHERE id = ?', [passwordHash, accountToken.user_id], error => error ? reject(error) : resolve())).catch(reject));
+    const passwordHash = await hashPassword(password);
+    await database.transaction(async transaction => {
+      await transaction.run('UPDATE users SET password_hash = ? WHERE id = ?', [passwordHash, accountToken.user_id]);
+      await transaction.run('DELETE FROM user_sessions WHERE user_id = ?', [accountToken.user_id]);
+    });
     await recordAuditSafely(database, { userId: accountToken.user_id, action: 'password_reset_completed', entityType: 'user', entityId: accountToken.user_id, ipAddress: request.ip });
     response.json({ message: 'Password reset completed. You can now sign in with the new password.' });
   } catch (error) {
