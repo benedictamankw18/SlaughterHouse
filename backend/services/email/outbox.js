@@ -32,9 +32,9 @@ async function queueEmail(database, { to, template, data = {}, idempotencyKey })
 
   await database.run(
     `INSERT INTO email_outbox (idempotency_key, recipient, template, data_json, expires_at)
-     VALUES (?, ?, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE CURRENT_TIMESTAMP + (? * INTERVAL '1 second') END)
+     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP + (?::int * INTERVAL '1 second'))
      ON CONFLICT (idempotency_key) DO NOTHING`,
-    [idempotencyKey, to.trim().toLowerCase(), template, JSON.stringify(data), expirySeconds, expirySeconds]
+    [idempotencyKey, to.trim().toLowerCase(), template, JSON.stringify(data), expirySeconds]
   );
 }
 

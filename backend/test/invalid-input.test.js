@@ -83,14 +83,37 @@ async function requestFrom(router, path, { method = 'POST', body, rawBody, conte
   }
 }
 
-test('duplicate signup returns conflict instead of creating another account', async () => {
+test('duplicate signup returns a conflict for MySQL and PostgreSQL unique violations', async () => {
+  const duplicateErrors = [
+    {
+      error: Object.assign(new Error('Duplicate email'), {
+        code: 'ER_DUP_ENTRY',
+        sqlMessage: "Duplicate entry for key 'users.email'"
+      }),
+      message: 'An account with this email already exists.'
+    },
+    {
+      error: Object.assign(new Error('Duplicate email'), {
+        code: '23505',
+        constraint: 'uq_users_email_lower',
+        detail: 'Key (lower(email))=(person@example.test) already exists.'
+      }),
+      message: 'An account with this email already exists.'
+    },
+    {
+      error: Object.assign(new Error('Duplicate phone'), {
+        code: '23505',
+        constraint: 'users_phone_key',
+        detail: 'Key (phone)=(+233240000000) already exists.'
+      }),
+      message: 'An account with this phone number already exists.'
+    }
+  ];
+  let duplicateError = duplicateErrors[0].error;
   const loaded = loadRouter('../routes/auth', {
     '../database': {
       run(query, parameters, callback) {
-        callback(Object.assign(new Error('Duplicate email'), {
-          code: 'ER_DUP_ENTRY',
-          sqlMessage: "Duplicate entry for key 'users.email'"
-        }));
+        callback(duplicateError);
       }
     },
     '../session-store': {
@@ -120,18 +143,21 @@ test('duplicate signup returns conflict instead of creating another account', as
   });
 
   try {
-    const result = await requestFrom(loaded.router, '/auth/signup', {
-      body: {
-        email: 'person@example.test',
-        firstName: 'First',
-        lastName: 'Last',
-        phone: '+233 24 000 0000',
-        password: 'Password123',
-        address: 'Accra'
-      }
-    });
-    assert.equal(result.status, 409);
-    assert.equal(result.body.error, 'An account with this email already exists.');
+    for (const duplicate of duplicateErrors) {
+      duplicateError = duplicate.error;
+      const result = await requestFrom(loaded.router, '/auth/signup', {
+        body: {
+          email: 'person@example.test',
+          firstName: 'First',
+          lastName: 'Last',
+          phone: '+233 24 000 0000',
+          password: 'Password123',
+          address: 'Accra'
+        }
+      });
+      assert.equal(result.status, 409);
+      assert.equal(result.body.error, duplicate.message);
+    }
   } finally {
     loaded.restore();
   }

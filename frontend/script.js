@@ -643,7 +643,13 @@ if (loginButton) {
         body: JSON.stringify({ email })
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error);
+      if (!response.ok) {
+        const retryAfterSeconds = Number(response.headers.get('Retry-After'));
+        const retryMessage = response.status === 429 && Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+          ? ` Try again in about ${Math.ceil(retryAfterSeconds / 60)} minute(s).`
+          : '';
+        throw new Error(`${data.error || 'Could not request a password reset.'}${retryMessage}`);
+      }
       const message = data.resetToken
         ? `${data.message} Development reset token: ${data.resetToken}`
         : data.message;

@@ -36,6 +36,21 @@ function accountActionUrl(parameter, token) {
   return url.toString();
 }
 
+function duplicateAccountMessage(error) {
+  if (error.code !== 'ER_DUP_ENTRY' && error.code !== '23505') return null;
+  const constraint = String(error.constraint || '').toLowerCase();
+  const detail = String(error.detail || error.sqlMessage || '').toLowerCase();
+  const duplicateEmail = constraint.includes('email')
+    || (error.code === 'ER_DUP_ENTRY' && detail.includes('email'))
+    || /\bkey\s*\(\s*(?:email|lower\s*\(\s*email\s*\))\s*\)\s*=/.test(detail);
+  const duplicatePhone = constraint.includes('phone')
+    || (error.code === 'ER_DUP_ENTRY' && detail.includes('phone'))
+    || /\bkey\s*\(\s*phone\s*\)\s*=/.test(detail);
+  if (duplicateEmail) return 'An account with this email already exists.';
+  if (duplicatePhone) return 'An account with this phone number already exists.';
+  return 'An account with these details already exists.';
+}
+
 router.post('/auth/signup', authRateLimit, async (request, response) => {
   const { email, firstName, lastName, artistName, phone, password, role, address } = request.body;
   const normalizedEmail = String(email || '').trim().toLowerCase();
@@ -73,16 +88,8 @@ router.post('/auth/signup', authRateLimit, async (request, response) => {
     [name, normalizedEmail, firstNameValue, lastNameValue, artistNameTrimmed, normalizedPhone, normalizedRole, addressTrimmed, passwordHash],
     async function (error) {
       if (error) {
-        if (error.code === 'ER_DUP_ENTRY') {
-          const duplicateEmail = error.sqlMessage?.toLowerCase().includes('email');
-          const duplicatePhone = error.sqlMessage?.toLowerCase().includes('phone');
-          const message = duplicateEmail
-            ? 'An account with this email already exists.'
-            : duplicatePhone
-              ? 'An account with this phone number already exists.'
-              : 'An account with these details already exists.';
-          return response.status(409).json({ error: message });
-        }
+        const duplicateMessage = duplicateAccountMessage(error);
+        if (duplicateMessage) return response.status(409).json({ error: duplicateMessage });
         logger.error('account_creation_failed', { code: error.code });
         const databaseMessages = {
           ER_NO_SUCH_TABLE: 'The users table is missing. Run node database.js to initialize the database.',
@@ -90,7 +97,7 @@ router.post('/auth/signup', authRateLimit, async (request, response) => {
           ER_DATA_TOO_LONG: 'One of the account fields is too long.',
           ER_BAD_NULL_ERROR: 'A required account field was empty.'
         };
-        return response.status(500).json({ error: databaseMessages[error.code] || `Could not create the account because the database returned ${error.code || 'an unknown error'}.` });
+        return response.status(500).json({ error: databaseMessages[error.code] || 'Could not create the account. Please try again.' });
       }
       try {
         await queueEmailSafely(database, {

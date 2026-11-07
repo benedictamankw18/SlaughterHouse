@@ -124,7 +124,15 @@ test('outbox inserts use unique idempotency keys and validate rendered templates
   assert.match(calls[0].parameters[0], /^verify:[a-f0-9]{64}$/);
   assert.doesNotMatch(calls[0].parameters[0], /raw-token/);
   assert.equal(calls[0].parameters[4], 24 * 60 * 60, 'verification links expire from the outbox');
-  assert.equal(calls[0].parameters[5], 24 * 60 * 60);
+  assert.match(calls[0].query, /CURRENT_TIMESTAMP \+ \(\?::int \* INTERVAL '1 second'\)/);
+  assert.doesNotMatch(calls[0].query, /CASE WHEN \? IS NULL/);
+  await queueEmail(database, {
+    to: 'customer@example.com',
+    template: 'welcome',
+    idempotencyKey: 'welcome:123',
+    data: { name: 'Customer', accountUrl: 'https://store.example/account' }
+  });
+  assert.equal(calls[1].parameters[4], null, 'non-action emails do not expire');
   await assert.rejects(
     queueEmail(database, {
       to: 'customer@example.com',
@@ -134,7 +142,7 @@ test('outbox inserts use unique idempotency keys and validate rendered templates
     }),
     /must use HTTP or HTTPS/
   );
-  assert.equal(calls.length, 1, 'invalid messages must not enter the outbox');
+  assert.equal(calls.length, 2, 'invalid messages must not enter the outbox');
 });
 
 test('successful deliveries clear sensitive payloads and failures remain retryable', async () => {

@@ -20,7 +20,7 @@ app.use(cors({
   credentials: true,
   methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'X-Request-ID'],
-  exposedHeaders: ['X-Request-ID'],
+  exposedHeaders: ['X-Request-ID', 'Retry-After'],
   maxAge: 600,
   origin(origin, callback) {
     if (origin === 'null' && config.isProduction) return callback(new Error('Origin is not allowed.'));
