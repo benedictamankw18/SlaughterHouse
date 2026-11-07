@@ -13,6 +13,7 @@ function loadPaymentsRouter({ bookingSlotUnavailable = false, exchangeRate = { r
   originalModules.set(refundsId, require.cache[refundsId]);
   delete require.cache[refundsId];
   const calls = [];
+  const rateLimitPolicies = [];
   const webhookEvents = new Set();
   const order = {
     id: 21,
@@ -75,6 +76,12 @@ function loadPaymentsRouter({ bookingSlotUnavailable = false, exchangeRate = { r
 
   const mocks = {
     '../database': database,
+    '../services/rate-limit': {
+      rateLimit(policy) {
+        rateLimitPolicies.push(policy);
+        return (request, response, next) => next();
+      }
+    },
     '../config': {
       apiPublicUrl: 'https://api.example.test',
       paymentCallbackUrl: new URL('https://store.example.test/payment-success.html'),
@@ -130,6 +137,7 @@ function loadPaymentsRouter({ bookingSlotUnavailable = false, exchangeRate = { r
     router,
     order,
     calls,
+    rateLimitPolicies,
     restore() {
       delete require.cache[routeId];
       if (originalRoute) require.cache[routeId] = originalRoute;
@@ -329,6 +337,14 @@ test('Paystack success with an expired booking hold marks the paid order for rev
     loaded.restore();
   }
 });
+
+test('payment initialization, verification, and webhook routes use shared rate limits', () => withRouter(async loaded => {
+  assert.deepEqual(loaded.rateLimitPolicies.map(({ windowMs, max }) => ({ windowMs, max })), [
+    { windowMs: 15 * 60 * 1000, max: 20 },
+    { windowMs: 60 * 1000, max: 30 },
+    { windowMs: 60 * 1000, max: 300 }
+  ]);
+}));
 
 test('Paystack failure webhook records failure without marking the order paid', () => withRouter(async loaded => {
   const result = await postWebhook(loaded.router, {

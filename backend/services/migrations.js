@@ -634,6 +634,34 @@ const migrations = [
       { ensureColumn: { table: 'settings', column: 'updated_at', definition: 'TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP' } },
       { ensureColumn: { table: 'order_items', column: 'exchange_rate', definition: 'DECIMAL(12,6) NULL' } }
     ]
+  },
+  {
+    version: 33,
+    statements: [
+      { ensureColumn: { table: 'users', column: 'admin_mfa_secret', definition: 'TEXT NULL' } },
+      { ensureColumn: { table: 'users', column: 'admin_mfa_enabled_at', definition: 'TIMESTAMP NULL' } },
+      { ensureColumn: { table: 'users', column: 'admin_mfa_last_counter', definition: 'BIGINT NULL' } },
+      `CREATE TABLE IF NOT EXISTS admin_mfa_challenges (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        user_id INT NOT NULL,
+        token_hash CHAR(64) NOT NULL UNIQUE,
+        purpose VARCHAR(30) NOT NULL,
+        pending_secret TEXT NULL,
+        attempt_count INT NOT NULL DEFAULT 0,
+        expires_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )`,
+      'CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challenges (expires_at)',
+      `CREATE TABLE IF NOT EXISTS admin_mfa_recovery_codes (
+        user_id INT NOT NULL,
+        token_hash CHAR(64) NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        used_at TIMESTAMP NULL,
+        PRIMARY KEY (user_id, token_hash),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )`
+    ]
   }
 ];
 

@@ -129,19 +129,28 @@ function cold starts cannot apply the same migration simultaneously.
 The rate-limit table is also shared through PostgreSQL. Expired buckets are
 pruned opportunistically in batches by API requests. Monitor table growth and
 schedule a cleanup task if deployment traffic is too low to regularly trigger
-pruning.
+pruning. Signup, login, password-reset, booking-payment initialization,
+payment initialization, verification, and signed Paystack webhook endpoints
+use shared database-backed request limits.
+
+All administrator accounts must enroll an authenticator app at their next
+login. TOTP secrets are encrypted using the stable
+`ADMIN_MFA_ENCRYPTION_KEY`; production startup requires this independent key to
+be at least 32 bytes. Administrators must save the one-time recovery codes
+shown during enrollment. MFA challenges expire after 10 minutes and allow at
+most five code attempts.
 
 Booking checkout reserves every selected slot in the same PostgreSQL
 transaction that creates the pending order. Holds expire after 30 minutes;
 payment failure or abandonment releases them immediately, while expired holds
 are cleared lazily when availability is read or another checkout tries to
-claim the slot. A successful payment converts only its own hold into a booked
-slot. If a payment arrives after the hold has expired and another customer has
-claimed that slot, the paid order is flagged for reconciliation in Admin >
-Orders. An administrator can assign replacement sessions or request a full
-Paystack refund. Refund requests stay pending until Paystack confirms them;
-the confirmed full refund clears the reconciliation flag. Both resolution
-paths are audited and notify the customer.
+claim the slot. A successful payment converts only its own unexpired hold into
+a booked slot. If a payment arrives after the hold expires, the order is marked
+paid and flagged for reconciliation in Admin > Orders even if the slot has not
+yet been claimed by another customer. An administrator can reserve and assign
+replacement sessions or request a full Paystack refund. Refund requests stay
+pending until Paystack confirms them; the confirmed full refund clears the
+reconciliation flag. Both resolution paths are audited and notify the customer.
 
 Beat checkout uses the USD-to-GHS rate maintained by a super-admin in
 Admin > Settings. Update the rate at least once every 24 hours; beat checkout

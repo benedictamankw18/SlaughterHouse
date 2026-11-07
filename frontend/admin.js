@@ -1,5 +1,7 @@
 const API = window.ULTBIGBOY_API_URL || '';
 let adminToken = sessionStorage.getItem('adminToken');
+let adminMfaChallengeToken = null;
+let adminMfaEnrollment = false;
 let dashboardData = { sales: [], requests: [], orders: [], reviews: [], artists: [], withdrawals: [], analytics: {} };
 let staffRecords = [];
 const activeAdminSectionKey = 'adminActiveSection';
@@ -67,7 +69,11 @@ function clearBeatCoverPreview() {
 async function api(path, options = {}) {
   const response = await fetch(`${API}${path}`, { ...options, credentials: 'include', headers: { 'Content-Type': 'application/json', ...adminCsrfHeaders(options.method), ...(adminToken ? { Authorization: 'Bearer ' + adminToken } : {}), ...(options.headers || {}) } });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error || 'Request failed.');
+  if (!response.ok) {
+    const error = new Error(data.error || 'Request failed.');
+    error.code = data.code;
+    throw error;
+  }
   return data;
 }
 
@@ -698,19 +704,102 @@ async function loadDashboard() {
 function showDashboard() {
   $('#admin-login').hidden = true;
   $('#admin-dashboard').hidden = false;
-  loadDashboard().catch(error => message('admin-login-message', error.message, true));
+  loadDashboard().catch(error => {
+    if (error.code === 'ADMIN_MFA_REQUIRED') {
+      adminToken = null;
+      sessionStorage.removeItem('adminToken');
+      sessionStorage.removeItem('adminCsrfToken');
+      $('#admin-dashboard').hidden = true;
+      $('#admin-login').hidden = false;
+      message('admin-login-message', 'Administrator MFA setup is required. Sign in again to enroll.', true);
+      return;
+    }
+    message('admin-login-message', error.message, true);
+  });
 }
 if (adminToken) showDashboard();
+
+function showAdminMfaChallenge(data) {
+  adminToken = null;
+  sessionStorage.removeItem('adminToken');
+  sessionStorage.removeItem('adminCsrfToken');
+  adminMfaChallengeToken = data.challengeToken;
+  adminMfaEnrollment = Boolean(data.mfaEnrollmentRequired);
+  $('#admin-login').hidden = true;
+  $('#admin-mfa-panel').hidden = false;
+  $('#admin-mfa-form').hidden = false;
+  $('#admin-mfa-recovery').hidden = true;
+  $('#admin-mfa-qr').hidden = !adminMfaEnrollment;
+  $('#admin-mfa-secret-row').hidden = !adminMfaEnrollment;
+  $('#admin-mfa-title').textContent = adminMfaEnrollment ? 'Set up authenticator MFA' : 'Verify your identity';
+  $('#admin-mfa-instructions').textContent = adminMfaEnrollment
+    ? 'Scan this QR code with an authenticator app, then enter its six-digit code to enable MFA.'
+    : 'Enter the current six-digit code from your authenticator app, or use one of your recovery codes.';
+  if (adminMfaEnrollment) {
+    $('#admin-mfa-qr').src = data.qrCodeDataUrl;
+    $('#admin-mfa-secret').textContent = data.secret;
+    $('#admin-mfa-code').inputMode = 'numeric';
+  } else {
+    $('#admin-mfa-qr').removeAttribute('src');
+    $('#admin-mfa-code').inputMode = 'text';
+  }
+  $('#admin-mfa-code').value = '';
+  $('#admin-mfa-code').focus();
+}
+
+function saveAdminSession(data) {
+  adminToken = data.token;
+  sessionStorage.setItem('adminToken', adminToken);
+  sessionStorage.setItem('adminCsrfToken', data.csrfToken || '');
+  adminMfaChallengeToken = null;
+  $('#admin-mfa-panel').hidden = true;
+  showDashboard();
+}
 
 $('#admin-login-form').addEventListener('submit', async event => {
   event.preventDefault();
   try {
     const data = await fetch(`${API}/api/admin/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: $('#admin-email').value, password: $('#admin-password').value }) }).then(async response => { const result = await response.json(); if (!response.ok) throw new Error(result.error); return result; });
-    adminToken = data.token;
-    sessionStorage.setItem('adminToken', adminToken);
-    sessionStorage.setItem('adminCsrfToken', data.csrfToken || '');
-    showDashboard();
+    $('#admin-password').value = '';
+    if (data.mfaRequired || data.mfaEnrollmentRequired) return showAdminMfaChallenge(data);
+    saveAdminSession(data);
   } catch (error) { message('admin-login-message', error.message, true); }
+});
+
+$('#admin-mfa-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  try {
+    const data = await api('/api/admin/mfa/verify', {
+      method: 'POST',
+      body: JSON.stringify({ challengeToken: adminMfaChallengeToken, code: $('#admin-mfa-code').value })
+    });
+    if (data.mfaSetupComplete) {
+      $('#admin-mfa-form').hidden = true;
+      $('#admin-mfa-recovery').hidden = false;
+      const list = $('#admin-mfa-recovery-codes');
+      list.replaceChildren(...data.recoveryCodes.map(code => {
+        const item = document.createElement('li');
+        item.textContent = code;
+        return item;
+      }));
+      return;
+    }
+    saveAdminSession(data);
+  } catch (error) {
+    message('admin-mfa-message', error.message, true);
+  }
+});
+
+$('#admin-mfa-confirm').addEventListener('click', async () => {
+  try {
+    const data = await api('/api/admin/mfa/complete', {
+      method: 'POST',
+      body: JSON.stringify({ challengeToken: adminMfaChallengeToken })
+    });
+    saveAdminSession(data);
+  } catch (error) {
+    message('admin-mfa-message', error.message, true);
+  }
 });
 
 $('#admin-logout').addEventListener('click', async () => {

@@ -103,7 +103,9 @@ Payment and download configuration uses `PAYSTACK_SECRET_KEY`,
 `PAYMENT_CALLBACK_URL`, `API_PUBLIC_URL`, `FRONTEND_ORIGIN`, and
 `DOWNLOAD_SIGNING_SECRET`. Production requires distinct, stable values of at
 least 32 bytes for `DOWNLOAD_SIGNING_SECRET` and
-`CERTIFICATE_SIGNING_SECRET`. Keep the certificate secret stable so issued
+`CERTIFICATE_SIGNING_SECRET`, plus an independent 32-byte
+`ADMIN_MFA_ENCRYPTION_KEY` to encrypt administrator authenticator secrets.
+Keep all three keys stable across deployments; keep the certificate secret stable so issued
 certificate QR codes remain verifiable. Local development may omit these values,
 but generated secrets are not stable across server restarts.
 Set `FRONTEND_ORIGIN` and, when needed, comma-separated `FRONTEND_ORIGINS` to

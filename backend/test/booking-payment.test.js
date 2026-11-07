@@ -7,6 +7,7 @@ function loadBookingsRouter({ unavailableTime = null } = {}) {
   const routeId = require.resolve('../routes/bookings');
   const originals = new Map([[routeId, require.cache[routeId]]]);
   const calls = [];
+  const rateLimitPolicies = [];
   const database = {
     async transaction(callback) {
       return callback({
@@ -25,6 +26,12 @@ function loadBookingsRouter({ unavailableTime = null } = {}) {
   };
   const mocks = {
     '../database': database,
+    '../services/rate-limit': {
+      rateLimit(policy) {
+        rateLimitPolicies.push(policy);
+        return (request, response, next) => next();
+      }
+    },
     '../config': {
       bookingServiceLabels: { mixtape: 'Mixtape' },
       paystackSecretKey: 'paystack-test-secret',
@@ -49,6 +56,7 @@ function loadBookingsRouter({ unavailableTime = null } = {}) {
     return {
       router: require('../routes/bookings'),
       calls,
+      rateLimitPolicies,
       restore() {
         delete require.cache[routeId];
         for (const [id, original] of originals) {
@@ -65,6 +73,17 @@ function loadBookingsRouter({ unavailableTime = null } = {}) {
     throw error;
   }
 }
+
+test('booking payment initialization uses a shared rate limit', () => {
+  const loaded = loadBookingsRouter();
+  try {
+    assert.deepEqual(loaded.rateLimitPolicies.map(({ windowMs, max }) => ({ windowMs, max })), [
+      { windowMs: 15 * 60 * 1000, max: 20 }
+    ]);
+  } finally {
+    loaded.restore();
+  }
+});
 
 async function postBooking(router) {
   const app = express();

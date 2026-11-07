@@ -21,6 +21,26 @@
       </form>
     </section>
 
+    <section id="admin-mfa-panel" class="admin-login-panel" hidden>
+      <p class="section-kicker">Administrator security</p>
+      <h1 id="admin-mfa-title">Verify your identity</h1>
+      <p id="admin-mfa-instructions" class="admin-message"></p>
+      <img id="admin-mfa-qr" class="admin-mfa-qr" alt="Authenticator app setup QR code" hidden>
+      <p id="admin-mfa-secret-row" class="admin-mfa-secret" hidden>Manual setup key: <code id="admin-mfa-secret"></code></p>
+      <form id="admin-mfa-form" class="admin-form">
+        <label for="admin-mfa-code">Authenticator or recovery code</label>
+        <input id="admin-mfa-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="24" required>
+        <button class="auth-primary-button" type="submit">Verify code</button>
+        <p id="admin-mfa-message" class="admin-message" role="alert"></p>
+      </form>
+      <div id="admin-mfa-recovery" hidden>
+        <h2>Save your recovery codes</h2>
+        <p>Each code can be used once. Store them somewhere private; they will not be shown again.</p>
+        <ul id="admin-mfa-recovery-codes" class="admin-mfa-recovery-codes"></ul>
+        <button id="admin-mfa-confirm" class="auth-primary-button" type="button">I saved my recovery codes</button>
+      </div>
+    </section>
+
     <section id="admin-dashboard" hidden>
       <header class="admin-header"><div><p class="section-kicker">UltBigBoy control room</p><h1>Admin dashboard</h1></div><button id="admin-logout" class="admin-secondary-button" type="button">Log out</button></header>
       <p id="admin-preview-notice" class="admin-message" hidden>Preview mode: dashboard layout only. API-backed records and save actions are not connected yet.</p>

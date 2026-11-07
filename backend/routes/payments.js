@@ -14,11 +14,15 @@ const { refundEventDetails, refundEventKey, applyRefund, applyPaymentReversal } 
 const { paymentFailureStatus, isRefundEvent, recordNonSuccessPayment } = require('../services/payment-events');
 const { queueEmailSafely } = require('../services/email/outbox');
 const { fulfillPaidBooking } = require('../services/booking-fulfillment');
+const { rateLimit } = require('../services/rate-limit');
 const logger = require('../services/logger');
 
 const router = express.Router();
 const { apiPublicUrl, paymentCallbackUrl, paystackSecretKey } = config;
 const LOW_STOCK_THRESHOLD = 5;
+const paymentInitializationRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, message: 'Too many payment initialization requests. Try again later.' });
+const paymentVerificationRateLimit = rateLimit({ windowMs: 60 * 1000, max: 30, message: 'Too many payment verification requests. Try again shortly.' });
+const paymentWebhookRateLimit = rateLimit({ windowMs: 60 * 1000, max: 300, message: 'Too many payment webhook requests. Try again shortly.' });
 const queryRows = (query, parameters = []) => new Promise((resolve, reject) => database.all(query, parameters, (error, rows) => error ? reject(error) : resolve(rows || [])));
 const run = (query, parameters = []) => new Promise((resolve, reject) => database.run(query, parameters, function (error) { error ? reject(error) : resolve(this); }));
 
@@ -280,7 +284,7 @@ async function hasConflictingExclusiveSale(db, items, orderReference) {
   return null;
 }
 
-router.post('/payments/webhook', async (request, response) => {
+router.post('/payments/webhook', paymentWebhookRateLimit, async (request, response) => {
   if (!paystackSecretKey) return response.status(503).json({ error: 'Payment webhooks are unavailable because PAYSTACK_SECRET_KEY is not configured.' });
   const signature = request.get('x-paystack-signature');
   const rawBody = Buffer.isBuffer(request.body) ? request.body : Buffer.from('');
@@ -430,7 +434,7 @@ router.post('/payments/webhook', async (request, response) => {
   }
 });
 
-router.post('/payments/initialize', async (request, response) => {
+router.post('/payments/initialize', paymentInitializationRateLimit, async (request, response) => {
   const { name, email, items, paymentMethod } = request.body;
   const normalizedEmail = String(email || '').trim().toLowerCase();
   const paymentError = validators.text(name, 'Customer name', { required: true, max: 255 }) || validators.email(email);
@@ -507,7 +511,7 @@ router.post('/payments/initialize', async (request, response) => {
   }
 });
 
-router.get('/payments/verify/:reference', async (request, response) => {
+router.get('/payments/verify/:reference', paymentVerificationRateLimit, async (request, response) => {
   if (!paystackSecretKey) return response.status(503).json({ error: 'Payment verification is unavailable because PAYSTACK_SECRET_KEY is missing or still set to the example placeholder. Add a valid Paystack secret key to backend/.env and restart the server.' });
   try {
     const paymentResponse = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(request.params.reference)}`, { headers: { Authorization: `Bearer ${paystackSecretKey}` } });
