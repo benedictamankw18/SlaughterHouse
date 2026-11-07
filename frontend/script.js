@@ -183,7 +183,7 @@ if (loginButton) {
         <button class="auth-primary-button" type="submit">Sign in</button>
         <div class="auth-form-links"><button class="auth-link-button" id="forgot-password-button" type="button">Forgot password?</button><button class="auth-link-button" data-auth-switch="signup" type="button">Create an account</button></div>
         <p class="auth-message" id="login-message" role="status" aria-live="polite"></p>
-        <button class="auth-link-button" id="resend-verification-button" type="button" hidden>Resend verification email</button>
+        <button class="auth-link-button" id="resend-verification-button" type="button">Resend verification email</button>
       </form>
     </div>
     <div class="auth-view" data-auth-view="reset-request">
@@ -572,7 +572,6 @@ if (loginButton) {
   authPanel.querySelector('#login-form').addEventListener('submit', async event => {
     event.preventDefault();
     const resendVerificationButton = authPanel.querySelector('#resend-verification-button');
-    resendVerificationButton.hidden = true;
     try {
       const form = Object.fromEntries(new FormData(event.currentTarget));
       const adminResult = await fetch(`${API}/api/admin/login`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: form.identifier, password: form.password }) });
