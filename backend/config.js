@@ -4,7 +4,9 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 
 const port = Number(process.env.PORT) || 3000;
-const frontendOrigin = (process.env.FRONTEND_ORIGIN || 'http://localhost:5500').replace(/\/+$/, '');
+const vercelUrl = String(process.env.VERCEL_URL || '').trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+const deploymentOrigin = process.env.VERCEL === '1' && vercelUrl ? `https://${vercelUrl}` : null;
+const frontendOrigin = (process.env.FRONTEND_ORIGIN || deploymentOrigin || 'http://localhost:5500').replace(/\/+$/, '');
 const frontendOrigins = [...new Set([frontendOrigin, ...(process.env.FRONTEND_ORIGINS || '')
   .split(',')
   .map(origin => origin.trim().replace(/\/+$/, ''))
@@ -16,9 +18,8 @@ for (const origin of frontendOrigins) {
     throw new Error(`Invalid frontend origin configured: ${origin}`);
   }
 }
-const apiPublicUrl = (process.env.API_PUBLIC_URL || `http://localhost:${port}`).replace(/\/+$/, '');
+const apiPublicUrl = (process.env.API_PUBLIC_URL || deploymentOrigin || `http://localhost:${port}`).replace(/\/+$/, '');
 const paymentCallbackUrl = new URL(process.env.PAYMENT_CALLBACK_URL || '/payment-success.html', frontendOrigin);
-paymentCallbackUrl.searchParams.set('apiBaseUrl', apiPublicUrl);
 const isProduction = process.env.NODE_ENV === 'production';
 const configuredPaystackKey = String(process.env.PAYSTACK_SECRET_KEY || '').trim();
 const paystackSecretKey = configuredPaystackKey && configuredPaystackKey !== 'sk_test_your_paystack_secret_key'
@@ -30,8 +31,10 @@ const databaseConfigured = Boolean(process.env.DATABASE_URL);
 const configuredTrustProxy = String(process.env.TRUST_PROXY || '').trim();
 const trustProxy = configuredTrustProxy === 'true'
   ? true
-  : configuredTrustProxy === 'false' || !configuredTrustProxy
+  : configuredTrustProxy === 'false'
     ? false
+    : !configuredTrustProxy
+      ? process.env.VERCEL === '1'
     : /^\d+$/.test(configuredTrustProxy)
       ? Number(configuredTrustProxy)
       : configuredTrustProxy.split(',').map(value => value.trim()).filter(Boolean);
@@ -88,6 +91,9 @@ if (storageDriver === 's3') {
   if (isProduction && s3.publicMediaBaseUrl && !s3.publicMediaBaseUrl.startsWith('https://')) {
     throw new Error('PUBLIC_MEDIA_BASE_URL must use https in production.');
   }
+}
+if (isProduction && storageDriver !== 's3' && !allowEphemeralStorage) {
+  throw new Error('Production requires STORAGE_DRIVER=s3 for durable media storage. Set ALLOW_EPHEMERAL_STORAGE=true only for an explicitly disposable deployment.');
 }
 
 module.exports = {

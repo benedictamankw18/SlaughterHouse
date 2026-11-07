@@ -29,6 +29,14 @@ docker compose ps
 docker compose logs -f backend
 ```
 
+When transactional email credentials are configured, start the persistent
+outbox worker too:
+
+```powershell
+docker compose --profile email up --build -d
+docker compose logs -f email-worker
+```
+
 Open the frontend at <http://localhost:5500>. The API health check is at
 <http://localhost:3000/api/health>, and the readiness check is at
 <http://localhost:3000/api/ready>.
@@ -40,6 +48,7 @@ Open the frontend at <http://localhost:5500>. The API health check is at
 | `frontend` | Static site served by Nginx | `http://localhost:5500` |
 | `backend` | Node.js API | `http://localhost:3000` |
 | `postgres` | PostgreSQL 17 database | `127.0.0.1:5433` |
+| `email-worker` | Persistent transactional email outbox worker (optional profile) | no host port |
 
 The API connects to PostgreSQL using the private Compose network (`postgres:5432`).
 Database and API ports are bound to loopback by default and are not directly
@@ -49,6 +58,7 @@ exposed on external interfaces. Change `POSTGRES_PORT`, `API_PORT`, or
 Database migrations run automatically before the backend starts listening.
 Startup waits for PostgreSQL's health check before launching the backend, and the frontend waits for
 the API health check.
+The frontend's same-origin `/api` requests are proxied by Nginx to the backend.
 
 ## Configuration
 

@@ -32,7 +32,6 @@ function execute(query, parameters = []) {
 function accountActionUrl(parameter, token) {
   const url = new URL('/', config.frontendOrigin);
   url.searchParams.set(parameter, token);
-  url.searchParams.set('apiBaseUrl', config.apiPublicUrl);
   return url.toString();
 }
 

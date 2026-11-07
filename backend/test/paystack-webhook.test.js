@@ -27,20 +27,20 @@ function loadPaymentsRouter() {
 
   const database = {
     async transaction(callback) {
+      const pendingWebhookEvents = [];
       const tx = {
         async run(query, parameters = []) {
           calls.push({ query, parameters });
-          if (/INSERT INTO payment_webhook_events/.test(query)) {
-            const eventKey = parameters[1];
-            if (webhookEvents.has(eventKey)) {
-              throw Object.assign(new Error('Duplicate webhook event'), { code: 'ER_DUP_ENTRY' });
-            }
-            webhookEvents.add(eventKey);
-          }
           return { lastID: 1, changes: 1 };
         },
         async get(query, parameters = []) {
           calls.push({ query, parameters });
+          if (/INSERT INTO payment_webhook_events/.test(query)) {
+            const eventKey = `${parameters[1]}:${parameters[2]}`;
+            if (webhookEvents.has(eventKey) || pendingWebhookEvents.includes(eventKey)) return null;
+            pendingWebhookEvents.push(eventKey);
+            return { id: 1 };
+          }
           if (/FROM orders WHERE reference = \? FOR UPDATE/.test(query)) {
             return parameters[0] === order.reference ? { ...order } : null;
           }
@@ -51,7 +51,9 @@ function loadPaymentsRouter() {
           return [];
         }
       };
-      return callback(tx);
+      const result = await callback(tx);
+      pendingWebhookEvents.forEach(eventKey => webhookEvents.add(eventKey));
+      return result;
     },
     async all() { return []; }
   };
@@ -231,6 +233,25 @@ test('Paystack success webhook with an unknown reference is rejected', () => wit
 
   assert.equal(result.status, 404);
   assert.equal(result.body.error, 'No order was found for payment reference UBB-UNKNOWN-REFERENCE.');
+}));
+
+test('a rejected Paystack event can be retried after reconciliation data is corrected', () => withRouter(async loaded => {
+  const event = {
+    event: 'charge.success',
+    data: {
+      reference: loaded.order.reference,
+      status: 'success',
+      amount: 12499,
+      currency: 'GHS'
+    }
+  };
+  const rejected = await postWebhook(loaded.router, event);
+  event.data.amount = 12500;
+  const retry = await postWebhook(loaded.router, event);
+
+  assert.equal(rejected.status, 400);
+  assert.equal(retry.status, 200);
+  assert.deepEqual(retry.body, { received: true });
 }));
 
 test('duplicate Paystack webhook delivery is acknowledged without reprocessing', () => withRouter(async loaded => {

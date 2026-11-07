@@ -1,6 +1,5 @@
 (() => {
-  const isLocalApiHost = location.protocol === 'file:' || ['localhost', '127.0.0.1'].includes(location.hostname);
-  const apiBase = window.ULTBIGBOY_API_URL || (isLocalApiHost ? 'http://localhost:3000' : 'https://slaughterhouse.onrender.com');
+  const apiBase = window.ULTBIGBOY_API_URL || '';
   const message = document.getElementById('verification-message');
   const rightRows = rights => {
     const rows = [];

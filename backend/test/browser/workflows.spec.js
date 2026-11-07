@@ -200,8 +200,8 @@ test('signup submits the entered profile and enters email verification', async (
   await page.locator('#signup-first-name').fill('Browser');
   await page.locator('#signup-last-name').fill('Tester');
   await page.locator('#signup-phone').fill('240000000');
-  await page.locator('#signup-password').fill('Secure123');
-  await page.locator('#signup-confirm-password').fill('Secure123');
+  await page.locator('#signup-password').fill('SecurePassphrase123!');
+  await page.locator('#signup-confirm-password').fill('SecurePassphrase123!');
   await page.getByRole('button', { name: 'Create account', exact: true }).click();
 
   await expect(page.getByRole('heading', { name: 'Verify your email address' })).toBeVisible();

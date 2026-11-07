@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
+    "email:worker": "node scripts/email-worker.js",
     "test": "node --test \"test/*.test.js\"",
     "test:integration": "node --test test/routes.integration.test.js",
     "test:browser": "playwright test -c playwright.config.js",
@@ -14,6 +15,7 @@
     "backup": "node scripts/backup.js",
     "restore": "node scripts/restore.js",
     "verify:backup": "node scripts/verify-backup.js",
+    "storage:migrate": "node scripts/migrate-local-media.js",
     "optimize:images": "node scripts/optimize-images.js",
     "storage:audit": "node scripts/audit-media.js",
     "check:secrets": "node scripts/check-secrets.js"

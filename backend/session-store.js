@@ -21,14 +21,11 @@ function getAuthToken(request, preferredRole = null) {
       continue;
     }
   }
-  const cookieOrder = [];
-  if (preferredRole === 'admin') {
-    cookieOrder.push(config.sessionCookieNames.admin, config.sessionCookieNames.customer);
-  } else if (preferredRole === 'customer') {
-    cookieOrder.push(config.sessionCookieNames.customer, config.sessionCookieNames.admin);
-  } else {
-    cookieOrder.push(config.sessionCookieNames.customer, config.sessionCookieNames.admin);
-  }
+  const cookieOrder = preferredRole === 'admin' || preferredRole === 'super_admin'
+    ? [config.sessionCookieNames.admin]
+    : preferredRole === 'customer'
+      ? [config.sessionCookieNames.customer]
+      : [config.sessionCookieNames.customer, config.sessionCookieNames.admin];
   const cookieToken = cookieOrder.map(name => cookies[name]).find(Boolean);
   return cookieToken ? { token: cookieToken, source: 'cookie' } : { token: null, source: null };
 }

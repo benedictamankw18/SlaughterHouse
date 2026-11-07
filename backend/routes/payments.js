@@ -22,6 +22,10 @@ const LOW_STOCK_THRESHOLD = 5;
 const queryRows = (query, parameters = []) => new Promise((resolve, reject) => database.all(query, parameters, (error, rows) => error ? reject(error) : resolve(rows || [])));
 const run = (query, parameters = []) => new Promise((resolve, reject) => database.run(query, parameters, function (error) { error ? reject(error) : resolve(this); }));
 
+function rejectWebhook(httpStatus, body) {
+  throw Object.assign(new Error(body.error), { webhookResponse: { httpStatus, body } });
+}
+
 async function hasPaidExclusiveLicense(queryAll, beatId, excludedReference = null) {
   const parameters = excludedReference ? [beatId, 'paid', excludedReference] : [beatId, 'paid'];
   const rows = await queryAll(
@@ -267,21 +271,24 @@ router.post('/payments/webhook', async (request, response) => {
   if (!eventReference || !eventType) return response.status(400).json({ error: 'Payment webhook is missing its event reference or type.' });
   try {
     const outcome = await database.transaction(async tx => {
-      const stored = await tx.run(
-        'INSERT INTO payment_webhook_events (provider, event_reference, event_type, payload) VALUES (?, ?, ?, ?)',
+      const stored = await tx.get(
+        `INSERT INTO payment_webhook_events (provider, event_reference, event_type, payload)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT (provider, event_reference, event_type) DO NOTHING
+         RETURNING id`,
         ['paystack', eventReference, eventType, JSON.stringify(event)]
-      ).catch(error => error?.code === 'ER_DUP_ENTRY' ? null : Promise.reject(error));
+      );
       if (!stored) return { duplicate: true };
       if (isRefund || isReversal) {
-        if (!refund.reference) return { httpStatus: 400, body: { error: 'Refund webhook is missing its transaction reference.' } };
+        if (!refund.reference) rejectWebhook(400, { error: 'Refund webhook is missing its transaction reference.' });
         if (isRefund && eventType !== 'refund.processed') {
           return { processed: true, audit: { action: 'refund_event_ignored', details: { reference: refund.reference, event: eventType } } };
         }
         const order = await tx.get('SELECT * FROM orders WHERE reference = ? FOR UPDATE', [refund.reference]);
-        if (!order) return { httpStatus: 404, body: { error: `No order was found for refund reference ${refund.reference}.` } };
-        if (refund.currency && refund.currency !== order.currency) return { httpStatus: 400, body: { error: 'Refund currency does not match the order currency.' } };
+        if (!order) rejectWebhook(404, { error: `No order was found for refund reference ${refund.reference}.` });
+        if (refund.currency && refund.currency !== order.currency) rejectWebhook(400, { error: 'Refund currency does not match the order currency.' });
         const reversalAmount = isReversal && !Number.isFinite(refund.amountGhs) ? Number(order.amount) : refund.amountGhs;
-        if (!Number.isFinite(reversalAmount) || reversalAmount <= 0) return { httpStatus: 400, body: { error: 'Refund amount could not be validated.' } };
+        if (!Number.isFinite(reversalAmount) || reversalAmount <= 0) rejectWebhook(400, { error: 'Refund amount could not be validated.' });
         if (isReversal) {
           const result = await applyPaymentReversal(tx, order, {
             reference: refund.reference,
@@ -305,16 +312,16 @@ router.post('/payments/webhook', async (request, response) => {
         });
         return { processed: true };
       }
-      if (!order) return { httpStatus: 404, body: { error: `No order was found for payment reference ${eventReference}.` } };
+      if (!order) rejectWebhook(404, { error: `No order was found for payment reference ${eventReference}.` });
       if (order.status === 'paid' || order.status === 'partially_refunded') return { processed: true, orderId: order.id };
       if (order.status === 'refunded') return {
         processed: true,
         orderId: order.id,
         conflict: { reason: 'order_already_refunded', reference: eventReference }
       };
-      if (Number(event.data.amount) !== Math.round(Number(order.amount) * 100) || event.data.currency !== order.currency) return { httpStatus: 400, body: { error: 'Payment webhook amount could not be reconciled.' } };
+      if (Number(event.data.amount) !== Math.round(Number(order.amount) * 100) || event.data.currency !== order.currency) rejectWebhook(400, { error: 'Payment webhook amount could not be reconciled.' });
       let items;
-      try { items = JSON.parse(order.items_json); } catch { return { httpStatus: 500, body: { error: 'Order data is invalid.' } }; }
+      try { items = JSON.parse(order.items_json); } catch { rejectWebhook(500, { error: 'Order data is invalid.' }); }
       await lockExclusiveBeats(tx, items);
       const conflictingBeatId = await hasConflictingExclusiveSale(tx, items, order.reference);
       if (conflictingBeatId) {
@@ -346,9 +353,14 @@ router.post('/payments/webhook', async (request, response) => {
       return { processed: true, orderId: order.id };
     });
     if (outcome.duplicate) return response.json({ received: true, duplicate: true });
-    if (outcome.httpStatus) return response.status(outcome.httpStatus).json(outcome.body);
     if (outcome.conflict) {
       recordAuditSafely(database, { action: 'payment_webhook_conflict', entityType: 'order', entityId: outcome.orderId, details: { ...outcome.conflict, event: eventType } });
+      await notifyAdminsSafely(database, {
+        type: 'payment_reconciliation',
+        title: 'Paid order needs fulfillment review',
+        message: `Order ${eventReference} was paid but could not be fulfilled automatically (${outcome.conflict.reason}). Review the order and arrange fulfillment or refund.`,
+        dedupeKey: `payment-reconciliation:${eventReference}:${eventType}`
+      });
       return response.json({ received: true, conflict: outcome.conflict.reason || 'exclusive_license_already_sold' });
     }
     if (outcome.audit) {
@@ -366,6 +378,9 @@ router.post('/payments/webhook', async (request, response) => {
     }
     response.json({ received: true });
   } catch (error) {
+    if (error?.webhookResponse) {
+      return response.status(error.webhookResponse.httpStatus).json(error.webhookResponse.body);
+    }
     response.status(500).json({ error: databaseError('Payment webhook processing failed.', error) });
   }
 });

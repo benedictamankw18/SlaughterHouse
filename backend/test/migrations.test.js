@@ -7,7 +7,7 @@ function fakePool(appliedVersions = new Set(), existingColumns = new Set()) {
   return {
     statements,
     async query(query, parameters = []) {
-      if (/^CREATE OR REPLACE FUNCTION|^CREATE TABLE IF NOT EXISTS schema_migrations/.test(query)) return { rows: [], rowCount: 0 };
+      if (/^CREATE OR REPLACE FUNCTION|^CREATE TABLE IF NOT EXISTS schema_migrations|^SELECT pg_advisory_(?:lock|unlock)/.test(query)) return { rows: [], rowCount: 0 };
       if (/^SELECT version FROM schema_migrations/.test(query)) {
         return { rows: appliedVersions.has(parameters[0]) ? [{ version: parameters[0] }] : [], rowCount: 1 };
       }
@@ -95,6 +95,14 @@ test('migration 28 converts existing license availability values to PostgreSQL b
     "ALTER TABLE license_definition_status ALTER COLUMN is_active TYPE BOOLEAN USING (is_active::text IN ('1', 't', 'true'))",
     'ALTER TABLE license_definition_status ALTER COLUMN is_active SET DEFAULT TRUE'
   ]);
+});
+
+test('migration 29 creates shared rate-limit storage', () => {
+  const migration = migrations.find(candidate => candidate.version === 29);
+  assert.ok(migration, 'migration 29 must exist');
+  assert.match(migration.statements[0], /CREATE TABLE IF NOT EXISTS rate_limit_buckets/);
+  assert.match(migration.statements[0], /bucket_key CHAR\(64\) PRIMARY KEY/);
+  assert.match(migration.statements[1], /idx_rate_limit_buckets_expiry/);
 });
 
 test('migration 23 stores certificates and immutable administrative history', () => {
@@ -235,6 +243,25 @@ test('applyMigrations runs every statement once and records each version', async
   const secondRun = fakePool(allVersions);
   await applyMigrations(secondRun);
   assert.equal(secondRun.statements.length, 0, 'already-applied migrations must not run again');
+});
+
+test('applyMigrations takes and releases a PostgreSQL advisory lock', async () => {
+  const calls = [];
+  const connection = {
+    async query(query) {
+      calls.push(query);
+      if (/^SELECT version FROM schema_migrations/.test(query)) return { rows: [] };
+      if (/FROM information_schema\.columns/.test(query)) return { rows: [{ count: 0 }] };
+      return { rows: [] };
+    },
+    release() {
+      calls.push('RELEASE');
+    }
+  };
+  await applyMigrations({ async connect() { return connection; } });
+  assert.equal(calls[0], 'SELECT pg_advisory_lock(90210, 29)');
+  assert.equal(calls.at(-2), 'SELECT pg_advisory_unlock(90210, 29)');
+  assert.equal(calls.at(-1), 'RELEASE');
 });
 
 test('applyMigrations resumes from the last recorded version', async () => {

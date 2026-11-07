@@ -22,7 +22,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
-    environment:
+    environment: &backend-environment
       NODE_ENV: production
       PORT: 3000
       DATABASE_URL: postgresql://${DB_USER:?Set DB_USER in .env}:${DB_PASSWORD:?Set DB_PASSWORD in .env}@postgres:5432/ultbigboy
@@ -35,7 +35,7 @@ services:
       CERTIFICATE_SIGNING_SECRET: ${CERTIFICATE_SIGNING_SECRET:?Set CERTIFICATE_SIGNING_SECRET in .env}
       EMAIL_API_KEY: ${EMAIL_API_KEY:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
-      TRUST_PROXY: ${TRUST_PROXY:-false}
+      TRUST_PROXY: ${TRUST_PROXY:-1}
       STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
       ALLOW_EPHEMERAL_STORAGE: ${ALLOW_EPHEMERAL_STORAGE:-true}
       S3_ENDPOINT: ${S3_ENDPOINT:-}
@@ -59,6 +59,20 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+
+  email-worker:
+    profiles: ["email"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment: *backend-environment
+    volumes:
+      - app-data:/app/data
+    command: ["npm", "run", "email:worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   frontend:
     build:
