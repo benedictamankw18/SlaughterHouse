@@ -93,7 +93,7 @@ router.get('/beats', sessions.allowVisitor, async (request, response) => {
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   try {
     const [rows, countRow, defaults, activeLicenseTypes] = await Promise.all([
-      queryRows(`SELECT id, title, bpm, musical_key AS musicalKey, genre, mood, cover_art AS coverArt, preview_file AS previewFile, preview_duration_seconds AS previewDurationSeconds, basic_price, premium_price, unlimited_price, exclusive_price, created_at AS createdAt FROM beats ${where} ORDER BY ${sort} LIMIT ? OFFSET ?`, [...parameters, pageSize, (page - 1) * pageSize]),
+      queryRows(`SELECT id, title, bpm, musical_key AS "musicalKey", genre, mood, cover_art AS "coverArt", preview_file AS "previewFile", preview_duration_seconds AS "previewDurationSeconds", basic_price, premium_price, unlimited_price, exclusive_price, created_at AS "createdAt" FROM beats ${where} ORDER BY ${sort} LIMIT ? OFFSET ?`, [...parameters, pageSize, (page - 1) * pageSize]),
       queryOne(`SELECT COUNT(*) AS count FROM beats ${where}`, parameters),
       getBeatDefaults(),
       getActiveLicenseTypes()
@@ -108,7 +108,7 @@ router.get('/beats/:id', sessions.allowVisitor, async (request, response) => {
   if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) return response.status(400).json({ error: 'Beat ID must be a positive whole number.' });
   try {
     const [beat, defaults, activeLicenseTypes] = await Promise.all([
-      queryOne('SELECT id, title, bpm, musical_key AS musicalKey, genre, mood, cover_art AS coverArt, preview_file AS previewFile, preview_duration_seconds AS previewDurationSeconds, mp3_file AS mp3File, wav_file AS wavFile, stems_file AS stemsFile, basic_price, premium_price, unlimited_price, exclusive_price, created_at AS createdAt FROM beats WHERE id = ? AND catalog_status = ?', [Number(request.params.id), 'published']),
+      queryOne('SELECT id, title, bpm, musical_key AS "musicalKey", genre, mood, cover_art AS "coverArt", preview_file AS "previewFile", preview_duration_seconds AS "previewDurationSeconds", mp3_file AS "mp3File", wav_file AS "wavFile", stems_file AS "stemsFile", basic_price, premium_price, unlimited_price, exclusive_price, created_at AS "createdAt" FROM beats WHERE id = ? AND catalog_status = ?', [Number(request.params.id), 'published']),
       getBeatDefaults(),
       getActiveLicenseTypes()
     ]);

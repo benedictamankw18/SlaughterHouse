@@ -391,6 +391,29 @@ test('all registered API route methods execute against an isolated PostgreSQL te
 
     assert.deepEqual(failures, [], `${routes.length} route methods were exercised; failures:\n${failures.join('\n')}`);
 
+    const coverFile = `cover-integration-${crypto.randomBytes(6).toString('hex')}.webp`;
+    const previewFile = `preview-integration-${crypto.randomBytes(6).toString('hex')}.mp3`;
+    const [beatInsert] = await promisePool.execute(
+      `INSERT INTO beats (title, cover_art, preview_file, preview_duration_seconds, catalog_status)
+       VALUES (?, ?, ?, ?, 'published')`,
+      [`Integration cover ${crypto.randomUUID()}`, coverFile, previewFile, 30]
+    );
+    const beatsResponse = await fetch(`${baseUrl}/api/beats`);
+    assert.equal(beatsResponse.status, 200);
+    const { beats } = await beatsResponse.json();
+    const publicBeat = beats.find(beat => beat.id === beatInsert.insertId);
+    assert.ok(publicBeat, 'The newly published beat appears in the customer catalog.');
+    assert.equal(publicBeat.coverArt, coverFile, 'Beat cover art uses the frontend camelCase field.');
+    assert.equal(publicBeat.previewFile, previewFile, 'Beat preview file uses the frontend camelCase field.');
+    assert.equal(publicBeat.previewDurationSeconds, 30, 'Beat preview duration uses the frontend camelCase field.');
+    assert.equal(publicBeat.previewUrl, `http://localhost:3000/api/uploads/${previewFile}`);
+
+    const beatDetailsResponse = await fetch(`${baseUrl}/api/beats/${beatInsert.insertId}`);
+    assert.equal(beatDetailsResponse.status, 200);
+    const { beat: publicBeatDetails } = await beatDetailsResponse.json();
+    assert.equal(publicBeatDetails.coverArt, coverFile);
+    assert.equal(publicBeatDetails.previewFile, previewFile);
+
     const staffResponse = await fetch(`${baseUrl}/api/admin/staff`, {
       headers: { Authorization: `Bearer ${sessions.super_admin}`, Connection: 'close' }
     });
