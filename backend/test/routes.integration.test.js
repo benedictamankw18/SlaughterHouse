@@ -208,6 +208,9 @@ function routeCases(routeModules) {
 }
 
 function requestPath(routePath, method) {
+  if (method === 'get' && ['/admin/reports', '/admin/reports.csv'].includes(routePath)) {
+    return `/api${routePath}?from=2026-01-01&to=2026-01-31`;
+  }
   if (method === 'delete' && routePath === '/admin/stream-releases/:id') {
     return '/api/admin/stream-releases/2147483647';
   }

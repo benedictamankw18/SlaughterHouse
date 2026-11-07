@@ -548,10 +548,10 @@ router.get('/admin/reports', sessions.requireAdmin, async (request, response) =>
       ),
       queryRows(
         `SELECT month, order_count, revenue FROM (
-           SELECT DATE_FORMAT(created_at, '%Y-%m') AS month, COUNT(*) AS order_count,
+           SELECT TO_CHAR(created_at, 'YYYY-MM') AS month, COUNT(*) AS order_count,
                   SUM(amount - COALESCE(refunded_amount, 0)) AS revenue
            FROM orders ${conditions.length ? `${where} AND` : 'WHERE'} status IN ('paid', 'partially_refunded')
-           GROUP BY DATE_FORMAT(created_at, '%Y-%m') ORDER BY month DESC LIMIT 24
+           GROUP BY TO_CHAR(created_at, 'YYYY-MM') ORDER BY month DESC LIMIT 24
          ) AS monthly_revenue ORDER BY month`,
         parameters
       ),
@@ -561,7 +561,7 @@ router.get('/admin/reports', sessions.requireAdmin, async (request, response) =>
       ),
       queryRows(
         `SELECT COUNT(*) AS order_count,
-                SUM(status IN ('paid', 'partially_refunded')) AS paid_order_count,
+                COUNT(*) FILTER (WHERE status IN ('paid', 'partially_refunded')) AS paid_order_count,
                 SUM(CASE WHEN status IN ('paid', 'partially_refunded') THEN amount - COALESCE(refunded_amount, 0) ELSE 0 END) AS net_revenue
          FROM orders ${where}`,
         parameters
