@@ -11,7 +11,8 @@ const { rateLimit } = require('../services/rate-limit');
 const { recordAuditSafely } = require('../services/audit');
 const { createNotificationSafely, notifyAdminsSafely } = require('../services/notifications');
 const { queueEmailSafely } = require('../services/email/outbox');
-const { isAvailableBookingSlot } = require('../services/booking');
+const { isAvailableBookingSlot, areAvailableBookingSlots } = require('../services/booking');
+const { fulfillPaidBooking } = require('../services/booking-fulfillment');
 const { LICENSE_TYPES, loadLicenseRights, loadLicenseDefinitions, saveLicenseRights } = require('../services/license-rights');
 const { FULFILLMENT_STATUSES, updateFulfillmentStatus } = require('../services/fulfillment');
 const { BUSINESS_SETTINGS, validateDateRange, validateSettingUpdates } = require('../services/admin-controls');
@@ -993,6 +994,131 @@ router.patch('/admin/bookings/:id/status', sessions.requireAdmin, (request, resp
       });
     });
   });
+});
+
+router.post('/admin/orders/:reference/booking-resolution', sessions.requireAdmin, async (request, response) => {
+  const reference = String(request.params.reference || '').trim();
+  const action = String(request.body.action || '');
+  if (!reference || reference.length > 255) return response.status(400).json({ error: 'A valid order reference is required.' });
+  if (!['assign_slot', 'request_refund'].includes(action)) return response.status(400).json({ error: 'Choose assign_slot or request_refund.' });
+
+  if (action === 'assign_slot') {
+    const slots = request.body.slots;
+    if (!Array.isArray(slots) || slots.some(slot => !slot || typeof slot.date !== 'string' || typeof slot.time !== 'string')) {
+      return response.status(400).json({ error: 'Provide each replacement session as a date and time.' });
+    }
+    try {
+      const result = await database.transaction(async transaction => {
+        const order = await transaction.get('SELECT * FROM orders WHERE reference = ? FOR UPDATE', [reference]);
+        if (!order) return { status: 404, error: 'No order was found for this reference.' };
+        if (!order.fulfillment_review_required || order.status !== 'paid') return { status: 409, error: 'This paid order is not awaiting booking reconciliation.' };
+        if (order.fulfillment_review_reason === 'refund_pending') return { status: 409, error: 'A refund is already pending for this order; do not assign another booking slot.' };
+        let items;
+        try { items = typeof order.items_json === 'string' ? JSON.parse(order.items_json) : order.items_json; } catch { items = null; }
+        if (!Array.isArray(items)) return { status: 500, error: 'Order details could not be read.' };
+        const bookingItem = items.find(item => item.type === 'booking');
+        const oldSlots = bookingItem?.booking?.sessionSlots;
+        if (!bookingItem || !Array.isArray(oldSlots) || !areAvailableBookingSlots(slots, oldSlots.length)) {
+          return { status: 400, error: 'Provide the same number of valid, non-overlapping replacement sessions as the original booking.' };
+        }
+        const updatedBooking = {
+          ...bookingItem.booking,
+          sessionSlots: slots.map(slot => ({ date: slot.date, time: slot.time }))
+        };
+        const updatedItems = items.map(item => item === bookingItem ? { ...item, booking: updatedBooking } : item);
+        await fulfillPaidBooking(transaction, order, { ...bookingItem, booking: updatedBooking });
+        await transaction.run(
+          `UPDATE orders
+           SET items_json = ?, fulfillment_review_required = FALSE,
+               fulfillment_review_reason = NULL, fulfillment_reviewed_at = CURRENT_TIMESTAMP
+           WHERE id = ?`,
+          [JSON.stringify(updatedItems), order.id]
+        );
+        return { status: 200, orderId: order.id, slots: updatedBooking.sessionSlots };
+      });
+      if (result.status !== 200) return response.status(result.status).json({ error: result.error });
+      await recordAuditSafely(database, {
+        userId: request.admin.id,
+        action: 'booking_payment_reconciliation_assigned',
+        entityType: 'order',
+        entityId: result.orderId,
+        details: { reference, slots: result.slots },
+        ipAddress: request.ip
+      });
+      return response.json({ reference, resolution: 'assigned', slots: result.slots });
+    } catch (error) {
+      if (error.code === 'BOOKING_SLOT_UNAVAILABLE' || error.code === 'ER_DUP_ENTRY') {
+        return response.status(409).json({ error: 'One or more replacement sessions are no longer available. Refresh availability and choose another time.' });
+      }
+      return response.status(500).json({ error: databaseError('Assigning the replacement booking failed.', error) });
+    }
+  }
+
+  if (!config.paystackSecretKey) return response.status(503).json({ error: 'Refund processing is unavailable because PAYSTACK_SECRET_KEY is not configured.' });
+  let refundDetails;
+  try {
+    refundDetails = await database.transaction(async transaction => {
+      const order = await transaction.get('SELECT * FROM orders WHERE reference = ? FOR UPDATE', [reference]);
+      if (!order) return { status: 404, error: 'No order was found for this reference.' };
+      if (!order.fulfillment_review_required || order.status !== 'paid') return { status: 409, error: 'This paid order is not awaiting booking reconciliation.' };
+      if (order.fulfillment_review_reason === 'refund_pending') return { status: 200, alreadyPending: true, orderId: order.id };
+      const payment = await transaction.get(
+        `SELECT provider_reference FROM payments
+         WHERE order_id = ? AND provider = ? AND status = ?
+         ORDER BY verified_at DESC NULLS LAST, created_at DESC LIMIT 1`,
+        [order.id, 'paystack', 'paid']
+      );
+      if (!payment?.provider_reference) return { status: 409, error: 'A confirmed Paystack transaction could not be found for this order.' };
+      await transaction.run('UPDATE orders SET fulfillment_review_reason = ? WHERE id = ?', ['refund_pending', order.id]);
+      return { status: 200, orderId: order.id, amount: Number(order.amount) - Number(order.refunded_amount || 0), providerReference: payment.provider_reference, email: order.customer_email };
+    });
+  } catch (error) {
+    return response.status(500).json({ error: databaseError('Preparing the booking refund failed.', error) });
+  }
+  if (refundDetails.status !== 200) return response.status(refundDetails.status).json({ error: refundDetails.error });
+  if (refundDetails.alreadyPending) return response.json({ reference, resolution: 'refund_pending' });
+  try {
+    const providerResponse = await fetch('https://api.paystack.co/refund', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${config.paystackSecretKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        transaction: refundDetails.providerReference,
+        amount: Math.round(refundDetails.amount * 100)
+      })
+    });
+    const providerResult = await providerResponse.json();
+    if (!providerResponse.ok || !providerResult.status) {
+      await runQuery(
+        `UPDATE orders SET fulfillment_review_reason = ?
+         WHERE reference = ? AND fulfillment_review_required = TRUE AND fulfillment_review_reason = ?`,
+        ['booking_slot_unavailable', reference, 'refund_pending']
+      );
+      return response.status(502).json({ error: providerResult.message || 'Paystack did not accept the refund request.' });
+    }
+  } catch (error) {
+    logger.error('booking_refund_request_uncertain', { reference, code: error.code });
+    return response.status(502).json({ error: 'The refund request could not be confirmed. Check Paystack before retrying; the order is marked refund pending to prevent duplicate requests.' });
+  }
+  await recordAuditSafely(database, {
+    userId: request.admin.id,
+    action: 'booking_payment_refund_requested',
+    entityType: 'order',
+    entityId: refundDetails.orderId,
+    details: { reference, amount: refundDetails.amount },
+    ipAddress: request.ip
+  });
+  const customers = await queryRows(
+    "SELECT id FROM users WHERE lower(email) = lower(?) AND role NOT IN ('admin', 'super_admin')",
+    [refundDetails.email]
+  );
+  const customer = customers[0];
+  if (customer?.id) await createNotificationSafely(database, {
+    userId: customer.id,
+    type: 'booking_refund_pending',
+    title: 'Booking refund requested',
+    message: 'A refund has been requested for your booking payment. We will notify you when Paystack confirms it.'
+  });
+  response.json({ reference, resolution: 'refund_pending' });
 });
 
 router.patch('/admin/requests/:id/status', sessions.requireAdmin, (request, response) => {

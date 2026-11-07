@@ -88,6 +88,15 @@ async function applyRefund(db, order, { amountGhs, reference, reason = null }) {
     'UPDATE orders SET status = ?, refunded_amount = ?, refunded_at = CURRENT_TIMESTAMP WHERE id = ?',
     [nextStatus, refundedAmount, order.id]
   );
+  if (full) {
+    await db.run(
+      `UPDATE orders
+       SET fulfillment_review_required = FALSE, fulfillment_review_reason = NULL,
+           fulfillment_reviewed_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND fulfillment_review_required = TRUE`,
+      [order.id]
+    );
+  }
 
   const manualReview = [];
   if (full) {

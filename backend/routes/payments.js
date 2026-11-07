@@ -3,8 +3,6 @@ const crypto = require('node:crypto');
 const database = require('../database');
 const config = require('../config');
 const { getPricing } = require('../services/pricing');
-const { normalizeBookingSlots } = require('../services/booking');
-const { confirmBookingSlots } = require('../services/booking-reservations');
 const { getDownloadItems } = require('../services/downloads');
 const { databaseError } = require('../services/error-messages');
 const validators = require('../services/input-validation');
@@ -15,10 +13,11 @@ const { issueCertificateRecord } = require('../services/license-certificates');
 const { refundEventDetails, refundEventKey, applyRefund, applyPaymentReversal } = require('../services/refunds');
 const { paymentFailureStatus, isRefundEvent, recordNonSuccessPayment } = require('../services/payment-events');
 const { queueEmailSafely } = require('../services/email/outbox');
+const { fulfillPaidBooking } = require('../services/booking-fulfillment');
 const logger = require('../services/logger');
 
 const router = express.Router();
-const { apiPublicUrl, paymentCallbackUrl, paystackSecretKey, usdToGhsRate, bookingServiceLabels } = config;
+const { apiPublicUrl, paymentCallbackUrl, paystackSecretKey, usdToGhsRate } = config;
 const LOW_STOCK_THRESHOLD = 5;
 const queryRows = (query, parameters = []) => new Promise((resolve, reject) => database.all(query, parameters, (error, rows) => error ? reject(error) : resolve(rows || [])));
 const run = (query, parameters = []) => new Promise((resolve, reject) => database.run(query, parameters, function (error) { error ? reject(error) : resolve(this); }));
@@ -190,6 +189,44 @@ async function completePaidOrder(db, order, items, paymentData) {
   });
 }
 
+async function markBookingForReview(db, order, items, paymentData, reason = 'booking_slot_unavailable') {
+  await db.run(
+    'UPDATE orders SET status = ?, fulfillment_review_required = TRUE, fulfillment_review_reason = ? WHERE id = ?',
+    ['paid', reason, order.id]
+  );
+  await db.run(
+    `INSERT INTO payments (order_id, provider, provider_reference, status, amount, currency, provider_payload, verified_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT (provider_reference) DO UPDATE SET order_id = EXCLUDED.order_id, status = EXCLUDED.status,
+       amount = EXCLUDED.amount, currency = EXCLUDED.currency, provider_payload = EXCLUDED.provider_payload,
+       verified_at = EXCLUDED.verified_at`,
+    [order.id, 'paystack', paymentData.reference, 'paid', Number(paymentData.amount) / 100, paymentData.currency, JSON.stringify(paymentData)]
+  );
+  await recordOrderSales(db, order, items);
+}
+
+async function notifyBookingNeedsReview(db, order, reason) {
+  await notifyAdminsSafely(db, {
+    type: 'payment_reconciliation',
+    title: 'Paid booking needs fulfillment review',
+    message: `Order ${order.reference} was paid but its booking could not be fulfilled automatically (${reason}). Assign another slot or request a refund.`,
+    dedupeKey: `payment-reconciliation:${order.reference}:${reason}`
+  });
+  const customer = await db.get("SELECT id FROM users WHERE lower(email) = lower(?) AND role NOT IN ('admin', 'super_admin')", [order.customer_email]);
+  if (customer?.id) await createNotificationSafely(db, {
+    userId: customer.id,
+    type: 'booking_payment_review',
+    title: 'Your paid booking needs follow-up',
+    message: 'We received your payment, but your selected time is no longer available. Our team will contact you to arrange another time or a refund.'
+  });
+  await recordAuditSafely(database, {
+    action: 'booking_payment_reconciliation_required',
+    entityType: 'order',
+    entityId: order.id,
+    details: { reference: order.reference, reason }
+  });
+}
+
 async function lockExclusiveBeats(db, items) {
   const beatIds = [...new Set(items
     .filter(item => item.type === 'beat' && item.license === 'exclusive')
@@ -206,47 +243,6 @@ async function hasConflictingExclusiveSale(db, items, orderReference) {
     if (await hasPaidExclusiveLicense(db.all.bind(db), beatId, orderReference)) return beatId;
   }
   return null;
-}
-
-async function createPaidBooking(db, order, bookingItem) {
-  const booking = bookingItem.booking;
-  if (!booking) throw Object.assign(new Error('Booking details are missing from this order.'), { code: 'INVALID_BOOKING' });
-  const serviceName = bookingServiceLabels[bookingItem.service] || bookingItem.service;
-  const sessionSlots = normalizeBookingSlots(booking.sessionSlots || (booking.preferredDate && booking.preferredTime ? [{ date: booking.preferredDate, time: booking.preferredTime }] : []));
-  const firstSlot = sessionSlots[0];
-  await confirmBookingSlots(db, order.reference, sessionSlots);
-  const bookingResult = await db.run('INSERT INTO bookings (name, email, phone, service, artist_count, song_count, booking_slots_json, preferred_date, preferred_time, details, payment_reference, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [booking.name, booking.email, booking.phone, serviceName, booking.artistCount, booking.songCount || null, JSON.stringify(sessionSlots), firstSlot?.date || null, firstSlot?.time || null, booking.details, order.reference, 'paid']);
-  for (const slot of sessionSlots) {
-    await db.run('UPDATE booking_availability SET booking_id = ? WHERE slot_date = ? AND start_time = ?', [bookingResult.lastID, slot.date, slot.time]);
-  }
-  const customer = await db.get("SELECT id FROM users WHERE lower(email) = lower(?) AND role NOT IN ('admin', 'super_admin')", [order.customer_email]);
-  if (customer?.id) await createNotificationSafely(db, {
-    userId: customer.id,
-    type: 'booking_paid',
-    title: 'Booking confirmed',
-    message: `${serviceName} booking ${order.reference} is paid and awaiting studio confirmation.`
-  });
-  await notifyAdminsSafely(db, {
-    type: 'booking_paid',
-    title: 'Booking payment received',
-    message: `${serviceName} booking ${order.reference} from ${booking.name || order.customer_name} was paid.`,
-    dedupeKey: `booking-paid:${order.reference}`
-  });
-  await queueEmailSafely(db, {
-    to: booking.email || order.customer_email,
-    template: 'booking_confirmation',
-    idempotencyKey: `booking-confirmation:${order.reference}`,
-    data: {
-      name: booking.name || order.customer_name,
-      reference: order.reference,
-      service: bookingItem.name,
-      feeGhs: bookingItem.feeGhs,
-      currency: order.currency,
-      slots: sessionSlots,
-      bookingUrl: new URL('/', config.frontendOrigin).toString()
-    }
-  });
-  return bookingResult.lastID;
 }
 
 router.post('/payments/webhook', async (request, response) => {
@@ -333,9 +329,18 @@ router.post('/payments/webhook', async (request, response) => {
       const bookingItem = items.find(item => item.type === 'booking');
       if (bookingItem) {
         try {
-          await createPaidBooking(tx, order, bookingItem);
+          await fulfillPaidBooking(tx, order, bookingItem);
         } catch (error) {
-          if (error.code === 'BOOKING_SLOT_UNAVAILABLE' || error.code === 'ER_DUP_ENTRY') return { processed: true, orderId: order.id, conflict: { reason: 'booking_slot_unavailable', reference: eventReference } };
+          if (error.code === 'BOOKING_SLOT_UNAVAILABLE' || error.code === 'ER_DUP_ENTRY') {
+            await markBookingForReview(tx, order, items, event.data);
+            return {
+              processed: true,
+              orderId: order.id,
+              order,
+              reviewRequired: true,
+              conflict: { reason: 'booking_slot_unavailable', reference: eventReference }
+            };
+          }
           throw error;
         }
       }
@@ -353,6 +358,10 @@ router.post('/payments/webhook', async (request, response) => {
     });
     if (outcome.duplicate) return response.json({ received: true, duplicate: true });
     if (outcome.conflict) {
+      if (outcome.reviewRequired) {
+        await notifyBookingNeedsReview(database, outcome.order, outcome.conflict.reason);
+        return response.json({ received: true, conflict: outcome.conflict.reason });
+      }
       recordAuditSafely(database, { action: 'payment_webhook_conflict', entityType: 'order', entityId: outcome.orderId, details: { ...outcome.conflict, event: eventType } });
       await notifyAdminsSafely(database, {
         type: 'payment_reconciliation',
@@ -504,22 +513,32 @@ router.get('/payments/verify/:reference', async (request, response) => {
       await lockExclusiveBeats(tx, items);
       const conflictingBeatId = await hasConflictingExclusiveSale(tx, items, order.reference);
       if (conflictingBeatId) return { httpStatus: 409, body: { error: `The exclusive license for beat ${conflictingBeatId} has already been sold. Payment cannot unlock this order.` } };
-      if (bookingItem) await createPaidBooking(tx, order, bookingItem);
+      if (bookingItem) {
+        try {
+          await fulfillPaidBooking(tx, order, bookingItem);
+        } catch (error) {
+          if (error.code === 'BOOKING_SLOT_UNAVAILABLE' || error.code === 'ER_DUP_ENTRY') {
+            await markBookingForReview(tx, order, items, payment.data);
+            return {
+              httpStatus: 409,
+              order,
+              conflict: 'booking_slot_unavailable',
+              body: { error: 'Payment was received, but the selected booking slot is no longer available. The team has been notified to resolve your booking.' }
+            };
+          }
+          throw error;
+        }
+      }
       await completePaidOrder(tx, order, items, payment.data);
       return success();
     });
+    if (outcome.conflict) {
+      await notifyBookingNeedsReview(database, outcome.order, outcome.conflict);
+      return response.status(outcome.httpStatus).json(outcome.body);
+    }
     return response.status(outcome.httpStatus).json(outcome.body);
   } catch (error) {
     logger.error('payment_verification_failed', { code: error.code });
-    if (error.code === 'BOOKING_SLOT_UNAVAILABLE') {
-      await notifyAdminsSafely(database, {
-        type: 'payment_reconciliation',
-        title: 'Paid booking needs fulfillment review',
-        message: `Order ${request.params.reference} was paid but its booking slot is no longer available. Review the order and arrange fulfillment or refund.`,
-        dedupeKey: `payment-reconciliation:${request.params.reference}:booking-slot`
-      });
-      return response.status(409).json({ error: 'Payment was received, but the selected booking slot is no longer available. The team has been notified to resolve your booking.' });
-    }
     if (error.code === 'ER_DUP_ENTRY') return response.status(409).json({ error: 'This booking could not be completed because one or more selected slots were reserved by another customer.' });
     response.status(502).json({ error: error.code ? databaseError('Payment verification failed.', error) : `Payment verification failed: ${error.message}` });
   }

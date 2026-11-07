@@ -37,6 +37,11 @@
 .admin-list { display: grid; gap: 10px; }
 .admin-list-item { padding: 16px; border-left: 3px solid #22c55e; background: #161616; }
 .admin-list-item p { margin: 5px 0 0; color: rgba(255,255,255,.68); }
+.admin-booking-reconciliation { display: grid; gap: 12px; margin-top: 16px; padding: 14px; border: 1px solid rgba(250,204,21,.55); border-radius: 6px; background: rgba(250,204,21,.06); }
+.admin-booking-reconciliation > p { margin: 0; }
+.admin-review-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.admin-review-actions button { padding: 9px 12px; border: 1px solid #22c55e; border-radius: 5px; background: transparent; color: #86efac; cursor: pointer; }
+.admin-review-actions button:disabled { opacity: .55; cursor: wait; }
 .admin-inventory-heading { display: flex; justify-content: space-between; gap: 12px; }
 .admin-inventory-heading span { color: #86efac; font-size: .85rem; }
 .admin-inventory-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; margin-top: 12px; }

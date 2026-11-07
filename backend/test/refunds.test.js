@@ -64,7 +64,7 @@ test('refundEventKey is unique per refund id and falls back to the transaction r
 
 test('a full refund revokes licences, restores unfulfilled stock, and notifies both sides', async () => {
   const db = createFakeDb({ admins: [{ id: 1 }] });
-  const result = await applyRefund(db, order(), { amountGhs: 800, reference: 'UBB-REFUND-1' });
+  const result = await applyRefund(db, order({ fulfillment_review_required: true }), { amountGhs: 800, reference: 'UBB-REFUND-1' });
 
   assert.equal(result.full, true);
   assert.equal(result.status, 'refunded');
@@ -73,6 +73,7 @@ test('a full refund revokes licences, restores unfulfilled stock, and notifies b
 
   const sql = db.calls.map(call => call.query).join('\n');
   assert.match(sql, /UPDATE orders SET status = \?, refunded_amount = \?, refunded_at/);
+  assert.match(sql, /SET fulfillment_review_required = FALSE, fulfillment_review_reason = NULL/);
   assert.match(sql, /UPDATE licenses SET revoked_at/);
   assert.match(sql, /UPDATE merchandise SET stock_quantity = stock_quantity \+ 1/);
   const notificationCalls = db.calls.filter(call => /INSERT INTO notifications/.test(call.query));

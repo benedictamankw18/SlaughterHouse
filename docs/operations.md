@@ -137,7 +137,11 @@ payment failure or abandonment releases them immediately, while expired holds
 are cleared lazily when availability is read or another checkout tries to
 claim the slot. A successful payment converts only its own hold into a booked
 slot. If a payment arrives after the hold has expired and another customer has
-claimed that slot, the paid order is surfaced for manual fulfillment or refund.
+claimed that slot, the paid order is flagged for reconciliation in Admin >
+Orders. An administrator can assign replacement sessions or request a full
+Paystack refund. Refund requests stay pending until Paystack confirms them;
+the confirmed full refund clears the reconciliation flag. Both resolution
+paths are audited and notify the customer.
 
 Back up the bucket (or the local media directories when the local driver is
 used) separately from the PostgreSQL backups. The database stores only file

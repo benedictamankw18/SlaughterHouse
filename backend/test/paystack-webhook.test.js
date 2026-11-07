@@ -5,7 +5,7 @@ const Module = require('node:module');
 const express = require('express');
 const { configureRequestBodyParsing } = require('../middleware/request-body');
 
-function loadPaymentsRouter() {
+function loadPaymentsRouter({ bookingSlotUnavailable = false } = {}) {
   const routeId = require.resolve('../routes/payments');
   const refundsId = require.resolve('../services/refunds');
   const originalRoute = require.cache[routeId];
@@ -31,6 +31,7 @@ function loadPaymentsRouter() {
       const tx = {
         async run(query, parameters = []) {
           calls.push({ query, parameters });
+          if (bookingSlotUnavailable && /SET status = 'booked'/.test(query)) return { lastID: 1, changes: 0 };
           return { lastID: 1, changes: 1 };
         },
         async get(query, parameters = []) {
@@ -55,6 +56,7 @@ function loadPaymentsRouter() {
       pendingWebhookEvents.forEach(eventKey => webhookEvents.add(eventKey));
       return result;
     },
+    async get() { return null; },
     async all() { return []; }
   };
 
@@ -210,6 +212,46 @@ test('Paystack booking success consumes the matching slot hold', () => withRoute
     && parameters.includes(loaded.order.reference)));
   assert.equal(loaded.calls.some(({ query }) => /INSERT INTO booking_availability/.test(query)), false);
 }));
+
+test('Paystack success with an expired booking hold marks the paid order for review', async () => {
+  const loaded = loadPaymentsRouter({ bookingSlotUnavailable: true });
+  try {
+    loaded.order.items_json = JSON.stringify([{
+      type: 'booking',
+      name: 'Mixtape',
+      service: 'mixtape',
+      feeGhs: 125,
+      booking: {
+        name: 'Customer',
+        email: loaded.order.customer_email,
+        phone: '+233240000000',
+        artistCount: 1,
+        sessionSlots: [{ date: '2030-01-08', time: '11:00' }]
+      }
+    }]);
+
+    const result = await postWebhook(loaded.router, {
+      event: 'charge.success',
+      data: {
+        reference: loaded.order.reference,
+        status: 'success',
+        amount: 12500,
+        currency: 'GHS'
+      }
+    });
+
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body, { received: true, conflict: 'booking_slot_unavailable' });
+    assert.ok(loaded.calls.some(({ query, parameters }) =>
+      /UPDATE orders SET status = \?, fulfillment_review_required = TRUE/.test(query)
+      && parameters[0] === 'paid'
+      && parameters.includes('booking_slot_unavailable')));
+    assert.ok(loaded.calls.some(({ query, parameters }) =>
+      /INSERT INTO payments/.test(query) && parameters.includes('paid')));
+  } finally {
+    loaded.restore();
+  }
+});
 
 test('Paystack failure webhook records failure without marking the order paid', () => withRouter(async loaded => {
   const result = await postWebhook(loaded.router, {
