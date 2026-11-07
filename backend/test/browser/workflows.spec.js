@@ -23,6 +23,43 @@ async function mockApi(page, options = {}) {
   let adminReviewStatus = 'pending';
   let adminStreamReleases = [];
   let nextStreamReleaseId = 70;
+  const reconciliationOrders = [
+    {
+      id: 3,
+      reference: 'ORDER-REVIEW-ASSIGN',
+      status: 'paid',
+      customer_name: 'Alex Artist',
+      customer_email: 'alex@example.test',
+      amount: 250,
+      fulfillment_review_required: true,
+      fulfillment_review_reason: 'booking_slot_unavailable',
+      items: [{
+        type: 'booking',
+        name: 'Mixtape',
+        booking: {
+          sessionSlots: [
+            { date: '2030-01-08', time: '11:00' },
+            { date: '2030-01-09', time: '11:00' }
+          ]
+        }
+      }]
+    },
+    {
+      id: 4,
+      reference: 'ORDER-REVIEW-REFUND',
+      status: 'paid',
+      customer_name: 'Sam Buyer',
+      customer_email: 'sam@example.test',
+      amount: 250,
+      fulfillment_review_required: true,
+      fulfillment_review_reason: 'booking_slot_unavailable',
+      items: [{
+        type: 'booking',
+        name: 'Mixtape',
+        booking: { sessionSlots: [{ date: '2030-01-10', time: '11:00' }] }
+      }]
+    }
+  ];
   await page.route('https://**/*', route => route.abort());
   await page.route('**/api/**', async route => {
     const request = route.request();
@@ -79,10 +116,13 @@ async function mockApi(page, options = {}) {
           { id: 2, request_type: 'merchandise', product_name: 'Tour Shirt', customer_name: 'Sam Buyer', customer_email: 'sam@example.test', details: 'Custom shirt', status: 'accepted' }
         ] : [],
         bookings: [],
-        orders: options.adminFilters ? [
+        orders: [
+          ...(options.adminFilters ? [
           { id: 1, reference: 'ORDER-PAID-1', status: 'paid', customer_name: 'Alex Artist', customer_email: 'alex@example.test', amount: 40, created_at: '2026-11-05', items: [{ type: 'beat', name: 'Night Drive' }] },
           { id: 2, reference: 'ORDER-PENDING-2', status: 'pending', customer_name: 'Sam Buyer', customer_email: 'sam@example.test', amount: 30, created_at: '2026-11-04', items: [{ type: 'merchandise', name: 'Tour Shirt' }] }
-        ] : [],
+          ] : []),
+          ...(options.adminReconciliation ? reconciliationOrders : [])
+        ],
         reviews: options.adminReview ? [{
           id: 55,
           customer_name: customer.name,
@@ -131,6 +171,10 @@ async function mockApi(page, options = {}) {
       ] : [] };
     } else if (path === '/api/admin/certificates') {
       body = { certificates: [] };
+    } else if (/^\/api\/admin\/orders\/[^/]+\/booking-resolution$/.test(path) && method === 'POST') {
+      const order = reconciliationOrders.find(item => path.includes(encodeURIComponent(item.reference)));
+      if (order) order.fulfillment_review_required = false;
+      body = { reference: order?.reference, resolution: data.action === 'assign_slot' ? 'assigned' : 'refund_pending' };
     } else if (path === '/api/admin/reports') {
       body = { summary: {}, revenueByMonth: [], bookingCounts: [] };
     } else if (path === '/api/admin/audit-logs') {
@@ -465,6 +509,38 @@ test('admin list sections search and filter their records', async ({ page }) => 
   await expect(page.locator('#staff-list')).not.toContainText('Admin One');
   await page.locator('#staff-search').fill('no match');
   await expect(page.locator('#staff-list')).toContainText('No staff accounts match these filters.');
+});
+
+test('admin resolves paid booking cases by assigning replacement sessions or requesting refunds', async ({ page }) => {
+  const calls = await mockApi(page, { adminLogin: true, adminReconciliation: true });
+  await seedAdminSession(page);
+  await page.goto('/admin.html');
+  await expect(page.locator('#admin-dashboard')).toBeVisible();
+  await page.getByRole('button', { name: 'Orders', exact: true }).click();
+
+  const assignment = page.locator('[data-booking-resolution="ORDER-REVIEW-ASSIGN"]').filter({ visible: true }).first();
+  await expect(assignment).toContainText('Booking fulfillment needs review');
+  await assignment.locator('[data-replacement-date="0"]').fill('2030-01-15');
+  await assignment.locator('[data-replacement-time="0"]').fill('11:00');
+  await assignment.locator('[data-replacement-date="1"]').fill('2030-01-16');
+  await assignment.locator('[data-replacement-time="1"]').fill('11:00');
+  await assignment.getByRole('button', { name: 'Assign replacement slot' }).click();
+  await expect(page.locator('[data-booking-resolution="ORDER-REVIEW-ASSIGN"]').filter({ visible: true })).toHaveCount(0);
+  const assignedCall = calls.find(call => call.path.endsWith('/ORDER-REVIEW-ASSIGN/booking-resolution'));
+  expect(assignedCall.data).toEqual({
+    action: 'assign_slot',
+    slots: [
+      { date: '2030-01-15', time: '11:00' },
+      { date: '2030-01-16', time: '11:00' }
+    ]
+  });
+
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('[data-booking-resolution="ORDER-REVIEW-REFUND"]').filter({ visible: true })
+    .getByRole('button', { name: 'Request full refund' }).click();
+  await expect(page.locator('[data-booking-resolution="ORDER-REVIEW-REFUND"]').filter({ visible: true })).toHaveCount(0);
+  expect(calls.find(call => call.path.endsWith('/ORDER-REVIEW-REFUND/booking-resolution')).data)
+    .toEqual({ action: 'request_refund' });
 });
 
 test('key storefront and admin pages have no automated WCAG 2.1 A/AA violations', async ({ page }) => {

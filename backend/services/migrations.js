@@ -618,6 +618,15 @@ const migrations = [
       'CREATE INDEX IF NOT EXISTS idx_booking_availability_hold_expiry ON booking_availability (status, hold_expires_at)',
       'CREATE INDEX IF NOT EXISTS idx_booking_availability_order_reference ON booking_availability (booking_order_reference)'
     ]
+  },
+  {
+    version: 31,
+    statements: [
+      { ensureColumn: { table: 'orders', column: 'fulfillment_review_required', definition: 'BOOLEAN NOT NULL DEFAULT FALSE' } },
+      { ensureColumn: { table: 'orders', column: 'fulfillment_review_reason', definition: 'TEXT NULL' } },
+      { ensureColumn: { table: 'orders', column: 'fulfillment_reviewed_at', definition: 'TIMESTAMP NULL' } },
+      'CREATE INDEX IF NOT EXISTS idx_orders_fulfillment_review ON orders (fulfillment_review_required, created_at)'
+    ]
   }
 ];
 

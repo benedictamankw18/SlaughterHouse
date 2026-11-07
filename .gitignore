@@ -2,3 +2,27 @@
 .env.*
 !.env.example
 !**/.env.example
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Logs
+*.log
+logs/
+
+# Test output
+coverage/
+playwright-report/
+test-results/
+
+# Build output
+dist/
+build/
+.next/
+
+# Temporary files
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db

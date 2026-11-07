@@ -116,6 +116,17 @@ test('migration 30 adds expiring booking holds and lookup indexes', () => {
   assert.match(migration.statements[3], /idx_booking_availability_order_reference/);
 });
 
+test('migration 31 adds durable paid-order fulfillment review fields', () => {
+  const migration = migrations.find(candidate => candidate.version === 31);
+  assert.ok(migration, 'migration 31 must exist');
+  assert.deepEqual(migration.statements.slice(0, 3).map(statement => statement.ensureColumn), [
+    { table: 'orders', column: 'fulfillment_review_required', definition: 'BOOLEAN NOT NULL DEFAULT FALSE' },
+    { table: 'orders', column: 'fulfillment_review_reason', definition: 'TEXT NULL' },
+    { table: 'orders', column: 'fulfillment_reviewed_at', definition: 'TIMESTAMP NULL' }
+  ]);
+  assert.match(migration.statements[3], /idx_orders_fulfillment_review/);
+});
+
 test('migration 23 stores certificates and immutable administrative history', () => {
   const migration = migrations.find(candidate => candidate.version === 23);
   assert.ok(migration, 'migration 23 must exist');

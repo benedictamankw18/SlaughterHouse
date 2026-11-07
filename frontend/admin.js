@@ -110,7 +110,27 @@ function renderList(elementId, items, type) {
     if (type === 'requests') return `<article class="admin-list-item"><strong>${escapeHtml(item.product_name || 'Request')}</strong><p>${escapeHtml(item.customer_name)} · ${escapeHtml(item.customer_email)}<br>${item.requested_license ? `License: ${escapeHtml(item.requested_license[0].toUpperCase() + item.requested_license.slice(1))} · ${formatMoney(item.license_price_gsh)}<br>` : ''}${escapeHtml(item.details || 'No details provided')}<br>${item.sample_link ? `<a href="${escapeHtml(item.sample_link)}" target="_blank" rel="noopener noreferrer">Open sample link</a><br>` : ''}${item.sample_audio_file ? `<a href="${API}/api/admin/uploads/${encodeURIComponent(item.sample_audio_file)}" target="_blank" rel="noopener noreferrer">Listen to sample audio</a><br>` : ''}Created: ${escapeHtml(item.created_at || '')}</p><form class="admin-request-editor" data-request-id="${Number(item.id)}"><div class="admin-grid"><label>Status<select name="status"><option value="new" ${item.status === 'new' ? 'selected' : ''}>New</option><option value="reviewing" ${item.status === 'reviewing' ? 'selected' : ''}>Reviewing</option><option value="quoted" ${item.status === 'quoted' ? 'selected' : ''}>Quoted</option><option value="accepted" ${item.status === 'accepted' ? 'selected' : ''}>Accepted</option><option value="rejected" ${item.status === 'rejected' ? 'selected' : ''}>Rejected</option><option value="completed" ${item.status === 'completed' ? 'selected' : ''}>Completed</option></select></label><label>Quote (GHS)<input name="quoteGhs" type="number" min="0" step="0.01" value="${escapeHtml(item.quote_gsh)}"></label></div><label>Admin notes<textarea name="notes" rows="2" maxlength="5000">${escapeHtml(item.admin_notes || '')}</textarea></label><div class="admin-review-actions"><button type="submit">Save request</button></div><p class="admin-message" data-request-message></p></form></article>`;
     if (type === 'orders') {
       const itemsText = item.items.map(orderItem => `${orderItem.name || 'Item'}${orderItem.license ? ` (${orderItem.license} license)` : ''}`).join(', ') || 'No line items';
-      return `<article class="admin-list-item"><strong>${escapeHtml(item.reference)} · ${escapeHtml(item.status)}</strong><p>${escapeHtml(item.customer_name)} · ${escapeHtml(item.customer_email)}<br>${escapeHtml(itemsText)}<br>${formatMoney(item.amount)} · ${escapeHtml(item.created_at || '')}</p></article>`;
+      const booking = item.items.find(orderItem => orderItem.type === 'booking');
+      const originalSlots = booking?.booking?.sessionSlots
+        || (booking?.booking?.preferredDate && booking.booking.preferredTime
+          ? [{ date: booking.booking.preferredDate, time: booking.booking.preferredTime }]
+          : []);
+      const refundPending = item.fulfillment_review_reason === 'refund_pending';
+      const reconciliationControls = refundPending
+        ? '<p>Refund request pending Paystack confirmation. Do not assign a replacement slot.</p>'
+        : !originalSlots.length
+          ? '<p>Original session details are unavailable. Request a refund or contact support.</p><div class="admin-review-actions"><button type="button" data-request-booking-refund>Request full refund</button></div>'
+        : `<div class="admin-grid">${originalSlots.map((slot, index) => `<label>Replacement session ${index + 1} date<input type="date" data-replacement-date="${index}" required></label><label>Replacement session ${index + 1} time<input type="time" data-replacement-time="${index}" required></label>`).join('')}</div>
+          <div class="admin-review-actions"><button type="button" data-assign-replacement-slot>Assign replacement slot</button><button type="button" data-request-booking-refund>Request full refund</button></div>`;
+      const reconciliation = item.fulfillment_review_required && booking
+        ? `<section class="admin-booking-reconciliation" data-booking-resolution="${escapeHtml(item.reference)}">
+          <strong>Booking fulfillment needs review</strong>
+          <p>${escapeHtml(item.fulfillment_review_reason || 'Payment received, but the original slot was unavailable.')}</p>
+          ${reconciliationControls}
+          <p class="admin-message" data-booking-resolution-message role="status"></p>
+        </section>`
+        : '';
+      return `<article class="admin-list-item"><strong>${escapeHtml(item.reference)} · ${escapeHtml(item.status)}</strong><p>${escapeHtml(item.customer_name)} · ${escapeHtml(item.customer_email)}<br>${escapeHtml(itemsText)}<br>${formatMoney(item.amount)} · ${escapeHtml(item.created_at || '')}</p>${reconciliation}</article>`;
     }
     if (type === 'reviews') return `<article class="admin-list-item"><strong>${escapeHtml(item.customer_name)} · ${'★'.repeat(Number(item.rating) || 0)}${'☆'.repeat(Math.max(0, 5 - Number(item.rating || 0)))}</strong><p>${escapeHtml(item.customer_email)} · ${escapeHtml(item.status)} · ${escapeHtml(item.created_at || '')}</p><blockquote>${escapeHtml(item.review_text)}</blockquote><div class="admin-review-actions">${item.status === 'pending' ? '<button type="button" data-review-status="approved">Approve</button><button type="button" data-review-status="rejected">Reject</button>' : ''}${item.status !== 'removed' ? '<button type="button" data-review-status="removed">Remove</button>' : ''}</div><p class="admin-message" data-review-message></p><span data-review-id="${Number(item.id)}" hidden></span></article>`;
     if (type === 'customers') return `<article class="admin-list-item"><strong>${escapeHtml(item.name || item.artist_name || 'Customer')}</strong><p>${escapeHtml(item.email)} · ${escapeHtml(item.role)} · joined ${escapeHtml(item.created_at || '')} · email ${item.email_verified_at ? 'verified' : 'unverified'}</p></article>`;
@@ -1150,6 +1170,45 @@ document.querySelectorAll('[data-order-type]').forEach(button => button.addEvent
   document.querySelectorAll('[data-order-type]').forEach(item => item.classList.toggle('active', item === button));
   filterOrders(button.dataset.orderType);
 }));
+
+$('#orders-list').addEventListener('click', async event => {
+  const assignButton = event.target.closest('[data-assign-replacement-slot]');
+  const refundButton = event.target.closest('[data-request-booking-refund]');
+  const button = assignButton || refundButton;
+  if (!button) return;
+  const section = button.closest('[data-booking-resolution]');
+  const statusMessage = section.querySelector('[data-booking-resolution-message]');
+  const reference = section.dataset.bookingResolution;
+  button.disabled = true;
+  try {
+    if (assignButton) {
+      const dates = [...section.querySelectorAll('[data-replacement-date]')];
+      const times = [...section.querySelectorAll('[data-replacement-time]')];
+      const slots = dates.map((input, index) => ({ date: input.value, time: times[index]?.value || '' }));
+      if (slots.some(slot => !slot.date || !slot.time)) throw new Error('Choose a replacement date and time for every session.');
+      await api(`/api/admin/orders/${encodeURIComponent(reference)}/booking-resolution`, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'assign_slot', slots })
+      });
+      message('orders-message', 'Replacement booking assigned and customer notified.');
+    } else {
+      if (!window.confirm(`Request a full Paystack refund for paid booking ${reference}?`)) return;
+      const result = await api(`/api/admin/orders/${encodeURIComponent(reference)}/booking-resolution`, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'request_refund' })
+      });
+      message('orders-message', result.resolution === 'refund_pending'
+        ? 'Refund request is pending Paystack confirmation.'
+        : 'Refund request submitted.');
+    }
+    await loadDashboard();
+  } catch (error) {
+    statusMessage.textContent = error.message || 'Could not resolve the booking payment.';
+    statusMessage.classList.add('error');
+  } finally {
+    button.disabled = false;
+  }
+});
 
 [
   ['content-beat-search', filterContent], ['content-beat-status', filterContent],
