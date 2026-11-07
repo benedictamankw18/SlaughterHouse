@@ -122,8 +122,8 @@ router.get('/beats/:id', sessions.allowVisitor, async (request, response) => {
 router.get('/stream-releases', sessions.allowVisitor, async (request, response) => {
   try {
     const rows = await queryRows(
-      `SELECT id, title, artist, credits_json AS creditsJson, cover_url AS coverUrl,
-              links_json AS linksJson
+      `SELECT id, title, artist, credits_json AS "creditsJson", cover_url AS "coverUrl",
+              links_json AS "linksJson"
        FROM stream_releases
        WHERE status = 'published'
        ORDER BY sort_order ASC, id ASC`

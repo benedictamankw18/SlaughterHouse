@@ -546,7 +546,11 @@ test('all registered API route methods execute against an isolated PostgreSQL te
       assert.equal(response.status, 200, 'A stream release can be activated.');
       response = await fetch(`${baseUrl}/api/stream-releases`);
       let publicReleases = await response.json();
-      assert.ok(publicReleases.releases.some(release => release.id === streamReleaseId), 'An activated release appears publicly.');
+      const publicRelease = publicReleases.releases.find(release => release.id === streamReleaseId);
+      assert.ok(publicRelease, 'An activated release appears publicly.');
+      assert.equal(publicRelease.coverUrl, streamReleasePayload.coverUrl);
+      assert.deepEqual(publicRelease.credits, streamReleasePayload.credits);
+      assert.deepEqual(publicRelease.links, streamReleasePayload.links);
 
       response = await adminRequest(`/api/admin/stream-releases/${streamReleaseId}/status`, 'PATCH', { status: 'unpublished' });
       assert.equal(response.status, 200, 'A stream release can be deactivated.');
