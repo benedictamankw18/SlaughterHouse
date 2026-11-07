@@ -22,7 +22,8 @@
 	<script>
 		const params = new URLSearchParams(location.search);
 		const reference = params.get('reference') || params.get('trxref');
-		const apiBaseUrl = params.get('apiBaseUrl') || window.ULTBIGBOY_API_URL || `${location.protocol}//${location.hostname}:3000`;
+		const isLocalApiHost = location.protocol === 'file:' || ['localhost', '127.0.0.1'].includes(location.hostname);
+		const apiBaseUrl = params.get('apiBaseUrl') || window.ULTBIGBOY_API_URL || (isLocalApiHost ? 'http://localhost:3000' : 'https://slaughterhouse.onrender.com');
 		const title = document.getElementById('payment-title');
 		const message = document.getElementById('payment-message');
 		const links = document.getElementById('download-links');

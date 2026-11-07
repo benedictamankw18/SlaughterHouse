@@ -1,9 +1,10 @@
 const configuredApiUrl = new URLSearchParams(location.search).get('apiBaseUrl');
+const isLocalApiHost = ['localhost', '127.0.0.1'].includes(location.hostname);
 const defaultApiUrl = location.protocol === 'file:'
   ? 'http://localhost:3000'
-  : ['localhost', '127.0.0.1'].includes(location.hostname)
+  : isLocalApiHost
     ? `${location.protocol}//${location.hostname}:3000`
-    : location.origin;
+    : 'https://slaughterhouse.onrender.com';
 window.ULTBIGBOY_API_URL = window.ULTBIGBOY_API_URL || configuredApiUrl || defaultApiUrl;
 const API = window.ULTBIGBOY_API_URL;
 window.ultbigboyCsrfHeaders = method => {
