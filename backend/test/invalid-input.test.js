@@ -163,6 +163,60 @@ test('duplicate signup returns a conflict for MySQL and PostgreSQL unique violat
   }
 });
 
+test('verified PostgreSQL users can sign in despite folded unquoted aliases', async () => {
+  const loaded = loadRouter('../routes/auth', {
+    '../database': {
+      get(query, parameters, callback) {
+        const verifiedField = query.includes('AS "emailVerifiedAt"') ? 'emailVerifiedAt' : 'emailverifiedat';
+        callback(null, {
+          id: 7,
+          name: 'Verified Customer',
+          email: 'person@example.test',
+          phone: '+233240000000',
+          role: 'artist',
+          password_hash: 'password-hash',
+          [verifiedField]: new Date()
+        });
+      }
+    },
+    '../session-store': {
+      customerLoginAttempts: new Map(),
+      adminLoginAttempts: new Map(),
+      createSession: async () => ({ token: 'session-token', csrfToken: 'csrf-token' }),
+      requireCustomer: (request, response, next) => next(),
+      requireAdmin: (request, response, next) => next(),
+      deleteSession: async () => {}
+    },
+    '../config': {
+      secureCookies: false,
+      sessionDurationMs: 3600000,
+      sessionCookieNames: { customer: 'customer', admin: 'admin' },
+      frontendOrigin: 'https://store.example.test',
+      apiPublicUrl: 'https://api.example.test'
+    },
+    '../services/security': { hashPassword: async () => 'password-hash', passwordMatches: async () => true },
+    '../services/error-messages': { databaseError: () => 'database error' },
+    '../services/account-tokens': { issueToken: async () => 'verification-token', consumeToken: async () => null },
+    '../services/audit': { recordAuditSafely: async () => {} },
+    '../services/rate-limit': { rateLimit: () => (request, response, next) => next() },
+    '../services/email/outbox': {
+      createEmailIdempotencyKey: () => 'verification-key',
+      queueEmailSafely: async () => true
+    },
+    '../services/logger': { error() {}, info() {}, warn() {} }
+  });
+
+  try {
+    const result = await requestFrom(loaded.router, '/auth/login', {
+      body: { identifier: 'person@example.test', password: 'Password123' }
+    });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.user.email, 'person@example.test');
+  } finally {
+    loaded.restore();
+  }
+});
+
 test('malformed JSON receives a structured 400 response', async () => {
   const result = await requestFrom(express.Router(), '/test', {
     rawBody: '{"broken":',

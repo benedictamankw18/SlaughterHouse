@@ -2,7 +2,7 @@ const express = require('express');
 
 const BODY_LIMITS = Object.freeze({
   webhook: '1mb',
-  adminUpload: '35mb',
+  adminUpload: '150mb',
   customRequest: '20mb',
   default: '256kb'
 });

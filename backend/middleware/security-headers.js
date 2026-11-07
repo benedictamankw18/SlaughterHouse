@@ -3,7 +3,9 @@ const config = require('../config');
 function securityHeaders(request, response, next) {
   response.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
   response.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-  response.setHeader('Cross-Origin-Resource-Policy', 'same-site');
+  const isPublicUpload = ['GET', 'HEAD'].includes(request.method)
+    && /^\/api\/uploads\/[^/]+$/.test(request.path);
+  response.setHeader('Cross-Origin-Resource-Policy', isPublicUpload ? 'cross-origin' : 'same-site');
   response.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
   response.setHeader('X-Content-Type-Options', 'nosniff');
   response.setHeader('X-Frame-Options', 'DENY');

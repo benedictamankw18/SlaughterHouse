@@ -136,7 +136,7 @@ router.post('/auth/login', loginRateLimit, (request, response) => {
   const attempt = sessions.customerLoginAttempts.get(request.ip) || { count: 0, startedAt: Date.now() };
   if (Date.now() - attempt.startedAt > 15 * 60 * 1000) { attempt.count = 0; attempt.startedAt = Date.now(); }
   if (attempt.count >= 10) return response.status(429).json({ error: 'Too many login attempts. Try again later.' });
-  database.get("SELECT id, name, email, phone, role, password_hash, email_verified_at AS emailVerifiedAt FROM users WHERE (lower(email) = lower(?) OR phone = ?) AND role NOT IN ('admin', 'super_admin')", [identifier, identifier], async (error, user) => {
+  database.get('SELECT id, name, email, phone, role, password_hash, email_verified_at AS "emailVerifiedAt" FROM users WHERE (lower(email) = lower(?) OR phone = ?) AND role NOT IN (\'admin\', \'super_admin\')', [identifier, identifier], async (error, user) => {
     if (error) return response.status(500).json({ error: databaseError('Customer sign-in failed.', error) });
     if (!user || !(await passwordMatches(password, user.password_hash))) {
       attempt.count += 1;
@@ -169,7 +169,7 @@ router.post('/auth/resend-verification', resetRateLimit, async (request, respons
   }
   try {
     const user = await queryOne(
-      "SELECT id, name, email, email_verified_at AS emailVerifiedAt FROM users WHERE (lower(email) = lower(?) OR phone = ?) AND role NOT IN ('admin', 'super_admin')",
+      'SELECT id, name, email, email_verified_at AS "emailVerifiedAt" FROM users WHERE (lower(email) = lower(?) OR phone = ?) AND role NOT IN (\'admin\', \'super_admin\')',
       [identifier, identifier]
     );
     const result = { message: 'If an unverified customer account matches those details, a verification email will be sent.' };
@@ -210,7 +210,7 @@ router.post('/auth/logout', sessions.requireCustomer, (request, response) => {
 router.get('/auth/profile', sessions.requireCustomer, async (request, response) => {
   try {
     const user = await queryOne(
-      "SELECT id, name, email, first_name AS firstName, last_name AS lastName, artist_name AS artistName, phone, role, address, email_verified_at AS emailVerifiedAt FROM users WHERE id = ? AND role NOT IN ('admin', 'super_admin')",
+      'SELECT id, name, email, first_name AS "firstName", last_name AS "lastName", artist_name AS "artistName", phone, role, address, email_verified_at AS "emailVerifiedAt" FROM users WHERE id = ? AND role NOT IN (\'admin\', \'super_admin\')',
       [request.customer.id]
     );
     if (!user) return response.status(404).json({ error: 'Customer profile was not found.' });
@@ -249,7 +249,7 @@ router.patch('/auth/profile', sessions.requireCustomer, async (request, response
       [`${firstNameValue} ${lastNameValue}`, firstNameValue, lastNameValue, currentUser.role === 'artist' ? artistNameValue : null, phoneValue, currentUser.role === 'artist' ? null : addressValue, request.customer.id]
     );
     const user = await queryOne(
-      'SELECT id, name, email, first_name AS firstName, last_name AS lastName, artist_name AS artistName, phone, role, address, email_verified_at AS emailVerifiedAt FROM users WHERE id = ?',
+      'SELECT id, name, email, first_name AS "firstName", last_name AS "lastName", artist_name AS "artistName", phone, role, address, email_verified_at AS "emailVerifiedAt" FROM users WHERE id = ?',
       [request.customer.id]
     );
     await recordAuditSafely(database, { userId: request.customer.id, action: 'profile_updated', entityType: 'user', entityId: request.customer.id, ipAddress: request.ip });

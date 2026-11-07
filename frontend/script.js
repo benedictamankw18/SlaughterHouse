@@ -700,6 +700,7 @@ if (loginButton) {
       if (!response.ok) throw new Error(data.error);
       setAuthMessage('verify-email-message', data.message, false);
       authPanel.querySelector('#verify-email-submit').disabled = true;
+      setTimeout(() => window.location.assign(new URL('index.html', window.location.href).toString()), 1200);
     } catch (error) {
       setAuthMessage('verify-email-message', error.message || 'Could not verify the email address.');
     } finally {

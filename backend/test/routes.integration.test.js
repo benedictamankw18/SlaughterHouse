@@ -398,6 +398,11 @@ test('all registered API route methods execute against an isolated PostgreSQL te
     const { staff } = await staffResponse.json();
     assert.equal(staff[0]?.role, 'super_admin', 'Super-admin accounts appear first in the staff list.');
 
+    const profileResponse = await fetch(`${baseUrl}/api/auth/profile`, {
+      headers: { Authorization: 'Bearer ' + sessions.customer, Connection: 'close' }
+    });
+    assert.equal(profileResponse.status, 200, 'Verified customers retain access to their profile.');
+
     const [{ id: customerId }] = await promisePool.execute(
       'SELECT id FROM users WHERE email = ?',
       ['integration-customer@example.test']

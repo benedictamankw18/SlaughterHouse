@@ -177,6 +177,15 @@ test('JSON payload limits reject oversized defaults and allow configured route l
       assert.deepEqual(await response.json(), { accepted: true });
     }
 
+    const largeBeatPayload = JSON.stringify({ value: 'x'.repeat(36 * 1024 * 1024) });
+    const largeBeatResponse = await fetch(`${url}/api/admin/beats`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Connection: 'close' },
+      body: largeBeatPayload
+    });
+    assert.equal(largeBeatResponse.status, 200, 'Admin beat uploads larger than 35 MB must be accepted.');
+    assert.deepEqual(await largeBeatResponse.json(), { accepted: true });
+
     const oversized = await fetch(`${url}/api/test`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Connection: 'close' },
@@ -194,7 +203,7 @@ test('JSON payload limits reject oversized defaults and allow configured route l
 });
 
 test('security headers are applied and authenticated JSON is not cached', () => {
-  const request = { sessionToken: 'authenticated' };
+  const request = { method: 'GET', path: '/api/customer/profile', sessionToken: 'authenticated' };
   const response = createResponse();
   response.json = body => { response.body = body; return response; };
   securityHeaders(request, response, () => {});
@@ -209,4 +218,14 @@ test('security headers are applied and authenticated JSON is not cached', () => 
   securityHeaders({ path: '/api/auth/login' }, loginResponse, () => {});
   loginResponse.json({ token: 'new-session-token' });
   assert.equal(loginResponse.headers['Cache-Control'], 'no-store');
+
+  const publicUploadResponse = createResponse();
+  publicUploadResponse.json = body => { publicUploadResponse.body = body; return publicUploadResponse; };
+  securityHeaders({ method: 'GET', path: '/api/uploads/cover-example.webp' }, publicUploadResponse, () => {});
+  assert.equal(publicUploadResponse.headers['Cross-Origin-Resource-Policy'], 'cross-origin');
+
+  const uploadMutationResponse = createResponse();
+  uploadMutationResponse.json = body => { uploadMutationResponse.body = body; return uploadMutationResponse; };
+  securityHeaders({ method: 'POST', path: '/api/uploads/cover-example.webp' }, uploadMutationResponse, () => {});
+  assert.equal(uploadMutationResponse.headers['Cross-Origin-Resource-Policy'], 'same-site');
 });

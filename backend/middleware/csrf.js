@@ -16,7 +16,7 @@ function hashesMatch(token, expectedHash) {
 function querySessionCsrfHash(database, token) {
   return new Promise((resolve, reject) => {
     database.get(
-      'SELECT csrf_token_hash AS csrfTokenHash FROM user_sessions WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP',
+      'SELECT csrf_token_hash AS "csrfTokenHash" FROM user_sessions WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP',
       [hashToken(token)],
       (error, row) => error ? reject(error) : resolve(row?.csrfTokenHash || null)
     );

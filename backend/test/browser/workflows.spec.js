@@ -50,6 +50,8 @@ async function mockApi(page, options = {}) {
       body = { fees: { mixtape: 250, 'full-production': 1000, 'beat-production': 500, 'adverts-promos': 250 } };
     } else if (path === '/api/auth/signup') {
       body = { message: 'Account created. Verify your email.', verificationToken: 'test-verification-token' };
+    } else if (path === '/api/auth/verify-email') {
+      body = { message: 'Email address verified successfully.' };
     } else if (path === '/api/admin/login') {
       if (options.adminLogin) body = { token: 'test-admin-token', csrfToken: 'test-admin-csrf' };
       else {
@@ -210,6 +212,15 @@ test('signup submits the entered profile and enters email verification', async (
     lastName: 'Tester',
     phone: '+233240000000'
   });
+});
+
+test('successful email verification redirects to index.html', async ({ page }) => {
+  const calls = await mockApi(page);
+  await page.goto(`/?verifyToken=${'a'.repeat(64)}`);
+  await page.getByRole('button', { name: 'Verify email' }).click();
+  await page.waitForURL(url => url.pathname.endsWith('/index.html'));
+
+  expect(calls.some(call => call.path === '/api/auth/verify-email')).toBe(true);
 });
 
 test('login stores the customer session and opens the account view', async ({ page }) => {
