@@ -58,6 +58,12 @@ database.ready().then(() => {
   const server = app.listen(config.port, () => {
     startEmailOutbox(database, { apiKey: config.emailApiKey, from: config.emailFrom });
     logger.info('api_started', { port: config.port });
+    if (config.storageDriver === 'local' && config.isProduction && !config.allowEphemeralStorage) {
+      logger.warn('storage_provider_warning', {
+        driver: 'local',
+        message: 'Media is stored on the local filesystem and will be lost on redeploy. Set STORAGE_DRIVER=s3 for durable storage.'
+      });
+    }
   });
   server.requestTimeout = 120000;
   server.headersTimeout = 15000;

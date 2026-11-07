@@ -49,7 +49,8 @@ router.get('/orders/:reference/downloads/:productId', rateLimit({ windowMs: 60 *
     );
     await sendStoredFile(response, path.basename(requestedFile), {
       downloadName: path.basename(requestedFile),
-      headers: { 'Cache-Control': 'private, no-store' }
+      headers: { 'Cache-Control': 'private, no-store' },
+      range: request.headers.range
     });
   } catch (error) {
     response.status(500).json({ error: databaseError('Processing the download failed.', error) });

@@ -95,6 +95,8 @@ router.get('/admin/data', sessions.requireAdmin, (request, response) => {
     queryRows("SELECT id, name, artist_name, email FROM users WHERE role = 'artist' ORDER BY name"),
     queryRows("SELECT id, name, artist_name, email, role, created_at, email_verified_at FROM users WHERE role NOT IN ('admin', 'super_admin') ORDER BY created_at DESC LIMIT 1000")
   ]).then(([beats, merchandise, sales, requests, bookings, rawOrders, withdrawals, reviews, streamReleases, artists, customers]) => {
+    beats = beats.map(beat => ({ ...beat, cover_url: storage.publicUrl(beat.cover_art) }));
+    merchandise = merchandise.map(item => ({ ...item, photo_url: storage.publicUrl(item.photo) }));
     streamReleases = streamReleases.map(release => ({
       ...release,
       credits: parseStreamReleaseJson(release.credits_json),
@@ -239,7 +241,10 @@ router.get('/admin/uploads/:filename', sessions.requireAdmin, async (request, re
   const filename = request.params.filename;
   if (path.basename(filename) !== filename || !/^sample-audio-/i.test(filename)) return response.sendStatus(404);
   try {
-    await sendStoredFile(response, filename, { headers: { 'Cache-Control': 'private, no-store' } });
+    await sendStoredFile(response, filename, {
+      headers: { 'Cache-Control': 'private, no-store' },
+      range: request.headers.range
+    });
   } catch {
     if (!response.headersSent) response.sendStatus(500);
   }

@@ -67,15 +67,41 @@ The scratch database must differ from the configured source database. Verificati
 
 ## File storage
 
-The local storage provider keeps uploads and generated certificates in the
-backend's `data\uploads` and `data\certificates` directories, outside the
-frontend web root. Grant the backend process write access to both directories
-and include them in the protected backup and restore plan as appropriate.
+Set `STORAGE_DRIVER` to choose the media backend.
+
+- `local` (default) keeps uploads and generated certificates in the backend's
+  `data\uploads` and `data\certificates` directories. Use it only when those
+  directories survive restarts and redeploys: local development, or Docker with
+  the persistent `app-data` volume. The Docker Compose stack sets
+  `ALLOW_EPHEMERAL_STORAGE=true` because that volume is durable.
+- `s3` stores the same files in an S3-compatible bucket (Cloudflare R2, AWS S3,
+  Supabase Storage, Backblaze B2, MinIO) and keeps customer media out of the
+  application filesystem. Configure `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`,
+  `S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY`. `S3_FORCE_PATH_STYLE` is for
+  providers that require path-style addressing. `MEDIA_KEY_PREFIX` namespaces
+  the bucket, and `PUBLIC_MEDIA_BASE_URL` is the public/CDN base for catalogue
+  artwork and previews. When `PUBLIC_MEDIA_BASE_URL` is unset, public media URLs
+  use `/api/uploads/:filename` on the API, which streams the object from the
+  bucket instead of the local disk.
+
+Ephemeral hosting platforms (for example, a container without a mounted disk)
+delete the local filesystem on every deploy, restart, and idle shutdown. The API
+logs `storage_provider_warning` at startup when `NODE_ENV=production` uses the
+local driver without `ALLOW_EPHEMERAL_STORAGE=true`. Media that is already lost
+cannot be recreated from the database: re-upload it through the admin screens
+and run `npm run storage:audit` to list database references whose files are
+missing from the configured provider.
+
 `GET /api/uploads/:filename` exposes only `cover-`, `merchandise-`, and
-`preview-` files; master audio remains behind the authenticated, signed
-customer download route, and request sample audio remains admin-authenticated.
-The storage interface is provider-ready, but object storage is not configured
-or used by this deployment.
+`preview-` files, supports byte ranges for audio seeking, and caches public
+media immutably. Master audio remains behind the authenticated, signed customer
+download route, and request sample audio remains admin-authenticated. Generated
+certificates stay private and are streamed only through the authenticated
+certificate routes.
+
+Back up the bucket (or the local media directories when the local driver is
+used) separately from the PostgreSQL backups. The database stores only file
+names, so a database restore cannot recreate missing media.
 
 ## Migration recovery
 

@@ -126,7 +126,8 @@ async function renderCertificatePdf(certificate) {
 
 async function readStoredFile(key, area) {
   const chunks = [];
-  for await (const chunk of storage.readStream(key, { area })) chunks.push(chunk);
+  const stream = await storage.readStream(key, { area });
+  for await (const chunk of stream) chunks.push(chunk);
   return Buffer.concat(chunks);
 }
 

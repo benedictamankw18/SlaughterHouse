@@ -58,6 +58,38 @@ if (isProduction) {
   }
 }
 
+const storageDriver = String(process.env.STORAGE_DRIVER || 'local').trim().toLowerCase();
+if (!['local', 's3'].includes(storageDriver)) {
+  throw new Error('STORAGE_DRIVER must be either "local" or "s3".');
+}
+const s3Endpoint = String(process.env.S3_ENDPOINT || '').trim().replace(/\/+$/, '');
+const s3Region = String(process.env.S3_REGION || '').trim() || (s3Endpoint ? 'auto' : '');
+const s3 = Object.freeze({
+  endpoint: s3Endpoint,
+  region: s3Region,
+  bucket: String(process.env.S3_BUCKET || '').trim(),
+  accessKeyId: String(process.env.S3_ACCESS_KEY_ID || '').trim(),
+  secretAccessKey: String(process.env.S3_SECRET_ACCESS_KEY || '').trim(),
+  forcePathStyle: /^(true|1)$/i.test(String(process.env.S3_FORCE_PATH_STYLE || '').trim()),
+  publicMediaBaseUrl: String(process.env.PUBLIC_MEDIA_BASE_URL || '').trim().replace(/\/+$/, ''),
+  keyPrefix: String(process.env.MEDIA_KEY_PREFIX || '').trim().replace(/^\/+|\/+$/g, '')
+});
+const allowEphemeralStorage = /^(true|1)$/i.test(String(process.env.ALLOW_EPHEMERAL_STORAGE || '').trim());
+
+if (storageDriver === 's3') {
+  const missingStorage = [];
+  if (!s3.bucket) missingStorage.push('S3_BUCKET');
+  if (!s3.region) missingStorage.push('S3_REGION');
+  if (!s3.accessKeyId) missingStorage.push('S3_ACCESS_KEY_ID');
+  if (!s3.secretAccessKey) missingStorage.push('S3_SECRET_ACCESS_KEY');
+  if (missingStorage.length) {
+    throw new Error(`Set ${missingStorage.join(', ')} when STORAGE_DRIVER=s3.`);
+  }
+  if (isProduction && s3.publicMediaBaseUrl && !s3.publicMediaBaseUrl.startsWith('https://')) {
+    throw new Error('PUBLIC_MEDIA_BASE_URL must use https in production.');
+  }
+}
+
 module.exports = {
   port,
   isProduction,
@@ -74,6 +106,9 @@ module.exports = {
   certificateSigningSecret,
   paystackSecretKey,
   downloadSigningSecret,
+  storageDriver,
+  s3,
+  allowEphemeralStorage,
   sessionDurationMs: 8 * 60 * 60 * 1000,
   sessionCookieNames: {
     customer: 'ultbigboy_customer_session',

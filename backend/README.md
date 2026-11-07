@@ -55,7 +55,10 @@ Set `PAYSTACK_SECRET_KEY`, `EMAIL_API_KEY`, and `EMAIL_FROM` in `.env` to enable
 payments and email delivery. For deployment behind a reverse proxy, set
 `FRONTEND_ORIGIN`, `FRONTEND_ORIGINS`, `API_PUBLIC_URL`,
 `PAYMENT_CALLBACK_URL`, and `TRUST_PROXY` to the actual trusted public
-configuration before starting the services. Do not commit `.env`.
+configuration before starting the services. Deployments whose filesystem does
+not survive redeploys must set `STORAGE_DRIVER=s3` with the `S3_*` variables so
+uploads and generated certificates live in an S3-compatible bucket; see
+`docs/operations.md`. Do not commit `.env`.
 
 Initialize or validate the database connection separately:
 
@@ -241,7 +244,9 @@ Exclusive beat licenses are checked against paid orders both when checkout is
 initialized and again before payment verification marks an order paid.
 
 Administrators may provide `previewDurationSeconds` when uploading a beat.
-Catalog responses include that duration and a server-generated `previewUrl`.
+Catalog responses include that duration plus server-generated `coverUrl` and
+`previewUrl` values that point at the configured media provider, and
+`GET /api/merchandise` returns a matching `photoUrl`.
 
 The purchasable merchandise catalog is served from PostgreSQL through
 `GET /api/merchandise`; the storefront loads titles, descriptions, prices,

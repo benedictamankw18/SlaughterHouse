@@ -1,8 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { apiPublicUploadUrl } = require('./public-url');
 
 const STORAGE_AREAS = Object.freeze(['uploads', 'certificates']);
-const PUBLIC_UPLOAD_PREFIX = /^(cover|merchandise|preview)-[A-Za-z0-9._-]+$/i;
 
 function createLocalStorage({ uploadDirectory, certificateDirectory, apiPublicUrl }) {
   const directories = {
@@ -25,8 +25,11 @@ function createLocalStorage({ uploadDirectory, certificateDirectory, apiPublicUr
     return key;
   }
 
-  function readStream(key, { area = 'uploads' } = {}) {
-    return fs.createReadStream(resolvePath(key, area));
+  function readStream(key, { area = 'uploads', start, end } = {}) {
+    const filePath = resolvePath(key, area);
+    return start === undefined && end === undefined
+      ? fs.createReadStream(filePath)
+      : fs.createReadStream(filePath, { start, end });
   }
 
   async function deleteFile(key, { area = 'uploads' } = {}) {
@@ -38,8 +41,7 @@ function createLocalStorage({ uploadDirectory, certificateDirectory, apiPublicUr
   }
 
   function publicUrl(key) {
-    if (typeof key !== 'string' || !PUBLIC_UPLOAD_PREFIX.test(key)) return null;
-    return new URL(`/api/uploads/${encodeURIComponent(key)}`, apiPublicUrl).toString();
+    return apiPublicUploadUrl(apiPublicUrl, key);
   }
 
   async function checkWritable(area) {

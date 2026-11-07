@@ -87,7 +87,7 @@ if (accountPageRoot) {
         }
         if (pageType === 'licenses') {
           const status = String(item.certificate_status || 'missing').toLowerCase();
-          const cover = item.cover_art ? `${apiBase}/api/uploads/${encodeURIComponent(item.cover_art)}` : 'Images/Logo 2.png';
+          const cover = item.cover_url || (item.cover_art ? `${apiBase}/api/uploads/${encodeURIComponent(item.cover_art)}` : 'Images/Logo 2.png');
           const downloads = Array.isArray(item.downloads) ? item.downloads : [];
           const downloadLinks = downloads.map(file => `<a href="${escapeAccountHtml(file.url)}">${escapeAccountHtml(file.format)} download</a>`).join('');
           const downloadState = status === 'expired'

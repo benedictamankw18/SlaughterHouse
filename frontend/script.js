@@ -1283,7 +1283,7 @@ function renderBeatStructuredData(beats) {
       '@type': 'Product',
       name: beat.title,
       description: [beat.genre, beat.mood, beat.bpm ? `${beat.bpm} BPM` : '', beat.musicalKey].filter(Boolean).join(' · '),
-      image: beat.coverArt ? `${API}/api/uploads/${encodeURIComponent(beat.coverArt)}` : undefined
+      image: beat.coverUrl || (beat.coverArt ? `${API}/api/uploads/${encodeURIComponent(beat.coverArt)}` : undefined)
     };
     if (pageUrl) product.url = `${pageUrl}?search=${encodeURIComponent(beat.title)}#beat-listing`;
     if (prices.length) {
@@ -1336,7 +1336,7 @@ async function loadDatabaseBeatCatalog() {
     const cards = data.beats.map(beat => {
       const card = document.createElement('article');
       const prices = beat.prices || {};
-      const cover = beat.coverArt ? `${API}/api/uploads/${encodeURIComponent(beat.coverArt)}` : 'Images/Logo 2.png';
+      const cover = beat.coverUrl || (beat.coverArt ? `${API}/api/uploads/${encodeURIComponent(beat.coverArt)}` : 'Images/Logo 2.png');
       const preview = beat.previewUrl || (beat.previewFile ? `${API}/api/uploads/${encodeURIComponent(beat.previewFile)}` : '');
       card.className = 'beat-card';
       card.dataset.bpm = beat.bpm || '';
@@ -1393,7 +1393,7 @@ async function loadFeaturedBeatCatalog() {
     catalogList.replaceChildren(...data.beats.map(beat => {
       const card = document.createElement('article');
       const prices = beat.prices || {};
-      const cover = beat.coverArt ? `${API}/api/uploads/${encodeURIComponent(beat.coverArt)}` : 'Images/Logo 2.png';
+      const cover = beat.coverUrl || (beat.coverArt ? `${API}/api/uploads/${encodeURIComponent(beat.coverArt)}` : 'Images/Logo 2.png');
       const preview = beat.previewUrl || '';
       const key = String(beat.musicalKey || '').toLowerCase();
       const keyMode = key.endsWith(' minor') ? 'minor' : 'major';
@@ -1614,7 +1614,7 @@ if (merchandiseLists.length) {
       const card = document.createElement('article');
       card.className = 'storefront-merchandise-item';
       const image = document.createElement('img');
-      image.src = product.photo ? `${API}/api/uploads/${encodeURIComponent(product.photo)}` : 'Images/Logo 2.png';
+      image.src = product.photoUrl || (product.photo ? `${API}/api/uploads/${encodeURIComponent(product.photo)}` : 'Images/Logo 2.png');
       image.alt = `${product.title} merchandise`;
       image.loading = 'lazy';
       image.decoding = 'async';

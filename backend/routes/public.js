@@ -43,6 +43,7 @@ function mapBeat(beat, defaults, activeLicenseTypes) {
   };
   return {
     ...beat,
+    coverUrl: storage.publicUrl(beat.coverArt),
     previewUrl: storage.publicUrl(beat.previewFile),
     previewDurationSeconds: beat.previewDurationSeconds === null ? null : Number(beat.previewDurationSeconds),
     prices: Object.fromEntries(activeLicenseTypes.filter(type => Object.hasOwn(prices, type)).map(type => [type, prices[type]]))
@@ -150,7 +151,7 @@ router.get('/wishlists', requireCustomer, (request, response) => {
      WHERE w.user_id = ?
      ORDER BY w.created_at DESC`,
     [request.customer.id]
-  ).then(wishlists => response.json({ wishlists }))
+  ).then(wishlists => response.json({ wishlists: wishlists.map(item => ({ ...item, coverUrl: storage.publicUrl(item.coverArt) })) }))
     .catch(error => response.status(500).json({ error: databaseError('Loading your wishlist failed.', error) }));
 });
 
@@ -264,6 +265,7 @@ router.get('/customer/licenses', requireCustomer, async (request, response) => {
       }
       return {
         ...license,
+        cover_url: storage.publicUrl(license.cover_art),
         certificate_status: !Number(license.license_active) ? 'expired' : license.certificate_status || 'missing',
         verification_url: verificationUrl,
         downloads
@@ -416,7 +418,7 @@ router.get('/users/count', (request, response) => {
 router.get('/merchandise', (request, response) => {
   database.all("SELECT id, title, description, price, photo, stock_quantity AS stockQuantity FROM merchandise WHERE catalog_status = 'published' ORDER BY created_at DESC", (error, merchandise) => {
     if (error) return response.status(500).json({ error: databaseError('Loading merchandise failed.', error) });
-    response.json({ merchandise });
+    response.json({ merchandise: merchandise.map(item => ({ ...item, photoUrl: storage.publicUrl(item.photo) })) });
   });
 });
 
@@ -428,7 +430,8 @@ router.get('/uploads/:filename', async (request, response) => {
   // Upload filenames are unique per write, so public images and previews can be cached permanently.
   try {
     await sendStoredFile(response, filename, {
-      headers: { 'Cache-Control': 'public, max-age=31536000, immutable' }
+      headers: { 'Cache-Control': 'public, max-age=31536000, immutable' },
+      range: request.headers.range
     });
   } catch {
     if (!response.headersSent) response.sendStatus(500);

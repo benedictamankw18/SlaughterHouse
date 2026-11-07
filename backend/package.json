@@ -15,9 +15,11 @@
     "restore": "node scripts/restore.js",
     "verify:backup": "node scripts/verify-backup.js",
     "optimize:images": "node scripts/optimize-images.js",
+    "storage:audit": "node scripts/audit-media.js",
     "check:secrets": "node scripts/check-secrets.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1164.0",
     "@neon/config": "^1.13.0",
     "@neon/env": "^2.1.0",
     "cors": "^2.8.5",
