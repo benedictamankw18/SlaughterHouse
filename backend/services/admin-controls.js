@@ -10,7 +10,8 @@ const BUSINESS_SETTINGS = Object.freeze({
   beat_default_basic_usd: 'Default basic beat license (USD)',
   beat_default_premium_usd: 'Default premium beat license (USD)',
   beat_default_unlimited_usd: 'Default unlimited beat license (USD)',
-  beat_default_exclusive_usd: 'Default exclusive beat license (USD)'
+  beat_default_exclusive_usd: 'Default exclusive beat license (USD)',
+  usd_to_ghs_rate: 'USD to GHS exchange rate'
 });
 
 function validateSettingUpdates(updates) {
@@ -24,12 +25,17 @@ function validateSettingUpdates(updates) {
     if ((typeof value === 'string' && !value.trim()) || value === null || value === undefined || !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 100000000) {
       return { error: `${BUSINESS_SETTINGS[key]} must be a non-negative amount no greater than 100000000.` };
     }
-    if (Number(value) !== Number(Number(value).toFixed(2))) {
-      return { error: `${BUSINESS_SETTINGS[key]} can have at most two decimal places.` };
+    if (key === 'usd_to_ghs_rate' && (Number(value) <= 0 || Number(value) >= 1000000)) {
+      return { error: 'USD to GHS exchange rate must be greater than zero and less than 1000000.' };
+    }
+    const decimalPlaces = key === 'usd_to_ghs_rate' ? 6 : 2;
+    if (Number(value) !== Number(Number(value).toFixed(decimalPlaces))) {
+      const precision = decimalPlaces === 2 ? 'two' : String(decimalPlaces);
+      return { error: `${BUSINESS_SETTINGS[key]} can have at most ${precision} decimal places.` };
     }
   }
   return {
-    value: entries.map(([key, value]) => [key, Number(value).toFixed(2)])
+    value: entries.map(([key, value]) => [key, Number(value).toFixed(key === 'usd_to_ghs_rate' ? 6 : 2)])
   };
 }
 

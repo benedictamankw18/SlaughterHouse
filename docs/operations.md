@@ -143,6 +143,13 @@ Paystack refund. Refund requests stay pending until Paystack confirms them;
 the confirmed full refund clears the reconciliation flag. Both resolution
 paths are audited and notify the customer.
 
+Beat checkout uses the USD-to-GHS rate maintained by a super-admin in
+Admin > Settings. Update the rate at least once every 24 hours; beat checkout
+is blocked if the rate is missing, invalid, or stale. Each order records the
+applied rate and rounded GHS amount for every beat line, and paid order items
+retain that snapshot for reporting. Do not recalculate existing orders when
+the current rate changes.
+
 Back up the bucket (or the local media directories when the local driver is
 used) separately from the PostgreSQL backups. The database stores only file
 names, so a database restore cannot recreate missing media.

@@ -150,7 +150,9 @@ async function mockApi(page, options = {}) {
           { id: 61, name: 'Alex Artist', artist_name: 'Alex A', email: 'alex@example.test', role: 'artist', created_at: '2026-11-01', email_verified_at: '2026-11-01' },
           { id: 62, name: 'Sam Buyer', email: 'sam@example.test', role: 'customer', created_at: '2026-10-01', email_verified_at: null }
         ] : [],
-        artists: options.adminFilters ? [
+        artists: options.adminPricing ? [
+          { id: 73, name: 'Snapshot Artist', artist_name: 'Snapshot', email: 'snapshot@example.test', purchases: [{ beat_title: 'Snapshot Beat', license: 'basic', amount: 154.32, exchange_rate: 12.345678, purchased_at: '2026-11-07' }] }
+        ] : options.adminFilters ? [
           { id: 71, name: 'Alex Artist', artist_name: 'Alex A', email: 'alex@example.test', purchases: [{ beat_title: 'Night Drive', license: 'basic', amount: 4, purchased_at: '2026-11-05' }] },
           { id: 72, name: 'Sam Artist', artist_name: 'Sam S', email: 'sam@example.test', purchases: [] }
         ] : [],
@@ -163,7 +165,16 @@ async function mockApi(page, options = {}) {
     } else if (path === '/api/admin/license-definitions') {
       body = { definitions: [] };
     } else if (path === '/api/admin/settings') {
-      body = { settings: [], canEdit: true };
+      body = {
+        settings: options.adminPricing ? [{
+          key: 'usd_to_ghs_rate',
+          label: 'USD to GHS exchange rate',
+          value: '12.345678',
+          updatedAt: new Date().toISOString(),
+          fresh: true
+        }] : [],
+        canEdit: true
+      };
     } else if (path === '/api/admin/staff') {
       body = { staff: options.adminFilters ? [
         { id: 81, name: 'Admin One', email: 'admin@example.test', role: 'admin', created_at: '2026-01-01' },
@@ -541,6 +552,19 @@ test('admin resolves paid booking cases by assigning replacement sessions or req
   await expect(page.locator('[data-booking-resolution="ORDER-REVIEW-REFUND"]').filter({ visible: true })).toHaveCount(0);
   expect(calls.find(call => call.path.endsWith('/ORDER-REVIEW-REFUND/booking-resolution')).data)
     .toEqual({ action: 'request_refund' });
+});
+
+test('admin displays saved GHS purchase amounts and exchange-rate freshness', async ({ page }) => {
+  await mockApi(page, { adminLogin: true, adminPricing: true });
+  await seedAdminSession(page);
+  await page.goto('/admin.html');
+  await expect(page.locator('#admin-dashboard')).toBeVisible();
+  await page.getByRole('button', { name: 'Artists', exact: true }).click();
+  await expect(page.locator('#artists-list')).toContainText('GHS 154.32');
+  await expect(page.locator('#artists-list')).toContainText('USD/GHS 12.345678');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.locator('#business-settings-form')).toContainText('Rates expire after 24 hours.');
+  await expect(page.locator('#business-settings-form input[name="usd_to_ghs_rate"]')).toHaveValue('12.345678');
 });
 
 test('key storefront and admin pages have no automated WCAG 2.1 A/AA violations', async ({ page }) => {

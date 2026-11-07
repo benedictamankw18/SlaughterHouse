@@ -16,6 +16,7 @@ const { fulfillPaidBooking } = require('../services/booking-fulfillment');
 const { LICENSE_TYPES, loadLicenseRights, loadLicenseDefinitions, saveLicenseRights } = require('../services/license-rights');
 const { FULFILLMENT_STATUSES, updateFulfillmentStatus } = require('../services/fulfillment');
 const { BUSINESS_SETTINGS, validateDateRange, validateSettingUpdates } = require('../services/admin-controls');
+const { isUsdGhsRateFresh } = require('../services/pricing');
 const logger = require('../services/logger');
 const monitoring = require('../services/monitoring');
 const { checkReadiness } = require('../services/health');
@@ -90,12 +91,13 @@ router.get('/admin/data', sessions.requireAdmin, (request, response) => {
     queryRows('SELECT * FROM customization_requests ORDER BY created_at DESC'),
     queryRows('SELECT * FROM bookings ORDER BY created_at DESC'),
     queryRows('SELECT * FROM orders ORDER BY created_at DESC'),
+    queryRows('SELECT order_id, product_type, product_id, license_type, unit_amount, exchange_rate FROM order_items'),
     queryRows('SELECT * FROM withdrawals ORDER BY created_at DESC'),
     queryRows('SELECT * FROM customer_reviews ORDER BY created_at DESC'),
     queryRows('SELECT id, title, artist, credits_json, cover_url, links_json, sort_order, status FROM stream_releases ORDER BY sort_order, id'),
     queryRows("SELECT id, name, artist_name, email FROM users WHERE role = 'artist' ORDER BY name"),
     queryRows("SELECT id, name, artist_name, email, role, created_at, email_verified_at FROM users WHERE role NOT IN ('admin', 'super_admin') ORDER BY created_at DESC LIMIT 1000")
-  ]).then(([beats, merchandise, sales, requests, bookings, rawOrders, withdrawals, reviews, streamReleases, artists, customers]) => {
+  ]).then(([beats, merchandise, sales, requests, bookings, rawOrders, rawOrderItems, withdrawals, reviews, streamReleases, artists, customers]) => {
     beats = beats.map(beat => ({ ...beat, cover_url: storage.publicUrl(beat.cover_art) }));
     merchandise = merchandise.map(item => ({ ...item, photo_url: storage.publicUrl(item.photo) }));
     streamReleases = streamReleases.map(release => ({
@@ -103,15 +105,31 @@ router.get('/admin/data', sessions.requireAdmin, (request, response) => {
       credits: parseStreamReleaseJson(release.credits_json),
       links: parseStreamReleaseJson(release.links_json)
     }));
+    const orderItemSnapshots = new Map(rawOrderItems.map(orderItem => [
+      `${orderItem.order_id}:${orderItem.product_type}:${orderItem.product_id}:${orderItem.license_type || ''}`,
+      orderItem
+    ]));
     const orders = rawOrders.map(order => {
       let items = [];
-      try { items = JSON.parse(order.items_json).map(item => ({ ...item, type: item.type || 'beat' })); } catch {}
+      try {
+        items = JSON.parse(order.items_json).map(item => {
+          const type = item.type || 'beat';
+          const snapshot = orderItemSnapshots.get(`${order.id}:${type}:${item.productId}:${item.license || ''}`);
+          return {
+            ...item,
+            type,
+            priceGhs: item.priceGhs ?? (snapshot ? Number(snapshot.unit_amount) : null),
+            exchangeRate: item.exchangeRate ?? (snapshot?.exchange_rate === null || snapshot?.exchange_rate === undefined ? null : Number(snapshot.exchange_rate))
+          };
+        });
+      } catch {}
       return { ...order, items };
     });
     const paidOrders = orders.filter(order => ['paid', 'partially_refunded'].includes(order.status));
     const purchases = paidOrders.flatMap(order => order.items.filter(item => item.type === 'beat').map(item => ({
       order_reference: order.reference, customer_name: order.customer_name, customer_email: order.customer_email,
-      beat_title: item.name, license: item.license, amount: item.priceUsd, purchased_at: order.created_at
+      beat_title: item.name, license: item.license, amount: item.priceGhs,
+      exchange_rate: item.exchangeRate, purchased_at: order.created_at
     })));
     const merchandiseOrders = orders.flatMap(order => order.items.filter(item => item.type === 'merchandise').map(item => ({
       order_reference: order.reference, customer_name: order.customer_name, customer_email: order.customer_email,
@@ -255,12 +273,21 @@ router.get('/admin/settings', sessions.requireAdmin, async (request, response) =
   try {
     const keys = Object.keys(BUSINESS_SETTINGS);
     const rows = await queryRows(
-      `SELECT setting_key, setting_value FROM settings WHERE setting_key IN (${keys.map(() => '?').join(', ')})`,
+      `SELECT setting_key, setting_value, updated_at FROM settings WHERE setting_key IN (${keys.map(() => '?').join(', ')})`,
       keys
     );
     const values = Object.fromEntries(rows.map(row => [row.setting_key, row.setting_value]));
     response.json({
-      settings: keys.map(key => ({ key, label: BUSINESS_SETTINGS[key], value: values[key] ?? '' })),
+      settings: keys.map(key => {
+        const row = rows.find(candidate => candidate.setting_key === key);
+        return {
+          key,
+          label: BUSINESS_SETTINGS[key],
+          value: row?.setting_value ?? '',
+          updatedAt: row?.updated_at ?? null,
+          fresh: key === 'usd_to_ghs_rate' && row ? isUsdGhsRateFresh(row.updated_at) : false
+        };
+      }),
       canEdit: request.role === 'super_admin'
     });
   } catch (error) {
@@ -275,7 +302,7 @@ router.put('/admin/settings', sessions.requirePermission('admin:manage_settings'
     await database.transaction(async tx => {
       for (const [key, value] of validation.value) {
         await tx.run(
-          'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value',
+          'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = CURRENT_TIMESTAMP',
           [key, value]
         );
       }

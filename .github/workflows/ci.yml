@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: slaughterhouse_route_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d slaughterhouse_route_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/slaughterhouse_route_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci --prefix backend
+      - name: Audit dependencies
+        run: npm audit --prefix backend --audit-level=high
+      - name: Validate deployment configuration
+        run: >-
+          node -e "const fs=require('node:fs'); const config=JSON.parse(fs.readFileSync('vercel.json','utf8')); if(config.outputDirectory!=='frontend'||!config.functions?.['api/index.js']||!config.functions?.['api/[...path].js']||!fs.existsSync('api/index.js')||!fs.existsSync('api/[...path].js')) process.exit(1)"
+      - name: Run backend and PostgreSQL migration tests
+        run: npm test --prefix backend
+      - name: Install Playwright browser
+        run: cd backend && npx playwright install --with-deps chromium
+      - name: Run browser tests
+        run: npm run test:browser --prefix backend

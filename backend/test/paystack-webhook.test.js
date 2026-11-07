@@ -5,7 +5,7 @@ const Module = require('node:module');
 const express = require('express');
 const { configureRequestBodyParsing } = require('../middleware/request-body');
 
-function loadPaymentsRouter({ bookingSlotUnavailable = false } = {}) {
+function loadPaymentsRouter({ bookingSlotUnavailable = false, exchangeRate = { rate: 10 }, beat = null } = {}) {
   const routeId = require.resolve('../routes/payments');
   const refundsId = require.resolve('../services/refunds');
   const originalRoute = require.cache[routeId];
@@ -57,7 +57,20 @@ function loadPaymentsRouter({ bookingSlotUnavailable = false } = {}) {
       return result;
     },
     async get() { return null; },
-    async all() { return []; }
+    all(query, parameters, callback) {
+      callback?.(null, []);
+      return Promise.resolve([]);
+    },
+    get(query, parameters, callback) {
+      const result = /FROM beats/.test(query) ? beat : null;
+      callback?.(null, result);
+      return Promise.resolve(result);
+    },
+    run(query, parameters, callback) {
+      calls.push({ query, parameters });
+      callback?.call({ lastID: 1, changes: 1 }, null);
+      return Promise.resolve({ lastID: 1, changes: 1 });
+    }
   };
 
   const mocks = {
@@ -66,11 +79,13 @@ function loadPaymentsRouter({ bookingSlotUnavailable = false } = {}) {
       apiPublicUrl: 'https://api.example.test',
       paymentCallbackUrl: new URL('https://store.example.test/payment-success.html'),
       paystackSecretKey: 'paystack-test-secret',
-      usdToGhsRate: 10,
       bookingServiceLabels: {},
       frontendOrigin: 'https://store.example.test'
     },
-    '../services/pricing': { getPricing: async () => ({ beatDefaultPrices: {} }) },
+    '../services/pricing': {
+      getPricing: async () => ({ beatDefaultPrices: {} }),
+      getUsdGhsRate: async () => exchangeRate
+    },
     '../services/booking': { normalizeBookingSlots: slots => slots },
     '../services/downloads': { getDownloadItems: async () => [] },
     '../services/error-messages': { databaseError: () => 'database error' },
@@ -155,6 +170,24 @@ async function postWebhook(router, event, { signatureOverride } = {}) {
   }
 }
 
+async function postJson(router, path, body) {
+  const app = express();
+  app.use(express.json());
+  app.use('/api', router);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Connection: 'close' },
+      body: JSON.stringify(body)
+    });
+    return { status: response.status, body: await response.json() };
+  } finally {
+    if (server.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+}
+
 function withRouter(run) {
   const loaded = loadPaymentsRouter();
   return Promise.resolve()
@@ -180,6 +213,50 @@ test('Paystack success webhook reconciles the order and records a paid payment',
   assert.ok(loaded.calls.some(({ query, parameters }) =>
     /INSERT INTO payments/.test(query) && parameters.includes('paid')));
 }));
+
+test('beat checkout snapshots the current rate and rounded GHS amount', async () => {
+  const loaded = loadPaymentsRouter({
+    exchangeRate: { rate: 12.345678, updatedAt: new Date().toISOString() },
+    beat: { id: 8, title: 'Snapshot Beat', price: 12.5 }
+  });
+  const originalFetch = global.fetch;
+  const paystackRequests = [];
+  global.fetch = async (url, options) => {
+    if (String(url).startsWith('http://127.0.0.1:')) return originalFetch(url, options);
+    paystackRequests.push({ url, options: JSON.parse(options.body) });
+    return {
+      ok: true,
+      async json() { return { status: true, data: { reference: 'paystack-snapshot-1', authorization_url: 'https://paystack.test/authorize' } }; }
+    };
+  };
+  try {
+    const result = await postJson(loaded.router, '/payments/initialize', {
+      name: 'Customer',
+      email: 'customer@example.test',
+      items: [{ type: 'beat', name: 'Snapshot Beat', license: 'basic' }],
+      paymentMethod: 'card'
+    });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.authorizationUrl, 'https://paystack.test/authorize');
+    assert.equal(paystackRequests[0].options.amount, 15432);
+    const orderInsert = loaded.calls.find(call => /INSERT INTO orders/.test(call.query));
+    assert.equal(result.body.reference, orderInsert.parameters[0]);
+    assert.equal(paystackRequests[0].options.reference, result.body.reference);
+    assert.equal(orderInsert.parameters[3], 154.32);
+    assert.deepEqual(JSON.parse(orderInsert.parameters[5]), [{
+      type: 'beat',
+      productId: 8,
+      name: 'Snapshot Beat',
+      license: 'basic',
+      priceUsd: 12.5,
+      priceGhs: 154.32,
+      exchangeRate: 12.345678
+    }]);
+  } finally {
+    global.fetch = originalFetch;
+    loaded.restore();
+  }
+});
 
 test('Paystack booking success consumes the matching slot hold', () => withRouter(async loaded => {
   loaded.order.items_json = JSON.stringify([{
@@ -243,7 +320,7 @@ test('Paystack success with an expired booking hold marks the paid order for rev
     assert.equal(result.status, 200);
     assert.deepEqual(result.body, { received: true, conflict: 'booking_slot_unavailable' });
     assert.ok(loaded.calls.some(({ query, parameters }) =>
-      /UPDATE orders SET status = \?, fulfillment_review_required = TRUE/.test(query)
+      /UPDATE orders SET status = \?, items_json = \?, fulfillment_review_required = TRUE/.test(query)
       && parameters[0] === 'paid'
       && parameters.includes('booking_slot_unavailable')));
     assert.ok(loaded.calls.some(({ query, parameters }) =>

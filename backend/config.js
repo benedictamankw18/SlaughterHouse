@@ -121,7 +121,6 @@ module.exports = {
     admin: 'ultbigboy_admin_session'
   },
   secureCookies: process.env.NODE_ENV === 'production',
-  usdToGhsRate: 10,
   bookingServiceLabels: {
     mixtape: 'Mixtape',
     'full-production': 'Full production',

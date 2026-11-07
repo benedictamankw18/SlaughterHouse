@@ -627,6 +627,13 @@ const migrations = [
       { ensureColumn: { table: 'orders', column: 'fulfillment_reviewed_at', definition: 'TIMESTAMP NULL' } },
       'CREATE INDEX IF NOT EXISTS idx_orders_fulfillment_review ON orders (fulfillment_review_required, created_at)'
     ]
+  },
+  {
+    version: 32,
+    statements: [
+      { ensureColumn: { table: 'settings', column: 'updated_at', definition: 'TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP' } },
+      { ensureColumn: { table: 'order_items', column: 'exchange_rate', definition: 'DECIMAL(12,6) NULL' } }
+    ]
   }
 ];
 
