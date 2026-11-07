@@ -509,11 +509,11 @@ const migrations = [
     statements: [
       `CREATE TABLE IF NOT EXISTS license_definition_status (
         license_type VARCHAR(50) PRIMARY KEY,
-        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )`,
       ...Object.keys(DEFAULT_LICENSE_RIGHTS).map(licenseType =>
-        `INSERT IGNORE INTO license_definition_status (license_type, is_active) VALUES ('${licenseType}', 1)`
+        `INSERT IGNORE INTO license_definition_status (license_type) VALUES ('${licenseType}')`
       )
     ]
   },
@@ -588,6 +588,14 @@ const migrations = [
     version: 27,
     statements: [
       'CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email_lower ON users (lower(email))'
+    ]
+  },
+  {
+    version: 28,
+    statements: [
+      'ALTER TABLE license_definition_status ALTER COLUMN is_active DROP DEFAULT',
+      "ALTER TABLE license_definition_status ALTER COLUMN is_active TYPE BOOLEAN USING (is_active::text IN ('1', 't', 'true'))",
+      'ALTER TABLE license_definition_status ALTER COLUMN is_active SET DEFAULT TRUE'
     ]
   }
 ];
