@@ -7,7 +7,7 @@ const {
   getDatabaseConfig,
   runClient,
   validateDatabaseName
-} = require('./mysql-tools');
+} = require('./postgres-tools');
 
 async function restore() {
   const backupPath = path.resolve(process.argv[2] || '');
@@ -18,13 +18,19 @@ async function restore() {
   const confirmedDatabase = process.argv[confirmIndex + 1];
 
   if (!process.argv[2] || !await fs.stat(backupPath).then(stat => stat.isFile()).catch(() => false)) {
-    throw new Error('Usage: node scripts/restore.js <backup.sql> --confirm-database <target-database> [--database <target-database>]');
+    throw new Error('Usage: node scripts/restore.js <backup.dump> --confirm-database <target-database> [--database <target-database>]');
   }
   if (confirmedDatabase !== targetDatabase) {
     throw new Error('Restore requires --confirm-database to exactly match the target database name.');
   }
   await assertDatabaseEmpty(config, targetDatabase);
-  await runClient('mysql', clientArgs(config, targetDatabase), config, { inputPath: backupPath });
+  await runClient('pg_restore', [
+    '--exit-on-error',
+    '--no-owner',
+    '--no-acl',
+    ...clientArgs(config, targetDatabase),
+    '-'
+  ], config, { inputPath: backupPath });
   logger.info('database_backup_restored', { database: targetDatabase, file: backupPath });
 }
 

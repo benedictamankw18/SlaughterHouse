@@ -18,7 +18,7 @@ test('notification inserts can use a unique idempotency key', async () => {
     dedupeKey: 'order-paid:REF:7'
   });
   assert.equal(result, true);
-  assert.match(call.query, /ON DUPLICATE KEY UPDATE dedupe_key/);
+  assert.match(call.query, /ON CONFLICT \(dedupe_key\) DO NOTHING/);
   assert.deepEqual(call.parameters, [7, 'order_paid', 'Order paid', 'Order REF paid.', 'order-paid:REF:7']);
 });
 
@@ -39,7 +39,7 @@ test('administrator alerts are inserted for every admin with recipient-specific 
   assert.equal(result, true);
   assert.match(call.query, /SELECT id, \?, \?, \?, CONCAT\(\?, ':', id\)/);
   assert.match(call.query, /FROM users WHERE role IN \('admin', 'super_admin'\)/);
-  assert.match(call.query, /ON DUPLICATE KEY UPDATE dedupe_key/);
+  assert.match(call.query, /ON CONFLICT \(dedupe_key\) DO NOTHING/);
   assert.deepEqual(call.parameters, ['payment_failed', 'Payment failed', 'Order REF failed.', 'payment-failed:REF:charge.failed']);
 });
 

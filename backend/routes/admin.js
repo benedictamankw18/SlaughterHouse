@@ -269,7 +269,7 @@ router.put('/admin/settings', sessions.requirePermission('admin:manage_settings'
     await database.transaction(async tx => {
       for (const [key, value] of validation.value) {
         await tx.run(
-          'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)',
+          'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value',
           [key, value]
         );
       }
@@ -509,7 +509,7 @@ router.get('/admin/audit-logs', sessions.requireAdmin, (request, response) => {
     parameters.push(`${dateRange.value.from} 00:00:00`);
   }
   if (dateRange.value.to) {
-    conditions.push('a.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+    conditions.push("a.created_at < ?::timestamp + INTERVAL '1 day'");
     parameters.push(`${dateRange.value.to} 00:00:00`);
   }
   parameters.push(limit);
@@ -535,7 +535,7 @@ router.get('/admin/reports', sessions.requireAdmin, async (request, response) =>
     parameters.push(`${dateRange.value.from} 00:00:00`);
   }
   if (dateRange.value.to) {
-    conditions.push('created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+    conditions.push("created_at < ?::timestamp + INTERVAL '1 day'");
     parameters.push(`${dateRange.value.to} 00:00:00`);
   }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -594,7 +594,7 @@ router.get('/admin/reports.csv', sessions.requireAdmin, async (request, response
     parameters.push(`${dateRange.value.from} 00:00:00`);
   }
   if (dateRange.value.to) {
-    conditions.push('created_at < DATE_ADD(?, INTERVAL 1 DAY)');
+    conditions.push("created_at < ?::timestamp + INTERVAL '1 day'");
     parameters.push(`${dateRange.value.to} 00:00:00`);
   }
   try {
@@ -1028,8 +1028,9 @@ router.post('/admin/bookings/availability', sessions.requireAdmin, (request, res
   if (!['available', 'blocked'].includes(status)) return response.status(400).json({ error: 'Availability status must be available or blocked.' });
   database.run(
     `INSERT INTO booking_availability (slot_date, start_time, end_time, status)
-     VALUES (?, ?, ADDTIME(?, '02:20:00'), ?)
-     ON DUPLICATE KEY UPDATE status = IF(status = 'booked', status, VALUES(status))`,
+     VALUES (?, ?, ?::time + INTERVAL '2 hours 20 minutes', ?)
+     ON CONFLICT (slot_date, start_time) DO UPDATE
+     SET status = CASE WHEN booking_availability.status = 'booked' THEN booking_availability.status ELSE EXCLUDED.status END`,
     [date, time, time, status],
     function (error) {
       if (error) return response.status(500).json({ error: databaseError('Updating booking availability failed.', error) });

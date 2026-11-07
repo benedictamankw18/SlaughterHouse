@@ -1,20 +1,17 @@
 const logger = require('./logger');
+const { summarizeResult, toPostgresQuery, withReturningId } = require('./postgres');
 
 function createRunner(connection) {
-  const execute = (query, parameters = []) => new Promise((resolve, reject) => {
-    connection.execute(query, parameters, (error, result) => error ? reject(error) : resolve(result));
-  });
+  const execute = (query, parameters = []) => connection.query(toPostgresQuery(query), parameters);
   return {
-    // The callback form keeps this runner interchangeable with the global database
-    // helpers used by services such as notifications.
     async run(query, parameters = [], callback) {
       if (typeof parameters === 'function') {
         callback = parameters;
         parameters = [];
       }
       try {
-        const result = await execute(query, parameters);
-        const summary = { lastID: result?.insertId, changes: result?.affectedRows, result };
+        const result = summarizeResult(await execute(withReturningId(query), parameters));
+        const summary = { lastID: result.insertId, changes: result.affectedRows, result };
         if (callback) {
           callback.call(summary, null, result);
           return summary;
@@ -29,32 +26,26 @@ function createRunner(connection) {
       }
     },
     async get(query, parameters = []) {
-      const rows = await execute(query, parameters);
-      return rows?.[0];
+      const result = await execute(query, parameters);
+      return result.rows?.[0];
     },
     async all(query, parameters = []) {
-      const rows = await execute(query, parameters);
-      return rows || [];
+      const result = await execute(query, parameters);
+      return result.rows || [];
     }
   };
 }
 
-function callConnection(connection, method) {
-  return new Promise((resolve, reject) => {
-    connection[method](error => error ? reject(error) : resolve());
-  });
-}
-
 async function runInTransaction(connection, callback) {
   const runner = createRunner(connection);
-  await callConnection(connection, 'beginTransaction');
+  await connection.query('BEGIN');
   try {
     const result = await callback(runner);
-    await callConnection(connection, 'commit');
+    await connection.query('COMMIT');
     return result;
   } catch (error) {
     try {
-      await callConnection(connection, 'rollback');
+      await connection.query('ROLLBACK');
     } catch (rollbackError) {
       logger.error('transaction_rollback_failed', { code: rollbackError.code });
     }

@@ -6,7 +6,7 @@ function createNotificationSafely(database, { userId, type, title, message, dedu
     const query = dedupeKey
       ? `INSERT INTO notifications (user_id, type, title, message, dedupe_key)
          VALUES (?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE dedupe_key = VALUES(dedupe_key)`
+         ON CONFLICT (dedupe_key) DO NOTHING`
       : `INSERT INTO notifications (user_id, type, title, message)
          SELECT ?, ?, ?, ?
          WHERE NOT EXISTS (
@@ -34,7 +34,7 @@ function notifyAdminsSafely(database, { type, title, message, dedupeKey }) {
       `INSERT INTO notifications (user_id, type, title, message, dedupe_key)
        SELECT id, ?, ?, ?, CONCAT(?, ':', id)
        FROM users WHERE role IN ('admin', 'super_admin')
-       ON DUPLICATE KEY UPDATE dedupe_key = VALUES(dedupe_key)`,
+       ON CONFLICT (dedupe_key) DO NOTHING`,
       [type, title, message, dedupeKey],
       error => {
         if (error) logger.error('administrator_notification_creation_failed', { code: error.code });

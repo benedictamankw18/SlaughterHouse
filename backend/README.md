@@ -4,8 +4,8 @@ The backend is organized by responsibility:
 
 - `server.js` - HTTP bootstrap, middleware, router registration, and error handling
 - `config.js` - environment-backed runtime configuration
-- `database.js` - MySQL connection and schema initialization
-- `services/migrations.js` - versioned MySQL schema migrations
+- `database.js` - PostgreSQL connection and schema initialization
+- `services/migrations.js` - versioned PostgreSQL schema migrations
 - `session-store.js` - database-backed session creation and authorization middleware
 - `services/roles.js` - visitor, customer, administrator, and super-administrator permissions
 - `routes/auth.js` - customer and administrator authentication
@@ -44,9 +44,9 @@ docker compose ps
 ```
 
 Open the site at `http://localhost:5500`; the API is available at
-`http://localhost:3000`. MariaDB is published only on `127.0.0.1:3308` by default
+`http://localhost:3000`. PostgreSQL is published only on `127.0.0.1:5433` by default
 and is reachable by the API container on the private Compose network. Database
-migrations run automatically when the API starts. The `mysql-data` and
+migrations run before the API starts listening. The `postgres-data` and
 `app-data` named volumes persist the database, uploaded files, and certificates.
 To stop the stack without deleting data, run `docker compose down`. To remove
 all persisted database and uploaded data, run `docker compose down --volumes`.
@@ -79,20 +79,23 @@ Access is available only while the order is fully paid and the license is
 unexpired and unrevoked; a new paid purchase renews an expired license.
 Merchandise remains physical and has no customer download files.
 
-## Local MySQL setup
+## PostgreSQL and Render setup
 
-Install and start MySQL 8 or a compatible MariaDB server. Create a database and
-a dedicated local application user using the MySQL client:
+The backend requires PostgreSQL. Set `DATABASE_URL` to a PostgreSQL connection
+string (`postgresql://...`) in the hosting provider's secret environment
+settings. For Neon, use the pooled connection string for the running web
+service. Do not put database credentials in source control or chat. Render's
+health-check path should be `/api/health`.
+
+For local development, create a database and application user using `psql`:
 
 ```sql
-CREATE DATABASE ultbigboy CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'ultbigboy_app'@'localhost' IDENTIFIED BY 'change-this-password';
-GRANT ALL PRIVILEGES ON ultbigboy.* TO 'ultbigboy_app'@'localhost';
+CREATE USER ultbigboy_app WITH PASSWORD 'change-this-password';
+CREATE DATABASE ultbigboy OWNER ultbigboy_app;
 ```
 
-From `backend\`, copy `.env.example` to `.env` and set `DB_HOST`, `DB_PORT`,
-`DB_USER`, `DB_PASSWORD`, and `DB_NAME`. Use either these `DB_*` values or
-`MYSQL_URL`, not both. `PORT` and `NODE_ENV` configure the API runtime.
+From `backend\`, copy `.env.example` to `.env` and set `DATABASE_URL`.
+`PORT` and `NODE_ENV` configure the API runtime.
 Payment and download configuration uses `PAYSTACK_SECRET_KEY`,
 `PAYMENT_CALLBACK_URL`, `API_PUBLIC_URL`, `FRONTEND_ORIGIN`, and
 `DOWNLOAD_SIGNING_SECRET`. Production requires distinct, stable values of at
@@ -106,21 +109,20 @@ reverse-proxy hop count or trusted proxy addresses.
 
 ## Route integration tests
 
-The route integration suite requires a local MySQL-compatible server and a
-dedicated `slaughterhouse_route_test` schema. It applies the backend migrations
-and clears application tables in that schema before exercising every registered
-API route method. Never point `TEST_MYSQL_URL` at a development or production
-database; the suite refuses non-local hosts and any schema other than the
-dedicated test schema.
+The route integration suite requires a local PostgreSQL server and a dedicated
+`slaughterhouse_route_test` database. It applies the backend migrations and
+clears application tables in that database before exercising every registered
+API route method. Never point `TEST_DATABASE_URL` at a development or production
+database; the suite refuses non-local hosts and other database names.
 
 In PowerShell, configure the test connection and run the suite:
 
 ```powershell
-$env:TEST_MYSQL_URL = 'mysql://test_user:test_password@127.0.0.1:3306/slaughterhouse_route_test'
+$env:TEST_DATABASE_URL = 'postgresql://ultbigboy_app:local-test-password@127.0.0.1:5432/slaughterhouse_route_test'
 npm run test:integration
 ```
 
-The ordinary `npm test` run skips the integration case when `TEST_MYSQL_URL`
+The ordinary `npm test` run skips the integration case when `TEST_DATABASE_URL`
 is not set.
 Email delivery uses `EMAIL_API_KEY` and
 `EMAIL_FROM`. The Paystack and email settings can remain unset for local
@@ -142,8 +144,8 @@ SELECT version, applied_at FROM schema_migrations ORDER BY version;
 Starting the API with `node server.js` also applies pending migrations before
 serving requests. Keep schema changes in a new, incrementing migration; never
 edit a migration that has already been applied to a shared database. The
-legacy SQLite import utility reads `SQLITE_SOURCE_PATH` and is separate from
-MySQL schema migration.
+legacy SQLite import utility reads `SQLITE_SOURCE_PATH` and imports rows into
+PostgreSQL after the schema migrations have run.
 
 Automated tests cover the pure service layer (booking rules, download tokens,
 input validation, password hashing, pricing, and migration structure) with
@@ -172,7 +174,7 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-The browser suite is separate from `npm test` and the MySQL route integration
+The browser suite is separate from `npm test` and the PostgreSQL route integration
 suite.
 
 Login sessions, password reset tokens, and email verification tokens are stored
@@ -230,7 +232,7 @@ cannot change account email addresses or roles.
 
 Beat catalog data is served by `GET /api/beats` with search, genre, mood, key,
 BPM, sorting, and pagination filters. `GET /api/beats/:id` returns beat details
-and server-side license-price fallbacks from MySQL settings.
+and server-side license-price fallbacks from PostgreSQL settings.
 
 Authenticated wishlist endpoints are `GET /api/wishlists`, `POST
 /api/wishlists/:beatId`, and `DELETE /api/wishlists/:beatId`.
@@ -241,7 +243,7 @@ initialized and again before payment verification marks an order paid.
 Administrators may provide `previewDurationSeconds` when uploading a beat.
 Catalog responses include that duration and a server-generated `previewUrl`.
 
-The purchasable merchandise catalog is served from MySQL through
+The purchasable merchandise catalog is served from PostgreSQL through
 `GET /api/merchandise`; the storefront loads titles, descriptions, prices,
 images, and stock from this API. Featured coming-soon artwork is promotional
 content and is not offered for purchase as a catalog product.
@@ -367,10 +369,10 @@ Authentication and administrator routes are rate-limited by client IP. The limit
 is intentionally local to each process; deploy behind a shared gateway or move
 the bucket store to a shared service when running multiple instances.
 
-Administrator accounts are stored in the MySQL `users` table. Set a user's
+Administrator accounts are stored in the PostgreSQL `users` table. Set a user's
 `role` to `admin` to allow access to the administrator login; administrator
 credentials are not read from environment variables. Withdrawal confirmation
-uses the authenticated administrator's MySQL password.
+uses the authenticated administrator's account password.
 
 ## Production secret rotation checklist
 
@@ -383,7 +385,7 @@ uses the authenticated administrator's MySQL password.
   a test transactional email, then revoke the old key. Update `EMAIL_FROM` only
   when the verified sender changes.
 - **Database:** create a replacement database credential with the same required
-  privileges, update `MYSQL_URL` or `DB_USER`/`DB_PASSWORD`, verify the API and
+  privileges, update `DATABASE_URL`, verify the API and
   migrations connect, then revoke the old credential.
 - **Downloads:** replace `DOWNLOAD_SIGNING_SECRET` with a distinct value of at
   least 32 bytes. Existing signed download links will stop validating; issue

@@ -20,7 +20,8 @@ async function recordNonSuccessPayment(db, order, { reference, status, paymentDa
   await db.run(
     `INSERT INTO payments (order_id, provider, provider_reference, status, amount, currency, provider_payload)
      VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE order_id = VALUES(order_id), status = VALUES(status), amount = VALUES(amount), currency = VALUES(currency), provider_payload = VALUES(provider_payload)`,
+     ON CONFLICT (provider_reference) DO UPDATE SET order_id = EXCLUDED.order_id, status = EXCLUDED.status,
+       amount = EXCLUDED.amount, currency = EXCLUDED.currency, provider_payload = EXCLUDED.provider_payload`,
     [order.id, 'paystack', reference, status, Number(paymentData?.amount || 0) / 100, paymentData?.currency || order.currency || 'GHS', JSON.stringify(paymentData || {})]
   );
   if (status !== 'failed' && status !== 'abandoned') return;

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const path = require('node:path');
 const Module = require('node:module');
-const mysql = require('mysql2');
+const { Pool } = require('pg');
 const express = require('express');
 const cors = require('cors');
 const { applyMigrations } = require('../services/migrations');
@@ -13,9 +13,10 @@ const { requestValidation, sendError } = require('../middleware/validate');
 const { isAllowedOrigin } = require('../services/cors-origin');
 const { DEFAULT_LICENSE_RIGHTS } = require('../services/license-rights');
 const storage = require('../services/storage');
+const { summarizeResult, toPostgresQuery, withReturningId } = require('../services/postgres');
 
 const TEST_SCHEMA = 'slaughterhouse_route_test';
-const testDatabaseUrl = process.env.TEST_MYSQL_URL;
+const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const routeFiles = [
   'auth',
   'public',
@@ -29,8 +30,8 @@ const routeFiles = [
 
 function assertSafeTestDatabase(connectionString) {
   const url = new URL(connectionString);
-  assert.equal(url.protocol, 'mysql:', 'TEST_MYSQL_URL must use the mysql: protocol.');
-  assert.ok(['127.0.0.1', 'localhost', '::1'].includes(url.hostname), 'Integration tests are restricted to a local MySQL server.');
+  assert.ok(['postgres:', 'postgresql:'].includes(url.protocol), 'TEST_DATABASE_URL must use a PostgreSQL protocol.');
+  assert.ok(['127.0.0.1', 'localhost', '::1'].includes(url.hostname), 'Integration tests are restricted to a local PostgreSQL server.');
   assert.equal(decodeURIComponent(url.pathname.slice(1)), TEST_SCHEMA, `Integration tests may only clear the ${TEST_SCHEMA} schema.`);
   return url;
 }
@@ -74,9 +75,7 @@ function createDatabaseAdapter(pool, promisePool) {
       return operation;
     },
     async transaction(callback) {
-      const connection = await new Promise((resolve, reject) => {
-        pool.getConnection((error, result) => error ? reject(error) : resolve(result));
-      });
+      const connection = await pool.connect();
       try {
         return await runInTransaction(connection, callback);
       } finally {
@@ -87,18 +86,25 @@ function createDatabaseAdapter(pool, promisePool) {
 }
 
 async function clearTestTables(pool) {
-  const [tables] = await pool.promise().query('SHOW TABLES');
+  const { rows: tables } = await pool.query(
+    'SELECT tablename FROM pg_tables WHERE schemaname = current_schema()'
+  );
   const names = tables
-    .map(row => Object.values(row)[0])
+    .map(row => row.tablename)
     .filter(name => !['schema_migrations', 'settings', 'license_rights', 'license_definition_status', 'stream_releases'].includes(name));
-  await pool.promise().query('SET FOREIGN_KEY_CHECKS = 0');
-  try {
-    for (const name of names) {
-      await pool.promise().query(`TRUNCATE TABLE \`${String(name).replace(/`/g, '``')}\``);
+  if (!names.length) return;
+  const tablesToClear = names.map(name => `"${String(name).replace(/"/g, '""')}"`).join(', ');
+  await pool.query(`TRUNCATE TABLE ${tablesToClear} RESTART IDENTITY CASCADE`);
+}
+
+function createPromisePoolAdapter(pool) {
+  return {
+    async execute(query, parameters = []) {
+      const result = await pool.query(toPostgresQuery(withReturningId(query)), parameters);
+      if (/^\s*(SELECT|WITH)\b/i.test(query)) return [result.rows, result.fields];
+      return [summarizeResult(result), result.fields];
     }
-  } finally {
-    await pool.promise().query('SET FOREIGN_KEY_CHECKS = 1');
-  }
+  };
 }
 
 function testConfig() {
@@ -313,7 +319,7 @@ async function seedSettings(pool) {
   ];
   for (const [key, value] of settings) {
     await pool.execute(
-      'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)',
+      'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value',
       [key, value]
     );
   }
@@ -345,12 +351,12 @@ async function invokeRoute(baseUrl, route, sessions) {
   return { response, responseText, url };
 }
 
-test('all registered API route methods execute against an isolated MySQL test database', {
-  skip: !testDatabaseUrl && 'Set TEST_MYSQL_URL to the dedicated local slaughterhouse_route_test database.'
+test('all registered API route methods execute against an isolated PostgreSQL test database', {
+  skip: !testDatabaseUrl && 'Set TEST_DATABASE_URL to the dedicated local slaughterhouse_route_test database.'
 }, async t => {
   assertSafeTestDatabase(testDatabaseUrl);
-  const pool = mysql.createPool(testDatabaseUrl);
-  const promisePool = pool.promise();
+  const pool = new Pool({ connectionString: testDatabaseUrl });
+  const promisePool = createPromisePoolAdapter(pool);
   let loaded;
   let server;
   try {
@@ -362,7 +368,7 @@ test('all registered API route methods execute against an isolated MySQL test da
     loaded = loadRouteRouters(database);
     const routes = routeCases(loaded.routeModules).sort((left, right) =>
       Number(left.path.endsWith('/logout')) - Number(right.path.endsWith('/logout')));
-    t.diagnostic(`Exercising ${routes.length} registered API route methods against MySQL.`);
+    t.diagnostic(`Exercising ${routes.length} registered API route methods against PostgreSQL.`);
     const sessions = await seedSessions(promisePool);
     const app = mountIntegrationApp(loaded.routeModules, database, config);
     server = app.listen(0, '127.0.0.1');
@@ -420,7 +426,7 @@ test('all registered API route methods execute against an isolated MySQL test da
           [reference, 'Integration Customer', 'integration-customer@example.test', 1, 'GHS', JSON.stringify([downloadItem]), status]
         );
         downloadOrderIds.push(orderResult.insertId);
-        const expirySql = key === 'legacy' ? 'NULL' : key === 'expired' ? 'DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 1 SECOND)' : 'DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 1 DAY)';
+        const expirySql = key === 'legacy' ? 'NULL' : key === 'expired' ? "CURRENT_TIMESTAMP - INTERVAL '1 second'" : "CURRENT_TIMESTAMP + INTERVAL '1 day'";
         await promisePool.execute(
           `INSERT INTO licenses (user_id, beat_id, order_id, license_type, rights_json, expires_at)
            VALUES (?, ?, ?, 'basic', ?, ${expirySql})`,
@@ -490,7 +496,7 @@ test('all registered API route methods execute against an isolated MySQL test da
           await promisePool.execute(`DELETE FROM license_certificates WHERE order_id IN (${orderPlaceholders})`, downloadOrderIds);
         }
         await promisePool.execute('DELETE FROM licenses WHERE beat_id = ?', [downloadBeatId]);
-        await promisePool.execute('DELETE FROM orders WHERE reference IN (?)', [Object.values(downloadReferences)]);
+        await promisePool.execute('DELETE FROM orders WHERE reference = ANY(?)', [Object.values(downloadReferences)]);
         await promisePool.execute('DELETE FROM beats WHERE id = ?', [downloadBeatId]);
       }
       if (otherCustomerId) await promisePool.execute('DELETE FROM users WHERE id = ?', [otherCustomerId]);
@@ -624,6 +630,6 @@ test('all registered API route methods execute against an isolated MySQL test da
   } finally {
     if (server?.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     loaded?.restore();
-    await new Promise((resolve, reject) => pool.end(error => error ? reject(error) : resolve()));
+    await pool.end();
   }
 });

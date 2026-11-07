@@ -11,7 +11,7 @@ const {
   getTableCounts,
   runClient,
   validateDatabaseName
-} = require('./mysql-tools');
+} = require('./postgres-tools');
 
 async function hashFile(filePath) {
   const hash = crypto.createHash('sha256');
@@ -24,7 +24,7 @@ async function verify() {
   const databaseIndex = process.argv.indexOf('--database');
   const scratchDatabase = validateDatabaseName(databaseIndex >= 0 ? process.argv[databaseIndex + 1] : '');
   if (!process.argv[2] || !fs.existsSync(backupPath)) {
-    throw new Error('Usage: node scripts/verify-backup.js <backup.sql> --database <empty-scratch-database>');
+    throw new Error('Usage: node scripts/verify-backup.js <backup.dump> --database <empty-scratch-database>');
   }
   const manifestPath = `${backupPath}.manifest.json`;
   const manifest = JSON.parse(await fsPromises.readFile(manifestPath, 'utf8'));
@@ -36,7 +36,13 @@ async function verify() {
   if (checksum !== manifest.sha256) throw new Error('Backup checksum does not match its manifest.');
 
   await assertDatabaseEmpty(config, scratchDatabase);
-  await runClient('mysql', clientArgs(config, scratchDatabase), config, { inputPath: backupPath });
+  await runClient('pg_restore', [
+    '--exit-on-error',
+    '--no-owner',
+    '--no-acl',
+    ...clientArgs(config, scratchDatabase),
+    '-'
+  ], config, { inputPath: backupPath });
   const actualCounts = await getTableCounts(config, scratchDatabase);
   const expectedNames = Object.keys(manifest.tables).sort();
   const actualNames = Object.keys(actualCounts).sort();

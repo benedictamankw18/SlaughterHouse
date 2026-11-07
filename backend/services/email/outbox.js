@@ -32,8 +32,8 @@ async function queueEmail(database, { to, template, data = {}, idempotencyKey })
 
   await database.run(
     `INSERT INTO email_outbox (idempotency_key, recipient, template, data_json, expires_at)
-     VALUES (?, ?, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE DATE_ADD(CURRENT_TIMESTAMP, INTERVAL ? SECOND) END)
-     ON DUPLICATE KEY UPDATE idempotency_key = VALUES(idempotency_key)`,
+     VALUES (?, ?, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE CURRENT_TIMESTAMP + (? * INTERVAL '1 second') END)
+     ON CONFLICT (idempotency_key) DO NOTHING`,
     [idempotencyKey, to.trim().toLowerCase(), template, JSON.stringify(data), expirySeconds, expirySeconds]
   );
 }
@@ -59,7 +59,7 @@ async function claimNextEmail(database) {
       `SELECT id, idempotency_key, recipient, template, data_json, attempts
        FROM email_outbox
        WHERE ((status = 'pending' AND next_attempt_at <= CURRENT_TIMESTAMP)
-          OR (status = 'processing' AND locked_at < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL ? MINUTE)))
+          OR (status = 'processing' AND locked_at < CURRENT_TIMESTAMP - (? * INTERVAL '1 minute')))
          AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
        ORDER BY id
        LIMIT 1
@@ -109,8 +109,8 @@ async function deliverClaimedEmail(database, email, sender = sendEmail) {
     const status = attempts >= MAX_ATTEMPTS ? 'failed' : 'pending';
     await database.run(
       `UPDATE email_outbox
-       SET status = ?, locked_at = NULL, next_attempt_at = DATE_ADD(CURRENT_TIMESTAMP, INTERVAL ? SECOND), last_error = ?,
-           data_json = IF(? = 'failed', NULL, data_json)
+      SET status = ?, locked_at = NULL, next_attempt_at = CURRENT_TIMESTAMP + (? * INTERVAL '1 second'), last_error = ?,
+          data_json = CASE WHEN ? = 'failed' THEN NULL ELSE data_json END
        WHERE id = ? AND status = 'processing'`,
       [status, retryDelaySeconds(attempts), safeFailureMessage(error), status, email.id]
     );

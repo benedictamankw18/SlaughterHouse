@@ -49,3 +49,13 @@ test('production measures secret minimums in UTF-8 bytes', () => {
   const result = runConfig({ DOWNLOAD_SIGNING_SECRET: 'é'.repeat(16) });
   assert.equal(result.status, 0, result.stderr);
 });
+
+test('database readiness configuration recognizes DATABASE_URL', () => {
+  const result = spawnSync(process.execPath, ['-e', "process.stdout.write(String(require('./config').databaseConfigured))"], {
+    cwd: backendDirectory,
+    encoding: 'utf8',
+    env: { ...process.env, ...validSecrets, DATABASE_URL: 'postgresql://user:pass@localhost/store' }
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'true');
+});

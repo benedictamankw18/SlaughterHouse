@@ -35,7 +35,7 @@ permissions, while role, license-rights, and business-setting management is
 restricted to super-admins.
 
 The route integration suite executes the registered API methods with anonymous
-requests and test sessions against a dedicated local MySQL database. Unit tests
+requests and test sessions against a dedicated local PostgreSQL database. Unit tests
 assert the visitor/customer/admin/super-admin permission matrix. Do not use
 production or development databases for integration tests.
 
@@ -80,9 +80,9 @@ npm audit
 npm run check:secrets
 ```
 
-`test:integration` requires `TEST_MYSQL_URL` to point to a dedicated local
-`slaughterhouse_route_test` schema. The suite rejects non-local hosts and other
-schema names; it clears application tables in the test schema.
+`test:integration` requires `TEST_DATABASE_URL` to point to a dedicated local
+`slaughterhouse_route_test` database. The suite rejects non-local hosts and
+other database names; it clears application tables in the test database.
 
 Browser tests stub API responses and payment redirects. The accessibility
 suite runs axe-core checks for WCAG 2.1 A/AA on key storefront and admin

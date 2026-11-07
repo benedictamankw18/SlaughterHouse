@@ -1,5 +1,6 @@
-const SENSITIVE_KEY = /authorization|cookie|password|token|secret|api[_-]?key|mysql_pwd/i;
+const SENSITIVE_KEY = /authorization|cookie|password|token|secret|api[_-]?key|database[_-]?url|connection[_-]?string/i;
 const SENSITIVE_VALUE = [
+  /\bpostgres(?:ql)?:\/\/[^\s"'<>]+/gi,
   /\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi,
   /\b(?:sk_live|sk_test|re)_[A-Za-z0-9_-]{12,}\b/g,
   /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g

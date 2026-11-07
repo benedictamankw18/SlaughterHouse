@@ -91,7 +91,8 @@ router.post('/bookings/initialize-payment', async (request, response) => {
     await new Promise((resolve, reject) => database.run(
       `INSERT INTO payments (order_id, provider, provider_reference, status, amount, currency, provider_payload)
        SELECT id, ?, ?, ?, ?, ?, ? FROM orders WHERE reference = ?
-       ON DUPLICATE KEY UPDATE order_id = VALUES(order_id), status = VALUES(status), amount = VALUES(amount), currency = VALUES(currency), provider_payload = VALUES(provider_payload)`,
+       ON CONFLICT (provider_reference) DO UPDATE SET order_id = EXCLUDED.order_id, status = EXCLUDED.status,
+         amount = EXCLUDED.amount, currency = EXCLUDED.currency, provider_payload = EXCLUDED.provider_payload`,
       ['paystack', payment.data.reference, 'pending', feeGhs, 'GHS', JSON.stringify(payment.data), reference],
       error => error ? reject(error) : resolve()
     ));

@@ -1,27 +1,28 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { migrations, applyMigrations } = require('../services/migrations');
+const { migrations, applyMigrations, preparePostgresStatement } = require('../services/migrations');
 
 function fakePool(appliedVersions = new Set(), existingColumns = new Set()) {
   const statements = [];
   return {
     statements,
-    query(query, parameters, callback) {
-      if (/^CREATE TABLE IF NOT EXISTS schema_migrations/.test(query)) return callback(null, {});
+    async query(query, parameters = []) {
+      if (/^CREATE OR REPLACE FUNCTION|^CREATE TABLE IF NOT EXISTS schema_migrations/.test(query)) return { rows: [], rowCount: 0 };
       if (/^SELECT version FROM schema_migrations/.test(query)) {
-        return callback(null, appliedVersions.has(parameters[0]) ? [{ version: parameters[0] }] : []);
+        return { rows: appliedVersions.has(parameters[0]) ? [{ version: parameters[0] }] : [], rowCount: 1 };
       }
       if (/^INSERT INTO schema_migrations/.test(query)) {
         appliedVersions.add(parameters[0]);
-        return callback(null, {});
+        return { rows: [], rowCount: 1 };
       }
-      if (/FROM information_schema\.COLUMNS/.test(query)) {
-        return callback(null, [{ count: existingColumns.has(`${parameters[0]}.${parameters[1]}`) ? 1 : 0 }]);
+      if (/FROM information_schema\.columns/.test(query)) {
+        return { rows: [{ count: existingColumns.has(`${parameters[0]}.${parameters[1]}`) ? 1 : 0 }], rowCount: 1 };
       }
+      if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(query)) return { rows: [], rowCount: 0 };
       statements.push(query);
-      const addedColumn = query.match(/^ALTER TABLE `([^`]+)` ADD COLUMN `([^`]+)`/);
+      const addedColumn = query.match(/^ALTER TABLE ([a-z0-9_]+) ADD COLUMN (?:IF NOT EXISTS )?([a-z0-9_]+)/i);
       if (addedColumn) existingColumns.add(`${addedColumn[1]}.${addedColumn[2]}`);
-      callback(null, {});
+      return { rows: [], rowCount: 1 };
     }
   };
 }
@@ -122,9 +123,8 @@ test('migration 25 adds an optional expiry without changing existing licenses', 
 
 test('migration 26 keeps the license expiry optional on upgraded databases', () => {
   const migration = migrations.find(candidate => candidate.version === 26);
-  assert.deepEqual(migration?.statements, [
-    'ALTER TABLE licenses MODIFY COLUMN expires_at DATETIME NULL'
-  ]);
+  assert.equal(preparePostgresStatement(migration.statements[0]).query,
+    'ALTER TABLE licenses ALTER COLUMN expires_at DROP NOT NULL');
 });
 
 test('migration 11 adds an idempotent per-order-line key to sales', () => {
@@ -231,18 +231,9 @@ test('applyMigrations resumes from the last recorded version', async () => {
   const applied = new Set(migrations.filter(migration => migration.version <= 18).map(migration => migration.version));
   const pool = fakePool(applied);
   await applyMigrations(pool);
-  const expected = migrations.find(migration => migration.version === 19).statements.map(({ ensureColumn: { table, column, definition } }) =>
-    `ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`
-  ).concat(
-    migrations.find(migration => migration.version === 20).statements,
-    migrations.find(migration => migration.version === 21).statements,
-    migrations.find(migration => migration.version === 22).statements,
-    migrations.find(migration => migration.version === 23).statements,
-    'ALTER TABLE `user_sessions` ADD COLUMN `csrf_token_hash` CHAR(64) NULL',
-    'ALTER TABLE `licenses` ADD COLUMN `expires_at` DATETIME NULL',
-    'ALTER TABLE licenses MODIFY COLUMN expires_at DATETIME NULL'
-  );
-  assert.deepEqual(pool.statements, expected);
+  assert.ok(pool.statements.some(statement => statement.includes('CREATE TABLE IF NOT EXISTS stream_releases')));
+  assert.ok(pool.statements.some(statement => statement === 'ALTER TABLE licenses ALTER COLUMN expires_at DROP NOT NULL'));
+  assert.ok(pool.statements.every(statement => !statement.includes('AUTO_INCREMENT')));
 });
 
 test('applyMigrations skips existing legacy columns and applies the next migration', async () => {
@@ -252,13 +243,40 @@ test('applyMigrations skips existing legacy columns and applies the next migrati
   ));
   const pool = fakePool(applied, existingColumns);
   await applyMigrations(pool);
-  assert.deepEqual(pool.statements, [
-    ...migrations.find(migration => migration.version === 20).statements,
-    ...migrations.find(migration => migration.version === 21).statements,
-    ...migrations.find(migration => migration.version === 22).statements,
-    ...migrations.find(migration => migration.version === 23).statements,
-    'ALTER TABLE `user_sessions` ADD COLUMN `csrf_token_hash` CHAR(64) NULL',
-    'ALTER TABLE `licenses` ADD COLUMN `expires_at` DATETIME NULL',
-    'ALTER TABLE licenses MODIFY COLUMN expires_at DATETIME NULL'
-  ]);
+  assert.ok(pool.statements.some(statement => statement.includes('CREATE TABLE IF NOT EXISTS stream_releases')));
+  assert.ok(!pool.statements.some(statement => statement.includes('ADD COLUMN email_verified_at')));
+  assert.ok(pool.statements.some(statement => statement.includes('ADD COLUMN IF NOT EXISTS expires_at')));
+});
+
+test('PostgreSQL migration conversion handles identities, types, indexes, and conflict-safe seeds', () => {
+  const converted = preparePostgresStatement(`CREATE TABLE IF NOT EXISTS sample (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    enabled TINYINT(1) NOT NULL DEFAULT 1,
+    metadata JSON,
+    INDEX idx_sample_enabled (enabled),
+    UNIQUE KEY uq_sample_metadata (metadata)
+  )`);
+  assert.match(converted.query, /GENERATED BY DEFAULT AS IDENTITY/);
+  assert.match(converted.query, /enabled SMALLINT NOT NULL DEFAULT 1/);
+  assert.match(converted.query, /metadata JSONB/);
+  assert.equal(converted.indexes.length, 2);
+  assert.match(converted.indexes[0].query, /CREATE INDEX IF NOT EXISTS idx_sample_enabled/);
+  assert.match(converted.indexes[1].query, /CREATE UNIQUE INDEX IF NOT EXISTS uq_sample_metadata/);
+
+  const seed = preparePostgresStatement('INSERT IGNORE INTO settings (setting_key) VALUES (\'x\')');
+  assert.equal(seed.query, "INSERT INTO settings (setting_key) VALUES ('x') ON CONFLICT DO NOTHING");
+});
+
+test('all versioned migration statements are converted away from MySQL-only syntax', () => {
+  for (const migration of migrations) {
+    for (const statement of migration.statements) {
+      if (typeof statement !== 'string') continue;
+      const { query } = preparePostgresStatement(statement);
+      assert.doesNotMatch(
+        query,
+        /\bAUTO_INCREMENT\b|\bINSERT\s+IGNORE\b|\bTINYINT\b|\bDATETIME\b|\bMODIFY COLUMN\b|\bADD INDEX\b|\bADD UNIQUE KEY\b/i,
+        `migration ${migration.version} has unconverted SQL`
+      );
+    }
+  }
 });

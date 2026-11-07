@@ -74,7 +74,7 @@ async function recordOrderSales(db, order, items) {
     await db.run(
       `INSERT INTO sales (order_reference, line_index, sale_type, product_id, product_name, buyer_name, buyer_email, amount)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE amount = VALUES(amount)`,
+       ON CONFLICT (order_reference, line_index) DO UPDATE SET amount = EXCLUDED.amount`,
       [
         order.reference,
         lineIndex,
@@ -103,7 +103,9 @@ async function normalizePaidOrder(db, order, items, paymentData) {
   await db.run(
     `INSERT INTO payments (order_id, provider, provider_reference, status, amount, currency, provider_payload, verified_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-     ON DUPLICATE KEY UPDATE order_id = VALUES(order_id), status = VALUES(status), amount = VALUES(amount), currency = VALUES(currency), provider_payload = VALUES(provider_payload), verified_at = VALUES(verified_at)`,
+     ON CONFLICT (provider_reference) DO UPDATE SET order_id = EXCLUDED.order_id, status = EXCLUDED.status,
+       amount = EXCLUDED.amount, currency = EXCLUDED.currency, provider_payload = EXCLUDED.provider_payload,
+       verified_at = EXCLUDED.verified_at`,
     [order.id, 'paystack', paymentData.reference, 'paid', Number(paymentData.amount) / 100, paymentData.currency, JSON.stringify(paymentData)]
   );
 
@@ -114,7 +116,7 @@ async function normalizePaidOrder(db, order, items, paymentData) {
     const rights = rightsFor(licenseRights, item.license);
     await db.run(
       `INSERT INTO licenses (user_id, beat_id, order_id, license_type, rights_json, expires_at)
-       SELECT ?, ?, ?, ?, ?, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 1 YEAR)
+       SELECT ?, ?, ?, ?, ?, CURRENT_TIMESTAMP + INTERVAL '1 year'
        WHERE NOT EXISTS (SELECT 1 FROM licenses WHERE order_id = ? AND beat_id = ? AND license_type = ?)`,
       [customer.id, item.productId, order.id, item.license, JSON.stringify(rights), order.id, item.productId, item.license]
     );
@@ -208,7 +210,7 @@ async function reserveBookingSlots(db, order, bookingItem) {
   const sessionSlots = normalizeBookingSlots(booking.sessionSlots || (booking.preferredDate && booking.preferredTime ? [{ date: booking.preferredDate, time: booking.preferredTime }] : []));
   const firstSlot = sessionSlots[0];
   for (const slot of sessionSlots) {
-    await db.run('INSERT INTO booking_availability (slot_date, start_time, end_time, status) VALUES (?, ?, ADDTIME(?, "02:20:00"), ?)', [slot.date, slot.time, slot.time, 'booked']);
+    await db.run("INSERT INTO booking_availability (slot_date, start_time, end_time, status) VALUES (?, ?, ?::time + INTERVAL '2 hours 20 minutes', ?)", [slot.date, slot.time, slot.time, 'booked']);
   }
   const bookingResult = await db.run('INSERT INTO bookings (name, email, phone, service, artist_count, song_count, booking_slots_json, preferred_date, preferred_time, details, payment_reference, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [booking.name, booking.email, booking.phone, serviceName, booking.artistCount, booking.songCount || null, JSON.stringify(sessionSlots), firstSlot?.date || null, firstSlot?.time || null, booking.details, order.reference, 'paid']);
   for (const slot of sessionSlots) {
@@ -422,7 +424,8 @@ router.post('/payments/initialize', async (request, response) => {
     await run(
       `INSERT INTO payments (order_id, provider, provider_reference, status, amount, currency, provider_payload)
        SELECT id, ?, ?, ?, ?, ?, ? FROM orders WHERE reference = ?
-       ON DUPLICATE KEY UPDATE order_id = VALUES(order_id), status = VALUES(status), amount = VALUES(amount), currency = VALUES(currency), provider_payload = VALUES(provider_payload)`,
+       ON CONFLICT (provider_reference) DO UPDATE SET order_id = EXCLUDED.order_id, status = EXCLUDED.status,
+         amount = EXCLUDED.amount, currency = EXCLUDED.currency, provider_payload = EXCLUDED.provider_payload`,
       [ 'paystack', payment.data.reference, 'pending', amountGhs, 'GHS', JSON.stringify(payment.data), reference ]
     );
     response.json({ authorizationUrl: payment.data.authorization_url, reference });

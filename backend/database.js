@@ -1,10 +1,24 @@
 require('dotenv').config();
 
-const mysql = require('mysql2');
+const { Pool } = require('pg');
 const { applyMigrations } = require('./services/migrations');
 const { runInTransaction } = require('./services/transaction');
+const { summarizeResult, toPostgresQuery, withReturningId } = require('./services/postgres');
 const logger = require('./services/logger');
 const monitoring = require('./services/monitoring');
+
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) throw new Error('Configure DATABASE_URL with a PostgreSQL connection string before starting the backend.');
+if (!/^postgres(?:ql)?:\/\//i.test(databaseUrl)) {
+  throw new Error('DATABASE_URL must use the postgres:// or postgresql:// protocol.');
+}
+
+const pool = new Pool({
+  connectionString: databaseUrl,
+  connectionTimeoutMillis: 10000,
+  idleTimeoutMillis: 30000,
+  max: 10
+});
 
 function reportDatabaseError(error) {
   monitoring.increment('databaseErrors');
@@ -12,88 +26,92 @@ function reportDatabaseError(error) {
 }
 
 function isDatabaseError(error) {
-  return /^(ER_|ECONN|PROTOCOL_|ETIMEDOUT)/.test(String(error?.code || ''));
+  return /^[0-9A-Z]{5}$/.test(String(error?.code || ''))
+    || /^(ECONN|PROTOCOL_|ETIMEDOUT)/.test(String(error?.code || ''));
 }
 
-const mysqlConfig = process.env.MYSQL_URL && !process.env.MYSQL_URL.includes('user:password')
-  ? process.env.MYSQL_URL
-  : {
-    host: process.env.DB_HOST,
-    port: Number(process.env.DB_PORT) || 3306,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME
-  };
+function query(queryText, parameters = []) {
+  return pool.query(toPostgresQuery(queryText), parameters);
+}
 
-if (!mysqlConfig.host && typeof mysqlConfig !== 'string') throw new Error('Configure MYSQL_URL or DB_HOST, DB_USER, DB_PASSWORD, and DB_NAME before starting the backend.');
-
-const pool = mysql.createPool(mysqlConfig);
 let initialization;
 const database = {
-  run(query, parameters, callback) {
+  run(queryText, parameters, callback) {
+    if (typeof parameters === 'function') {
+      callback = parameters;
+      parameters = [];
+    }
     initialization.then(
-      () => pool.execute(query, parameters || [], (error, result) => {
-        if (error) reportDatabaseError(error);
-        callback?.call({ lastID: result?.insertId, changes: result?.affectedRows }, error, result);
+      () => query(withReturningId(queryText), parameters).then(result => {
+        const summary = summarizeResult(result);
+        callback?.call({ lastID: summary.insertId, changes: summary.affectedRows }, null, summary);
       }),
       error => {
         reportDatabaseError(error);
         callback?.(error);
       }
-    );
+    ).catch(error => {
+      reportDatabaseError(error);
+      callback?.(error);
+    });
   },
-  get(query, parameters, callback) {
+  get(queryText, parameters, callback) {
+    if (typeof parameters === 'function') {
+      callback = parameters;
+      parameters = [];
+    }
     initialization.then(
-      () => pool.execute(query, parameters || [], (error, rows) => {
-        if (error) reportDatabaseError(error);
-        callback?.(error, rows?.[0]);
-      }),
+      () => query(queryText, parameters).then(result => callback?.(null, result.rows?.[0])),
       error => {
         reportDatabaseError(error);
         callback?.(error);
       }
-    );
+    ).catch(error => {
+      reportDatabaseError(error);
+      callback?.(error);
+    });
   },
-  all(query, parameters, callback) {
+  all(queryText, parameters, callback) {
+    if (typeof parameters === 'function') {
+      callback = parameters;
+      parameters = [];
+    }
     initialization.then(
-      () => pool.execute(query, parameters || [], (error, rows) => {
-        if (error) reportDatabaseError(error);
-        callback?.(error, rows);
-      }),
+      () => query(queryText, parameters).then(result => callback?.(null, result.rows)),
       error => {
         reportDatabaseError(error);
         callback?.(error);
       }
-    );
+    ).catch(error => {
+      reportDatabaseError(error);
+      callback?.(error);
+    });
   },
   close() {
-    return new Promise((resolve, reject) => pool.end(error => error ? reject(error) : resolve()));
+    return pool.end();
+  },
+  ready() {
+    return initialization;
   },
   checkConnection() {
-    return initialization.then(() => new Promise((resolve, reject) => {
-      pool.query('SELECT 1 AS ok', (error, rows) => {
-        if (error) {
-          reportDatabaseError(error);
-          return reject(error);
-        }
-        if (Number(rows?.[0]?.ok) !== 1) {
-          const error = new Error('Database readiness query returned an unexpected result.');
-          reportDatabaseError(error);
-          return reject(error);
-        }
-        resolve();
-      });
-    }));
+    return initialization.then(async () => {
+      const result = await query('SELECT 1 AS ok');
+      if (Number(result.rows?.[0]?.ok) !== 1) {
+        const error = new Error('Database readiness query returned an unexpected result.');
+        reportDatabaseError(error);
+        throw error;
+      }
+    }).catch(error => {
+      reportDatabaseError(error);
+      throw error;
+    });
   },
   getConnectionConfig() {
-    return mysqlConfig;
+    return databaseUrl;
   },
   transaction(callback) {
     return initialization
-      .then(() => new Promise((resolve, reject) => pool.getConnection((error, connection) => {
-        if (error) reportDatabaseError(error);
-        error ? reject(error) : resolve(connection);
-      })))
+      .then(() => pool.connect())
       .then(async connection => {
         try {
           return await runInTransaction(connection, callback);
@@ -112,7 +130,7 @@ const database = {
 
 initialization = database.initialize().catch(error => {
   reportDatabaseError(error);
-  logger.error('mysql_initialization_failed', { code: error.code });
+  logger.error('postgres_initialization_failed', { code: error.code });
   throw error;
 });
 module.exports = database;

@@ -54,9 +54,17 @@ app.use((error, request, response, next) => {
   sendError(response, 500, 'An unexpected server error occurred.', { code: 'INTERNAL_ERROR' });
 });
 
-const server = app.listen(config.port, () => {
-  startEmailOutbox(database, { apiKey: config.emailApiKey, from: config.emailFrom });
-  logger.info('api_started', { port: config.port });
+database.ready().then(() => {
+  const server = app.listen(config.port, () => {
+    startEmailOutbox(database, { apiKey: config.emailApiKey, from: config.emailFrom });
+    logger.info('api_started', { port: config.port });
+  });
+  server.requestTimeout = 120000;
+  server.headersTimeout = 15000;
+}).catch(error => {
+  logger.error('api_startup_failed', { code: error?.code });
+  database.close().catch(closeError => {
+    logger.error('database_shutdown_failed', { code: closeError?.code });
+  });
+  process.exitCode = 1;
 });
-server.requestTimeout = 120000;
-server.headersTimeout = 15000;

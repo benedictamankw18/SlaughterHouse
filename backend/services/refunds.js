@@ -165,7 +165,9 @@ async function applyPaymentReversal(db, order, { reference, paymentData }) {
   await db.run(
     `INSERT INTO payments (order_id, provider, provider_reference, status, amount, currency, provider_payload, verified_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-     ON DUPLICATE KEY UPDATE order_id = VALUES(order_id), status = VALUES(status), amount = VALUES(amount), currency = VALUES(currency), provider_payload = VALUES(provider_payload), verified_at = VALUES(verified_at)`,
+     ON CONFLICT (provider_reference) DO UPDATE SET order_id = EXCLUDED.order_id, status = EXCLUDED.status,
+       amount = EXCLUDED.amount, currency = EXCLUDED.currency, provider_payload = EXCLUDED.provider_payload,
+       verified_at = EXCLUDED.verified_at`,
     [order.id, 'paystack', reference, 'reversed', amountGhs, paymentData?.currency || order.currency, JSON.stringify(paymentData || {})]
   );
   if (['paid', 'partially_refunded'].includes(String(order.status || ''))) {

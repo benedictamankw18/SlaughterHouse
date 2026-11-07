@@ -113,7 +113,7 @@ async function saveLicenseRights(db, licenseType, definition) {
   if (validation.error) return validation;
   await new Promise((resolve, reject) => db.run(
     `INSERT INTO license_rights (license_type, rights_json) VALUES (?, ?)
-     ON DUPLICATE KEY UPDATE rights_json = VALUES(rights_json)`,
+     ON CONFLICT (license_type) DO UPDATE SET rights_json = EXCLUDED.rights_json`,
     [type, JSON.stringify(validation.value)],
     error => error ? reject(error) : resolve()
   ));

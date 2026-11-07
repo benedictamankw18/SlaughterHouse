@@ -25,9 +25,13 @@ and 20 MB for custom requests. URL-encoded bodies are not accepted.
 
 ## Database backups
 
-Configure `MYSQL_URL`, or `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME`. Install `mysqldump` and `mysql` and set `MYSQLDUMP_PATH` / `MYSQL_PATH` if the clients are not on `PATH`. Passwords are passed to the child process through its environment, never as command-line arguments.
+Configure `DATABASE_URL` with a PostgreSQL connection string. Install `pg_dump`
+and `pg_restore`, and set `PGDUMP_PATH` / `PGRESTORE_PATH` if they are not on
+`PATH`. The backup tools pass the database password through `PGPASSWORD`, not
+as a command-line argument.
 
-Create a full logical backup and JSON manifest (table row counts, byte size, and SHA-256 checksum):
+Create a full custom-format PostgreSQL backup and JSON manifest (table row
+counts, byte size, and SHA-256 checksum):
 
 ```powershell
 cd backend
@@ -44,16 +48,19 @@ Schedule this command at least daily, and after major data changes. Keep at leas
 
 ## Restore and verification
 
-Restore only into a new, empty database. Create the target database through your normal DBA process first. The target must be explicitly confirmed, and the script refuses to restore into a database containing tables. It does not drop or overwrite existing data.
+Restore only into a new, empty PostgreSQL database. Create the target database
+through your normal DBA process first. The target must be explicitly confirmed,
+and the script refuses to restore into a database containing relations. It does
+not drop or overwrite existing data.
 
 ```powershell
-npm run restore -- "D:\Backups\ultbigboy\backup.sql" --database recovery_db --confirm-database recovery_db
+npm run restore -- "D:\Backups\ultbigboy\backup.dump" --database recovery_db --confirm-database recovery_db
 ```
 
 Create a separate empty scratch database first, then verify a backup by restoring it there and comparing every base table's row count with the backup manifest:
 
 ```powershell
-npm run verify:backup -- "D:\Backups\ultbigboy\backup.sql" --database backup_verify_scratch
+npm run verify:backup -- "D:\Backups\ultbigboy\backup.dump" --database backup_verify_scratch
 ```
 
 The scratch database must differ from the configured source database. Verification populates it and does not delete it; remove the scratch database through the normal DBA process after inspecting the result. Perform and record a restore test at least quarterly, including a check that the application can read the restored data.

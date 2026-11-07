@@ -10,7 +10,7 @@
     "test": "node --test \"test/*.test.js\"",
     "test:integration": "node --test test/routes.integration.test.js",
     "test:browser": "playwright test -c playwright.config.js",
-    "migrate:mysql": "node migrate-to-mysql.js",
+    "migrate:postgres": "node migrate-to-postgres.js",
     "backup": "node scripts/backup.js",
     "restore": "node scripts/restore.js",
     "verify:backup": "node scripts/verify-backup.js",
@@ -18,11 +18,13 @@
     "check:secrets": "node scripts/check-secrets.js"
   },
   "dependencies": {
+    "@neon/config": "^1.13.0",
+    "@neon/env": "^2.1.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "mysql2": "^3.14.1",
     "pdfkit": "^0.20.2",
+    "pg": "^8.23.1",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {

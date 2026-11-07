@@ -6,7 +6,7 @@ const monitoring = require('../services/monitoring');
 const { checkReadiness } = require('../services/health');
 const { requestContext } = require('../middleware/request-context');
 const { saveUpload } = require('../services/uploads');
-const { clientArgs, validateDatabaseName } = require('../scripts/mysql-tools');
+const { clientArgs, validateDatabaseName } = require('../scripts/postgres-tools');
 
 test('logger redacts sensitive fields recursively and credentials in messages', () => {
   const originalLog = console.log;
@@ -17,6 +17,7 @@ test('logger redacts sensitive fields recursively and credentials in messages', 
   try {
     logger.info('request Bearer abc.def', {
       password: 'private-password',
+      databaseUrl: 'postgresql://user:private-password@db.example.test/store',
       nested: { apiKey: 'private-key', label: 'safe' }
     });
   } finally {
@@ -25,6 +26,7 @@ test('logger redacts sensitive fields recursively and credentials in messages', 
   }
   assert.equal(output[0].message, 'request [REDACTED]');
   assert.equal(output[0].password, '[REDACTED]');
+  assert.equal(output[0].databaseUrl, '[REDACTED]');
   assert.deepEqual(output[0].nested, { apiKey: '[REDACTED]', label: 'safe' });
 });
 
@@ -40,8 +42,8 @@ test('monitoring counters increment and snapshots do not expose mutable state', 
 });
 
 test('database client arguments omit passwords and reject unsafe database names', () => {
-  const args = clientArgs({ host: 'localhost', port: 3306, user: 'app', password: 'not-an-argument', database: 'store' });
-  assert.deepEqual(args, ['--host', 'localhost', '--port', '3306', '--user', 'app', '--default-character-set=utf8mb4', 'store']);
+  const args = clientArgs({ host: 'localhost', port: 5432, user: 'app', password: 'not-an-argument', database: 'store' });
+  assert.deepEqual(args, ['--host', 'localhost', '--port', '5432', '--username', 'app', '--dbname', 'store', '--no-password']);
   assert.equal(args.includes('not-an-argument'), false);
   assert.throws(() => validateDatabaseName('store;DROP DATABASE store'), /unsupported characters/);
   assert.throws(() => validateDatabaseName('--defaults-file=backup.cnf'), /unsupported characters/);

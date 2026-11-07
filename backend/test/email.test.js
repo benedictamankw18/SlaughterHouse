@@ -119,7 +119,7 @@ test('outbox inserts use unique idempotency keys and validate rendered templates
     idempotencyKey: createEmailIdempotencyKey('verify', 'raw-token'),
     data: { verifyUrl: 'https://store.example/verify' }
   });
-  assert.match(calls[0].query, /ON DUPLICATE KEY UPDATE idempotency_key/);
+  assert.match(calls[0].query, /ON CONFLICT \(idempotency_key\) DO NOTHING/);
   assert.equal(calls[0].parameters[1], 'customer@example.com');
   assert.match(calls[0].parameters[0], /^verify:[a-f0-9]{64}$/);
   assert.doesNotMatch(calls[0].parameters[0], /raw-token/);

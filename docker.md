@@ -1,12 +1,12 @@
 # Docker setup
 
-This project uses Docker Compose to run the frontend, Node.js API, and MariaDB
+This project uses Docker Compose to run the frontend, Node.js API, and PostgreSQL
 database together.
 
 ## Requirements
 
 - Docker Desktop or Docker Engine with the Compose plugin.
-- Ports `3000`, `3308`, and `5500` available on localhost by default.
+- Ports `3000`, `5433`, and `5500` available on localhost by default.
 
 ## Configure and start
 
@@ -39,22 +39,23 @@ Open the frontend at <http://localhost:5500>. The API health check is at
 |---|---|---|
 | `frontend` | Static site served by Nginx | `http://localhost:5500` |
 | `backend` | Node.js API | `http://localhost:3000` |
-| `mysql` | MariaDB 11.4 database | `127.0.0.1:3308` |
+| `postgres` | PostgreSQL 17 database | `127.0.0.1:5433` |
 
-The API connects to MariaDB using the private Compose network (`mysql:3306`).
+The API connects to PostgreSQL using the private Compose network (`postgres:5432`).
 Database and API ports are bound to loopback by default and are not directly
-exposed on external interfaces. Change `MYSQL_PORT`, `API_PORT`, or
+exposed on external interfaces. Change `POSTGRES_PORT`, `API_PORT`, or
 `FRONTEND_PORT` in `.env` if the defaults conflict with another local service.
 
-Database migrations run automatically when the backend starts. Startup waits
-for MariaDB's health check before launching the backend, and the frontend waits for
+Database migrations run automatically before the backend starts listening.
+Startup waits for PostgreSQL's health check before launching the backend, and the frontend waits for
 the API health check.
 
 ## Configuration
 
 The `.env.docker.example` file lists supported variables:
 
-- `DB_USER`, `DB_PASSWORD`, `MYSQL_ROOT_PASSWORD`: local MariaDB credentials.
+- `DB_USER`, `DB_PASSWORD`: local PostgreSQL credentials. URL-encode any
+  reserved characters in `DB_PASSWORD` because Compose builds `DATABASE_URL`.
 - `DOWNLOAD_SIGNING_SECRET`, `CERTIFICATE_SIGNING_SECRET`: distinct persistent
   secrets needed for stable download links and certificate verification.
 - `FRONTEND_ORIGIN`, `FRONTEND_ORIGINS`: trusted browser origins for API CORS.
@@ -94,10 +95,10 @@ Inspect status and logs:
 ```powershell
 docker compose ps
 docker compose logs --tail=100 backend
-docker compose logs --tail=100 mysql
+docker compose logs --tail=100 postgres
 ```
 
-The named volumes `mysql-data` and `app-data` persist MariaDB contents, uploads,
+The named volumes `postgres-data` and `app-data` persist PostgreSQL contents, uploads,
 and generated certificates when containers are recreated. Back up these data
 separately before upgrades or other maintenance. To permanently delete all
 Compose-managed database and file data, run:

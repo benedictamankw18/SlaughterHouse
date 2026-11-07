@@ -26,10 +26,7 @@ const paystackSecretKey = configuredPaystackKey && configuredPaystackKey !== 'sk
   : null;
 const configuredDownloadSecret = String(process.env.DOWNLOAD_SIGNING_SECRET || '').trim();
 const configuredCertificateSecret = String(process.env.CERTIFICATE_SIGNING_SECRET || '').trim();
-const databaseConfigured = Boolean(
-  (process.env.MYSQL_URL && !process.env.MYSQL_URL.includes('user:password'))
-  || (process.env.DB_HOST && process.env.DB_USER && process.env.DB_NAME)
-);
+const databaseConfigured = Boolean(process.env.DATABASE_URL);
 const configuredTrustProxy = String(process.env.TRUST_PROXY || '').trim();
 const trustProxy = configuredTrustProxy === 'true'
   ? true

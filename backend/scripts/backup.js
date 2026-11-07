@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { pipeline } = require('node:stream/promises');
 const logger = require('../services/logger');
-const { clientArgs, getDatabaseConfig, getTableCounts, runClient } = require('./mysql-tools');
+const { clientArgs, getDatabaseConfig, getTableCounts, runClient } = require('./postgres-tools');
 
 async function hashFile(filePath) {
   const hash = crypto.createHash('sha256');
@@ -18,20 +18,17 @@ async function backup() {
   await fs.promises.mkdir(outputDirectory, { recursive: true });
 
   const timestamp = new Date().toISOString().replace(/[-:]/g, '');
-  const filePath = path.join(outputDirectory, `${config.database}-${timestamp}-${crypto.randomBytes(4).toString('hex')}.sql`);
+  const filePath = path.join(outputDirectory, `${config.database}-${timestamp}-${crypto.randomBytes(4).toString('hex')}.dump`);
   const manifestPath = `${filePath}.manifest.json`;
   const args = [
-    '--single-transaction',
-    '--quick',
-    '--hex-blob',
-    '--routines',
-    '--events',
-    '--triggers',
+    '--format=custom',
+    '--no-owner',
+    '--no-acl',
     ...connectionArgs
   ];
 
   try {
-    await runClient('mysqldump', args, config, { outputPath: filePath });
+    await runClient('pg_dump', args, config, { outputPath: filePath });
     const tableCounts = await getTableCounts(config);
     const manifest = {
       createdAt: new Date().toISOString(),

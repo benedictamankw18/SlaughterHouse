@@ -1,18 +1,17 @@
 services:
-  mysql:
-    image: mariadb:11.4
+  postgres:
+    image: postgres:17-alpine
     restart: unless-stopped
     environment:
-      MYSQL_DATABASE: ultbigboy
-      MYSQL_USER: ${DB_USER:?Set DB_USER in .env}
-      MYSQL_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
+      POSTGRES_DB: ultbigboy
+      POSTGRES_USER: ${DB_USER:?Set DB_USER in .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
     volumes:
-      - mysql-data:/var/lib/mysql
+      - postgres-data:/var/lib/postgresql/data
     ports:
-      - "127.0.0.1:${MYSQL_PORT:-3308}:3306"
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
     healthcheck:
-      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -26,11 +25,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
-      DB_HOST: mysql
-      DB_PORT: 3306
-      DB_USER: ${DB_USER:?Set DB_USER in .env}
-      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
-      DB_NAME: ultbigboy
+      DATABASE_URL: postgresql://${DB_USER:?Set DB_USER in .env}:${DB_PASSWORD:?Set DB_PASSWORD in .env}@postgres:5432/ultbigboy
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:5500}
       FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:-}
       API_PUBLIC_URL: ${API_PUBLIC_URL:-http://localhost:3000}
@@ -46,7 +41,7 @@ services:
     ports:
       - "127.0.0.1:${API_PORT:-3000}:3000"
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -67,5 +62,5 @@ services:
         condition: service_healthy
 
 volumes:
-  mysql-data:
+  postgres-data:
   app-data:
