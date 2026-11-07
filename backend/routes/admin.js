@@ -352,7 +352,7 @@ router.post('/admin/license-definitions', sessions.requirePermission('admin:mana
   const type = String(request.body.type || '').toLowerCase();
   if (!LICENSE_TYPES.has(type)) return response.status(400).json({ error: `License type must be one of: ${[...LICENSE_TYPES].join(', ')}.` });
   try {
-    await runQuery('UPDATE license_definition_status SET is_active = 1 WHERE license_type = ?', [type]);
+    await runQuery('UPDATE license_definition_status SET is_active = TRUE WHERE license_type = ?', [type]);
     recordAuditSafely(database, {
       userId: request.admin.id,
       action: 'license_definition_activated',
@@ -388,7 +388,7 @@ router.patch('/admin/license-definitions/:type/status', sessions.requirePermissi
   if (!LICENSE_TYPES.has(type)) return response.status(400).json({ error: 'Unknown license definition.' });
   if (typeof request.body.active !== 'boolean') return response.status(400).json({ error: 'License active status must be true or false.' });
   try {
-    await runQuery('UPDATE license_definition_status SET is_active = ? WHERE license_type = ?', [request.body.active ? 1 : 0, type]);
+    await runQuery('UPDATE license_definition_status SET is_active = ? WHERE license_type = ?', [request.body.active, type]);
     recordAuditSafely(database, {
       userId: request.admin.id,
       action: request.body.active ? 'license_definition_activated' : 'license_definition_deactivated',
@@ -408,7 +408,7 @@ router.delete('/admin/license-definitions/:type', sessions.requirePermission('ad
   try {
     await database.transaction(async tx => {
       await tx.run('DELETE FROM license_rights WHERE license_type = ?', [type]);
-      await tx.run('UPDATE license_definition_status SET is_active = 0 WHERE license_type = ?', [type]);
+      await tx.run('UPDATE license_definition_status SET is_active = FALSE WHERE license_type = ?', [type]);
     });
     recordAuditSafely(database, {
       userId: request.admin.id,

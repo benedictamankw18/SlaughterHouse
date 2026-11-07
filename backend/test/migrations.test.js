@@ -81,10 +81,20 @@ test('migration 22 tracks availability for the built-in license definitions', ()
   const migration = migrations.find(candidate => candidate.version === 22);
   assert.ok(migration, 'migration 22 must exist');
   assert.match(migration.statements[0], /CREATE TABLE IF NOT EXISTS license_definition_status/);
-  assert.match(migration.statements[0], /is_active TINYINT\(1\) NOT NULL DEFAULT 1/);
+  assert.match(migration.statements[0], /is_active BOOLEAN NOT NULL DEFAULT TRUE/);
   for (const licenseType of ['basic', 'premium', 'unlimited', 'exclusive']) {
-    assert.ok(migration.statements.some(statement => statement.includes(`'${licenseType}', 1`)));
+    assert.ok(migration.statements.some(statement => statement.includes(`('${licenseType}')`)));
   }
+});
+
+test('migration 28 converts existing license availability values to PostgreSQL booleans', () => {
+  const migration = migrations.find(candidate => candidate.version === 28);
+  assert.ok(migration, 'migration 28 must exist');
+  assert.deepEqual(migration.statements, [
+    'ALTER TABLE license_definition_status ALTER COLUMN is_active DROP DEFAULT',
+    "ALTER TABLE license_definition_status ALTER COLUMN is_active TYPE BOOLEAN USING (is_active::text IN ('1', 't', 'true'))",
+    'ALTER TABLE license_definition_status ALTER COLUMN is_active SET DEFAULT TRUE'
+  ]);
 });
 
 test('migration 23 stores certificates and immutable administrative history', () => {
