@@ -1034,10 +1034,25 @@ router.post('/admin/bookings/availability', sessions.requireAdmin, (request, res
   if (!isAvailableBookingSlot(date, time)) return response.status(400).json({ error: 'Choose a valid Tuesday, Wednesday, Thursday, or Sunday slot between 11:00 and 18:40.' });
   if (!['available', 'blocked'].includes(status)) return response.status(400).json({ error: 'Availability status must be available or blocked.' });
   database.run(
-    `INSERT INTO booking_availability (slot_date, start_time, end_time, status)
-     VALUES (?, ?, ?::time + INTERVAL '2 hours 20 minutes', ?)
-     ON CONFLICT (slot_date, start_time) DO UPDATE
-     SET status = CASE WHEN booking_availability.status = 'booked' THEN booking_availability.status ELSE EXCLUDED.status END`,
+     `INSERT INTO booking_availability (slot_date, start_time, end_time, status)
+      VALUES (?, ?, ?::time + INTERVAL '2 hours 20 minutes', ?)
+      ON CONFLICT (slot_date, start_time) DO UPDATE
+     SET status = CASE
+           WHEN booking_availability.status = 'booked'
+             OR (booking_availability.status = 'reserved' AND booking_availability.hold_expires_at > CURRENT_TIMESTAMP)
+           THEN booking_availability.status
+           ELSE EXCLUDED.status
+         END,
+         booking_order_reference = CASE
+           WHEN booking_availability.status = 'reserved' AND booking_availability.hold_expires_at > CURRENT_TIMESTAMP
+           THEN booking_availability.booking_order_reference
+           ELSE NULL
+         END,
+         hold_expires_at = CASE
+           WHEN booking_availability.status = 'reserved' AND booking_availability.hold_expires_at > CURRENT_TIMESTAMP
+           THEN booking_availability.hold_expires_at
+           ELSE NULL
+         END`,
     [date, time, time, status],
     function (error) {
       if (error) return response.status(500).json({ error: databaseError('Updating booking availability failed.', error) });
@@ -1045,6 +1060,7 @@ router.post('/admin/bookings/availability', sessions.requireAdmin, (request, res
         if (lookupError) return response.status(500).json({ error: databaseError('Reading booking availability failed.', lookupError) });
         if (!slot) return response.status(404).json({ error: 'The booking slot was not found.' });
         if (slot.status !== status && slot.status === 'booked') return response.status(409).json({ error: 'A paid booking already occupies this slot.' });
+        if (slot.status === 'reserved') return response.status(409).json({ error: 'A customer is currently completing payment for this slot. Try again after the reservation expires.' });
         recordAuditSafely(database, { userId: request.admin.id, action: 'booking_availability_changed', entityType: 'booking_slot', details: { date, time, status: slot.status }, ipAddress: request.ip });
         response.json({ date, time, status: slot.status });
       });
@@ -1056,12 +1072,18 @@ router.delete('/admin/bookings/availability', sessions.requireAdmin, (request, r
   const date = String(request.query.date || '').trim();
   const time = String(request.query.time || '').trim();
   if (!isAvailableBookingSlot(date, time)) return response.status(400).json({ error: 'Provide a valid booking date and time.' });
-  database.run('DELETE FROM booking_availability WHERE slot_date = ? AND start_time = ? AND status <> ?', [date, time, 'booked'], function (error) {
-    if (error) return response.status(500).json({ error: databaseError('Removing booking availability failed.', error) });
-    if (!this.changes) return response.status(404).json({ error: 'No unreserved booking slot was found.' });
-    recordAuditSafely(database, { userId: request.admin.id, action: 'booking_availability_removed', entityType: 'booking_slot', details: { date, time }, ipAddress: request.ip });
-    response.json({ date, time, removed: true });
-  });
+  database.run(
+    `DELETE FROM booking_availability
+     WHERE slot_date = ? AND start_time = ?
+       AND (status NOT IN (?, ?) OR (status = ? AND hold_expires_at <= CURRENT_TIMESTAMP))`,
+    [date, time, 'booked', 'reserved', 'reserved'],
+    function (error) {
+      if (error) return response.status(500).json({ error: databaseError('Removing booking availability failed.', error) });
+      if (!this.changes) return response.status(404).json({ error: 'No unreserved booking slot was found.' });
+      recordAuditSafely(database, { userId: request.admin.id, action: 'booking_availability_removed', entityType: 'booking_slot', details: { date, time }, ipAddress: request.ip });
+      response.json({ date, time, removed: true });
+    }
+  );
 });
 
 module.exports = router;

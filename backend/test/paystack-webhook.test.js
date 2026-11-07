@@ -179,6 +179,38 @@ test('Paystack success webhook reconciles the order and records a paid payment',
     /INSERT INTO payments/.test(query) && parameters.includes('paid')));
 }));
 
+test('Paystack booking success consumes the matching slot hold', () => withRouter(async loaded => {
+  loaded.order.items_json = JSON.stringify([{
+    type: 'booking',
+    name: 'Mixtape',
+    service: 'mixtape',
+    feeGhs: 125,
+    booking: {
+      name: 'Customer',
+      email: loaded.order.customer_email,
+      phone: '+233240000000',
+      artistCount: 1,
+      sessionSlots: [{ date: '2030-01-08', time: '11:00' }]
+    }
+  }]);
+
+  const result = await postWebhook(loaded.router, {
+    event: 'charge.success',
+    data: {
+      reference: loaded.order.reference,
+      status: 'success',
+      amount: 12500,
+      currency: 'GHS'
+    }
+  });
+
+  assert.equal(result.status, 200);
+  assert.ok(loaded.calls.some(({ query, parameters }) =>
+    /SET status = 'booked', booking_order_reference = NULL, hold_expires_at = NULL/.test(query)
+    && parameters.includes(loaded.order.reference)));
+  assert.equal(loaded.calls.some(({ query }) => /INSERT INTO booking_availability/.test(query)), false);
+}));
+
 test('Paystack failure webhook records failure without marking the order paid', () => withRouter(async loaded => {
   const result = await postWebhook(loaded.router, {
     event: 'charge.failed',

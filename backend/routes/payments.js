@@ -4,6 +4,7 @@ const database = require('../database');
 const config = require('../config');
 const { getPricing } = require('../services/pricing');
 const { normalizeBookingSlots } = require('../services/booking');
+const { confirmBookingSlots } = require('../services/booking-reservations');
 const { getDownloadItems } = require('../services/downloads');
 const { databaseError } = require('../services/error-messages');
 const validators = require('../services/input-validation');
@@ -207,15 +208,13 @@ async function hasConflictingExclusiveSale(db, items, orderReference) {
   return null;
 }
 
-async function reserveBookingSlots(db, order, bookingItem) {
+async function createPaidBooking(db, order, bookingItem) {
   const booking = bookingItem.booking;
   if (!booking) throw Object.assign(new Error('Booking details are missing from this order.'), { code: 'INVALID_BOOKING' });
   const serviceName = bookingServiceLabels[bookingItem.service] || bookingItem.service;
   const sessionSlots = normalizeBookingSlots(booking.sessionSlots || (booking.preferredDate && booking.preferredTime ? [{ date: booking.preferredDate, time: booking.preferredTime }] : []));
   const firstSlot = sessionSlots[0];
-  for (const slot of sessionSlots) {
-    await db.run("INSERT INTO booking_availability (slot_date, start_time, end_time, status) VALUES (?, ?, ?::time + INTERVAL '2 hours 20 minutes', ?)", [slot.date, slot.time, slot.time, 'booked']);
-  }
+  await confirmBookingSlots(db, order.reference, sessionSlots);
   const bookingResult = await db.run('INSERT INTO bookings (name, email, phone, service, artist_count, song_count, booking_slots_json, preferred_date, preferred_time, details, payment_reference, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [booking.name, booking.email, booking.phone, serviceName, booking.artistCount, booking.songCount || null, JSON.stringify(sessionSlots), firstSlot?.date || null, firstSlot?.time || null, booking.details, order.reference, 'paid']);
   for (const slot of sessionSlots) {
     await db.run('UPDATE booking_availability SET booking_id = ? WHERE slot_date = ? AND start_time = ?', [bookingResult.lastID, slot.date, slot.time]);
@@ -334,9 +333,9 @@ router.post('/payments/webhook', async (request, response) => {
       const bookingItem = items.find(item => item.type === 'booking');
       if (bookingItem) {
         try {
-          await reserveBookingSlots(tx, order, bookingItem);
+          await createPaidBooking(tx, order, bookingItem);
         } catch (error) {
-          if (error.code === 'ER_DUP_ENTRY') return { processed: true, orderId: order.id, conflict: { reason: 'booking_slot_unavailable', reference: eventReference } };
+          if (error.code === 'BOOKING_SLOT_UNAVAILABLE' || error.code === 'ER_DUP_ENTRY') return { processed: true, orderId: order.id, conflict: { reason: 'booking_slot_unavailable', reference: eventReference } };
           throw error;
         }
       }
@@ -505,13 +504,22 @@ router.get('/payments/verify/:reference', async (request, response) => {
       await lockExclusiveBeats(tx, items);
       const conflictingBeatId = await hasConflictingExclusiveSale(tx, items, order.reference);
       if (conflictingBeatId) return { httpStatus: 409, body: { error: `The exclusive license for beat ${conflictingBeatId} has already been sold. Payment cannot unlock this order.` } };
-      if (bookingItem) await reserveBookingSlots(tx, order, bookingItem);
+      if (bookingItem) await createPaidBooking(tx, order, bookingItem);
       await completePaidOrder(tx, order, items, payment.data);
       return success();
     });
     return response.status(outcome.httpStatus).json(outcome.body);
   } catch (error) {
     logger.error('payment_verification_failed', { code: error.code });
+    if (error.code === 'BOOKING_SLOT_UNAVAILABLE') {
+      await notifyAdminsSafely(database, {
+        type: 'payment_reconciliation',
+        title: 'Paid booking needs fulfillment review',
+        message: `Order ${request.params.reference} was paid but its booking slot is no longer available. Review the order and arrange fulfillment or refund.`,
+        dedupeKey: `payment-reconciliation:${request.params.reference}:booking-slot`
+      });
+      return response.status(409).json({ error: 'Payment was received, but the selected booking slot is no longer available. The team has been notified to resolve your booking.' });
+    }
     if (error.code === 'ER_DUP_ENTRY') return response.status(409).json({ error: 'This booking could not be completed because one or more selected slots were reserved by another customer.' });
     response.status(502).json({ error: error.code ? databaseError('Payment verification failed.', error) : `Payment verification failed: ${error.message}` });
   }

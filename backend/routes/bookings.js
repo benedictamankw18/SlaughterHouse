@@ -6,10 +6,12 @@ const { calculateBookingFee, areAvailableBookingSlots } = require('../services/b
 const { getPricing } = require('../services/pricing');
 const { databaseError } = require('../services/error-messages');
 const validators = require('../services/input-validation');
+const { HOLD_DURATION_MINUTES, reserveBookingSlots, releaseBookingHold, expireBookingHolds } = require('../services/booking-reservations');
 
 const router = express.Router();
 const { bookingServiceLabels, paystackSecretKey, paymentCallbackUrl } = config;
 const queryRows = (query, parameters = []) => new Promise((resolve, reject) => database.all(query, parameters, (error, rows) => error ? reject(error) : resolve(rows || [])));
+const run = (query, parameters = []) => new Promise((resolve, reject) => database.run(query, parameters, function (error) { error ? reject(error) : resolve(this); }));
 
 router.get('/bookings/fees', (request, response) => {
   getPricing(database).then(({ bookingFees: fees }) => {
@@ -22,6 +24,7 @@ router.get('/bookings/availability', async (request, response) => {
   const date = String(request.query.date || '').trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return response.status(400).json({ error: 'Provide a date in YYYY-MM-DD format to load booking availability.' });
   try {
+    await expireBookingHolds(database, date);
     const rows = await queryRows('SELECT start_time, end_time, status FROM booking_availability WHERE slot_date = ? ORDER BY start_time', [date]);
     response.json({ date, slots: rows.map(row => ({ time: String(row.start_time).slice(0, 5), endTime: String(row.end_time).slice(0, 5), available: row.status === 'available' })) });
   } catch (error) {
@@ -65,40 +68,42 @@ router.post('/bookings/initialize-payment', async (request, response) => {
   const feeGhs = calculateBookingFee(service, normalizedSongCount, fees);
   if (!Number.isFinite(feeGhs) || feeGhs <= 0) return response.status(400).json({ error: `No valid price is configured for the "${service}" booking service.` });
   if (!areAvailableBookingSlots(slots, expectedSlotCount)) return response.status(400).json({ error: 'Choose a valid, non-overlapping Tuesday, Wednesday, Thursday, or Sunday slot for each 2h20 session. Slots must end by 9:00 PM.' });
-  try {
-    const occupied = (await Promise.all([...new Set(slots.map(slot => slot.date))].map(date => queryRows(
-      'SELECT slot_date, start_time FROM booking_availability WHERE status <> ? AND slot_date = ?',
-      ['available', date]
-    )))).flat();
-    const occupiedKeys = new Set(occupied.map(slot => `${String(slot.slot_date).slice(0, 10)}|${String(slot.start_time).slice(0, 5)}`));
-    const requestedIsOccupied = slots.some(slot => occupiedKeys.has(`${slot.date}|${slot.time}`));
-    if (requestedIsOccupied) return response.status(409).json({ error: 'One or more selected booking slots are already reserved. Refresh availability and choose different slots.' });
-  } catch (error) {
-    return response.status(500).json({ error: databaseError('Checking booking availability failed.', error) });
-  }
   if (!paystackSecretKey) return response.status(503).json({ error: 'Booking payments are unavailable because PAYSTACK_SECRET_KEY is missing or still set to the example placeholder. Add a valid Paystack secret key to backend/.env and restart the server.' });
+  let reference;
+  let holdAcquired = false;
   try {
-    const reference = `UBB-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+    reference = `UBB-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     const bookingItem = {
       type: 'booking', name: `${bookingServiceLabels[service]}${needsSongCount ? ` (${normalizedSongCount} songs)` : ''}`, service,
       songCount: needsSongCount ? normalizedSongCount : null, feeGhs,
       booking: { name: String(name).trim(), email: normalizedEmail, phone: String(phone || '').trim(), artistCount: normalizedArtistCount, songCount: needsSongCount ? normalizedSongCount : null, timezone, durationMinutes: 140, sessionSlots: slots.map(slot => ({ date: slot.date, time: slot.time })), details: String(details || '').trim() }
     };
-    await new Promise((resolve, reject) => database.run('INSERT INTO orders (reference, customer_name, customer_email, amount, currency, items_json) VALUES (?, ?, ?, ?, ?, ?)', [reference, bookingItem.booking.name, normalizedEmail, feeGhs, 'GHS', JSON.stringify([bookingItem])], error => error ? reject(error) : resolve()));
+    await database.transaction(async transaction => {
+      await reserveBookingSlots(transaction, reference, slots);
+      await transaction.run('INSERT INTO orders (reference, customer_name, customer_email, amount, currency, items_json) VALUES (?, ?, ?, ?, ?, ?)', [reference, bookingItem.booking.name, normalizedEmail, feeGhs, 'GHS', JSON.stringify([bookingItem])]);
+    });
+    holdAcquired = true;
     const paystackResponse = await fetch('https://api.paystack.co/transaction/initialize', { method: 'POST', headers: { Authorization: `Bearer ${paystackSecretKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ email: normalizedEmail, amount: Math.round(feeGhs * 100), currency: 'GHS', reference, channels: [paymentMethod], callback_url: paymentCallbackUrl.toString() }) });
     const payment = await paystackResponse.json();
-    if (!paystackResponse.ok || !payment.status) throw new Error(payment.message || 'Paystack rejected the booking payment initialization request.');
-    await new Promise((resolve, reject) => database.run(
+    if (!paystackResponse.ok || !payment.status) {
+      await database.transaction(async transaction => {
+        await transaction.run('UPDATE orders SET status = ? WHERE reference = ? AND status = ?', ['failed', reference, 'pending']);
+        await releaseBookingHold(transaction, reference);
+      });
+      return response.status(502).json({ error: payment.message || 'Paystack rejected the booking payment initialization request.' });
+    }
+    await run(
       `INSERT INTO payments (order_id, provider, provider_reference, status, amount, currency, provider_payload)
        SELECT id, ?, ?, ?, ?, ?, ? FROM orders WHERE reference = ?
        ON CONFLICT (provider_reference) DO UPDATE SET order_id = EXCLUDED.order_id, status = EXCLUDED.status,
          amount = EXCLUDED.amount, currency = EXCLUDED.currency, provider_payload = EXCLUDED.provider_payload`,
-      ['paystack', payment.data.reference, 'pending', feeGhs, 'GHS', JSON.stringify(payment.data), reference],
-      error => error ? reject(error) : resolve()
-    ));
+      ['paystack', payment.data.reference, 'pending', feeGhs, 'GHS', JSON.stringify(payment.data), reference]
+    );
     response.json({ authorizationUrl: payment.data.authorization_url, reference, amount: feeGhs, currency: 'GHS' });
   } catch (error) {
-    response.status(400).json({ error: error.message || 'Booking payment initialization failed because the payment request could not be completed.' });
+    if (error.code === 'BOOKING_SLOT_UNAVAILABLE') return response.status(409).json({ error: error.message });
+    if (holdAcquired) return response.status(502).json({ error: `Payment initialization could not be confirmed. The selected slot will be released automatically after ${HOLD_DURATION_MINUTES} minutes.` });
+    response.status(500).json({ error: databaseError('Reserving booking slots failed.', error) });
   }
 });
 

@@ -1,4 +1,5 @@
 const { createNotificationSafely, notifyAdminsSafely } = require('./notifications');
+const { releaseBookingHold } = require('./booking-reservations');
 
 function paymentFailureStatus(eventType, paymentStatus) {
   const event = String(eventType || '').toLowerCase();
@@ -29,6 +30,7 @@ async function recordNonSuccessPayment(db, order, { reference, status, paymentDa
     'UPDATE orders SET status = ? WHERE id = ? AND status IN (?, ?, ?)',
     [status, order.id, 'pending', 'failed', 'abandoned']
   );
+  await releaseBookingHold(db, reference);
   const customer = await db.get("SELECT id FROM users WHERE lower(email) = lower(?) AND role NOT IN ('admin', 'super_admin')", [order.customer_email]);
   if (customer?.id) await createNotificationSafely(db, {
     userId: customer.id,

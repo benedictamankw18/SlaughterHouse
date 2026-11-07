@@ -604,6 +604,12 @@ test('all registered API route methods execute against an isolated PostgreSQL te
     }
 
     const bookingReferences = ['UBB-CONCURRENT-BOOKING-A', 'UBB-CONCURRENT-BOOKING-B'];
+    await promisePool.execute(
+      `INSERT INTO booking_availability (slot_date, start_time, end_time, status)
+       VALUES (?, ?, ?::time + INTERVAL '2 hours 20 minutes', 'available')
+       ON CONFLICT (slot_date, start_time) DO UPDATE SET status = 'available', booking_id = NULL`,
+      ['2030-01-08', '11:00', '11:00']
+    );
     const bookingItem = {
       type: 'booking',
       name: 'Mixtape',

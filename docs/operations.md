@@ -131,6 +131,14 @@ pruned opportunistically in batches by API requests. Monitor table growth and
 schedule a cleanup task if deployment traffic is too low to regularly trigger
 pruning.
 
+Booking checkout reserves every selected slot in the same PostgreSQL
+transaction that creates the pending order. Holds expire after 30 minutes;
+payment failure or abandonment releases them immediately, while expired holds
+are cleared lazily when availability is read or another checkout tries to
+claim the slot. A successful payment converts only its own hold into a booked
+slot. If a payment arrives after the hold has expired and another customer has
+claimed that slot, the paid order is surfaced for manual fulfillment or refund.
+
 Back up the bucket (or the local media directories when the local driver is
 used) separately from the PostgreSQL backups. The database stores only file
 names, so a database restore cannot recreate missing media.

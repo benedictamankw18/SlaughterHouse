@@ -609,6 +609,15 @@ const migrations = [
       )`,
       'CREATE INDEX IF NOT EXISTS idx_rate_limit_buckets_expiry ON rate_limit_buckets (expires_at)'
     ]
+  },
+  {
+    version: 30,
+    statements: [
+      { ensureColumn: { table: 'booking_availability', column: 'booking_order_reference', definition: 'VARCHAR(255) NULL' } },
+      { ensureColumn: { table: 'booking_availability', column: 'hold_expires_at', definition: 'TIMESTAMP NULL' } },
+      'CREATE INDEX IF NOT EXISTS idx_booking_availability_hold_expiry ON booking_availability (status, hold_expires_at)',
+      'CREATE INDEX IF NOT EXISTS idx_booking_availability_order_reference ON booking_availability (booking_order_reference)'
+    ]
   }
 ];
 
