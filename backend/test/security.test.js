@@ -1,12 +1,20 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { passwordPattern, hashPassword, hashLegacyPassword, passwordMatches } = require('../services/security');
+const { passwordPattern, validatePassword, hashPassword, hashLegacyPassword, passwordMatches } = require('../services/security');
 
-test('passwordPattern requires at least eight alphanumeric characters', () => {
-  assert.equal(passwordPattern.test('Passw0rd'), true);
+test('passwordPattern requires a strong passphrase without spaces', () => {
+  assert.equal(passwordPattern.test('Passw0rd!12345'), true);
+  assert.equal(passwordPattern.test('Long Passphrase'), false);
   assert.equal(passwordPattern.test('short1'), false);
-  assert.equal(passwordPattern.test('has space1'), false);
   assert.equal(passwordPattern.test('symbols!123'), false);
+  assert.equal(passwordPattern.test('Password123'), false);
+});
+
+test('validatePassword blocks weak and common passwords', () => {
+  assert.equal(validatePassword('StrongPassphrase!2024'), null);
+  assert.equal(validatePassword('short1'), 'Password must be between 12 and 128 characters long.');
+  assert.equal(validatePassword('has space1'), 'Password must be between 12 and 128 characters long.');
+  assert.equal(validatePassword('Password123456'), 'Please choose a stronger password.');
 });
 
 test('hashPassword produces a verifiable scrypt hash with a random salt', async () => {

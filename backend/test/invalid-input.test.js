@@ -130,7 +130,7 @@ test('duplicate signup returns a conflict for MySQL and PostgreSQL unique violat
       frontendOrigin: 'https://store.example.test',
       apiPublicUrl: 'https://api.example.test'
     },
-    '../services/security': { hashPassword: async () => 'password-hash', passwordMatches: async () => false },
+    '../services/security': { hashPassword: async () => 'password-hash', passwordMatches: async () => false, validatePassword: () => null },
     '../services/error-messages': { databaseError: () => 'database error' },
     '../services/account-tokens': { issueToken: async () => 'verification-token', consumeToken: async () => null },
     '../services/audit': { recordAuditSafely: async () => {} },
@@ -194,7 +194,7 @@ test('verified PostgreSQL users can sign in despite folded unquoted aliases', as
       frontendOrigin: 'https://store.example.test',
       apiPublicUrl: 'https://api.example.test'
     },
-    '../services/security': { hashPassword: async () => 'password-hash', passwordMatches: async () => true },
+    '../services/security': { hashPassword: async () => 'password-hash', passwordMatches: async () => true, validatePassword: () => null },
     '../services/error-messages': { databaseError: () => 'database error' },
     '../services/account-tokens': { issueToken: async () => 'verification-token', consumeToken: async () => null },
     '../services/audit': { recordAuditSafely: async () => {} },

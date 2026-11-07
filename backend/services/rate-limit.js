@@ -1,8 +1,8 @@
-const buckets = new Map();
+const buckets = globalThis.__slaughterhouseRateLimitBuckets || (globalThis.__slaughterhouseRateLimitBuckets = new Map());
 
 function rateLimit({ windowMs, max, message }) {
   return (request, response, next) => {
-    const key = `${request.ip}:${request.baseUrl}${request.path}`;
+    const key = `${request.ip || 'unknown'}:${request.baseUrl || ''}${request.path || ''}`;
     const now = Date.now();
     const current = buckets.get(key);
     if (!current || now - current.startedAt >= windowMs) {
@@ -29,4 +29,4 @@ setInterval(() => {
   }
 }, 15 * 60 * 1000).unref();
 
-module.exports = { rateLimit };
+module.exports = { rateLimit, buckets };

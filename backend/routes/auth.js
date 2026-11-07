@@ -2,7 +2,7 @@ const express = require('express');
 const database = require('../database');
 const sessions = require('../session-store');
 const config = require('../config');
-const { hashPassword, passwordMatches } = require('../services/security');
+const { hashPassword, passwordMatches, validatePassword } = require('../services/security');
 const { databaseError } = require('../services/error-messages');
 const validators = require('../services/input-validation');
 const { issueToken, consumeToken } = require('../services/account-tokens');
@@ -64,12 +64,11 @@ router.post('/auth/signup', authRateLimit, async (request, response) => {
   if (normalizedRole === 'non_artist') {
     addressTrimmed = String(address || '').trim();
   }
-  const passwordPattern = /^[A-Za-z0-9]{8,}$/;
   const validationError = validators.email(email)
     || validators.text(firstName, 'First name', { required: true, max: 100 })
     || validators.text(lastName, 'Last name', { required: true, max: 100 })
     || validators.phone(normalizedPhone)
-    || (!passwordPattern.test(password || '') ? 'Password must use letters and numbers only and be at least 8 characters.' : null)
+    || validatePassword(password)
     || (normalizedRole === 'artist' ? validators.text(artistName, 'Artist name', { required: true, max: 255 }) : validators.text(address, 'Address', { required: true, max: 2000 }));
   if (validationError) return response.status(400).json({ error: validationError });
 
@@ -287,9 +286,9 @@ router.post('/auth/request-password-reset', resetRateLimit, async (request, resp
 router.post('/auth/reset-password', resetRateLimit, async (request, response) => {
   const token = String(request.body.token || '');
   const password = String(request.body.password || '');
-  const passwordPattern = /^[A-Za-z0-9]{8,}$/;
+  const passwordError = validatePassword(password);
   if (!/^[a-f0-9]{64}$/i.test(token)) return response.status(400).json({ error: 'A valid password reset token is required.' });
-  if (!passwordPattern.test(password)) return response.status(400).json({ error: 'Password must use letters and numbers only and be at least 8 characters.' });
+  if (passwordError) return response.status(400).json({ error: passwordError });
   try {
     const accountToken = await consumeToken(database, token, 'password_reset');
     if (!accountToken) return response.status(400).json({ error: 'This password reset token is invalid, expired, or already used.' });

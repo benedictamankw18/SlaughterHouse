@@ -1,10 +1,24 @@
 const crypto = require('node:crypto');
 
-const passwordPattern = /^[A-Za-z0-9]{8,}$/;
+const passwordPattern = /^(?=.{12,128}$)(?!\s)(?!.*\s$)\S+$/;
+const commonlyCompromisedPasswords = new Set([
+  'password', 'password123', 'password123456', 'passw0rd', 'welcome', 'letmein', 'admin', 'secret',
+  'qwerty123', 'iloveyou', 'monkey', 'dragon', 'football', 'sunshine', 'princess'
+]);
 const SCRYPT_COST = 32768;
 const SCRYPT_BLOCK_SIZE = 8;
 const SCRYPT_PARALLELIZATION = 1;
 const SCRYPT_KEY_LENGTH = 64;
+
+function validatePassword(password) {
+  if (typeof password !== 'string' || !password.length) return 'Password is required.';
+  if (password.length < 12 || password.length > 128) return 'Password must be between 12 and 128 characters long.';
+  if (/\s/.test(password)) return 'Password cannot contain spaces.';
+  if (!passwordPattern.test(password)) return 'Password must contain at least 12 characters without spaces.';
+  const normalized = password.trim().toLowerCase();
+  if (commonlyCompromisedPasswords.has(normalized)) return 'Please choose a stronger password.';
+  return null;
+}
 
 function hashLegacyPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const passwordHash = crypto.scryptSync(password, salt, 64).toString('hex');
@@ -48,4 +62,4 @@ async function passwordMatches(password, storedHash) {
   return storedBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(storedBuffer, expectedBuffer);
 }
 
-module.exports = { passwordPattern, hashPassword, hashLegacyPassword, passwordMatches };
+module.exports = { passwordPattern, validatePassword, hashPassword, hashLegacyPassword, passwordMatches };

@@ -201,10 +201,10 @@ if (loginButton) {
         <h3>Choose a new password</h3>
         <input name="token" type="hidden">
         <label for="reset-new-password">New password</label>
-        <div class="auth-password-field"><input id="reset-new-password" name="password" type="password" minlength="8" pattern="[A-Za-z0-9]{8,}" autocomplete="new-password" required><button class="auth-password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
+        <div class="auth-password-field"><input id="reset-new-password" name="password" type="password" minlength="12" maxlength="128" pattern="\S{12,128}" autocomplete="new-password" required><button class="auth-password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
         <label for="reset-confirm-password">Confirm new password</label>
-        <div class="auth-password-field"><input id="reset-confirm-password" name="confirmPassword" type="password" minlength="8" pattern="[A-Za-z0-9]{8,}" autocomplete="new-password" required><button class="auth-password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
-        <p class="auth-password-hint">At least 8 characters, letters and numbers only.</p>
+        <div class="auth-password-field"><input id="reset-confirm-password" name="confirmPassword" type="password" minlength="12" maxlength="128" pattern="\S{12,128}" autocomplete="new-password" required><button class="auth-password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
+        <p class="auth-password-hint">Use at least 12 characters. Avoid spaces and common passwords.</p>
         <button class="auth-primary-button" type="submit">Update password</button>
         <p class="auth-message" id="reset-password-message" role="status" aria-live="polite"></p>
       </form>
@@ -265,12 +265,12 @@ if (loginButton) {
         <div class="phone-field"><select id="signup-country-code" aria-label="Country code" style="width: 100px; background: #22c55e38; border: 1px solid #ccc; padding: 5px;"><option value="+233">GH +233</option><option value="+1">US +1</option><option value="+44">UK +44</option><option value="+234">NG +234</option></select><input id="signup-phone" name="phone" type="tel" autocomplete="tel" placeholder="24 000 0000" required></div>
         <div id="address-field" hidden><label for="signup-address">Address</label><textarea id="signup-address" name="address" rows="2" autocomplete="street-address"></textarea></div>
         <label for="signup-password">Password</label>
-        <div class="auth-password-field"><input id="signup-password" name="password" type="password" minlength="8" pattern="[A-Za-z0-9]{8,}" autocomplete="new-password" required><button class="auth-password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
+        <div class="auth-password-field"><input id="signup-password" name="password" type="password" minlength="12" maxlength="128" pattern="\S{12,128}" autocomplete="new-password" required><button class="auth-password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
         <div class="auth-password-strength" aria-live="polite"><span class="auth-password-strength-track"><i></i></span><span class="auth-password-strength-label">Password strength</span></div>
-        <p class="auth-password-hint">At least 8 characters, letters and numbers only.</p>
+        <p class="auth-password-hint">Use at least 12 characters without spaces.</p>
         <label for="signup-confirm-password">Confirm password</label>
-        <div class="auth-password-field"><input id="signup-confirm-password" name="confirmPassword" type="password" minlength="8" pattern="[A-Za-z0-9]{8,}" autocomplete="new-password" required><button class="auth-password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
-        <p class="auth-password-hint">At least 8 characters, letters and numbers only.</p>
+        <div class="auth-password-field"><input id="signup-confirm-password" name="confirmPassword" type="password" minlength="12" maxlength="128" pattern="\S{12,128}" autocomplete="new-password" required><button class="auth-password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
+        <p class="auth-password-hint">Use at least 12 characters without spaces.</p>
         <button class="auth-primary-button" type="submit">Create account</button>
         <button class="auth-link-button" data-auth-switch="login" type="button">Already have an account? Log in</button>
         <p class="auth-message" id="signup-message" role="status" aria-live="polite"></p>

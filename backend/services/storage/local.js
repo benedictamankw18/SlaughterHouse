@@ -4,10 +4,10 @@ const { apiPublicUploadUrl } = require('./public-url');
 
 const STORAGE_AREAS = Object.freeze(['uploads', 'certificates']);
 
-function createLocalStorage({ uploadDirectory, certificateDirectory, apiPublicUrl }) {
+function createLocalStorage({ uploadDirectory, certificateDirectory, apiPublicUrl } = {}) {
   const directories = {
-    uploads: path.resolve(uploadDirectory),
-    certificates: path.resolve(certificateDirectory)
+    uploads: path.resolve(uploadDirectory || path.join(process.cwd(), 'data', 'uploads')),
+    certificates: path.resolve(certificateDirectory || path.join(process.cwd(), 'data', 'certificates'))
   };
 
   function resolvePath(key, area = 'uploads') {

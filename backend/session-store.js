@@ -7,7 +7,7 @@ const logger = require('./services/logger');
 const adminLoginAttempts = new Map();
 const customerLoginAttempts = new Map();
 
-function getAuthToken(request) {
+function getAuthToken(request, preferredRole = null) {
   const authorization = request.get('Authorization');
   const bearer = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
   if (bearer) return { token: bearer, source: 'bearer' };
@@ -21,12 +21,20 @@ function getAuthToken(request) {
       continue;
     }
   }
-  const cookieToken = cookies[config.sessionCookieNames.customer] || cookies[config.sessionCookieNames.admin];
+  const cookieOrder = [];
+  if (preferredRole === 'admin') {
+    cookieOrder.push(config.sessionCookieNames.admin, config.sessionCookieNames.customer);
+  } else if (preferredRole === 'customer') {
+    cookieOrder.push(config.sessionCookieNames.customer, config.sessionCookieNames.admin);
+  } else {
+    cookieOrder.push(config.sessionCookieNames.customer, config.sessionCookieNames.admin);
+  }
+  const cookieToken = cookieOrder.map(name => cookies[name]).find(Boolean);
   return cookieToken ? { token: cookieToken, source: 'cookie' } : { token: null, source: null };
 }
 
-function getBearerToken(request) {
-  const auth = getAuthToken(request);
+function getBearerToken(request, preferredRole = null) {
+  const auth = getAuthToken(request, preferredRole);
   request.authSource = auth.source;
   return auth.token;
 }
@@ -73,7 +81,7 @@ function identifySession(request, response, { optional = false, requiredRole = n
   const loginMessage = requiredRole === 'admin' || requiredRole === 'super_admin'
     ? 'Admin login required.'
     : 'Customer login required.';
-  const token = getBearerToken(request);
+  const token = getBearerToken(request, requiredRole);
   if (!token) {
     request.role = 'visitor';
     if (optional) return next();
