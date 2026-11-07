@@ -291,7 +291,9 @@ router.get('/admin/staff', sessions.requirePermission('admin:manage_roles'), asy
   try {
     const staff = await queryRows(
       `SELECT id, name, email, role, created_at
-       FROM users ORDER BY FIELD(role, 'super_admin', 'admin'), name LIMIT 1000`
+       FROM users
+       ORDER BY CASE role WHEN 'super_admin' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, name
+       LIMIT 1000`
     );
     response.json({ staff });
   } catch (error) {

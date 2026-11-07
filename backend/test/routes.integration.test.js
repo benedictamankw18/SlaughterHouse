@@ -391,6 +391,13 @@ test('all registered API route methods execute against an isolated PostgreSQL te
 
     assert.deepEqual(failures, [], `${routes.length} route methods were exercised; failures:\n${failures.join('\n')}`);
 
+    const staffResponse = await fetch(`${baseUrl}/api/admin/staff`, {
+      headers: { Authorization: `Bearer ${sessions.super_admin}`, Connection: 'close' }
+    });
+    assert.equal(staffResponse.status, 200, 'Staff accounts can be listed by a super-admin.');
+    const { staff } = await staffResponse.json();
+    assert.equal(staff[0]?.role, 'super_admin', 'Super-admin accounts appear first in the staff list.');
+
     const [{ id: customerId }] = await promisePool.execute(
       'SELECT id FROM users WHERE email = ?',
       ['integration-customer@example.test']
