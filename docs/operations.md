@@ -15,6 +15,9 @@ frontends. Production rejects opaque `Origin: null` requests. Configure
 `TRUST_PROXY` only when the API is behind a known reverse proxy; use the
 smallest correct hop count or explicit trusted proxy addresses, not `true`
 unless every client reaches the app exclusively through the trusted proxy.
+On Vercel, the API trusts the platform proxy by default. `TRUST_PROXY=false`
+overrides that behavior; otherwise set an explicit value only when deployment
+topology requires it.
 
 Cookie-authenticated unsafe requests require the server-verified
 `X-CSRF-Token` returned by login. Existing sessions without a token hash must
@@ -84,13 +87,22 @@ Set `STORAGE_DRIVER` to choose the media backend.
   use `/api/uploads/:filename` on the API, which streams the object from the
   bucket instead of the local disk.
 
-Ephemeral hosting platforms (for example, a container without a mounted disk)
-delete the local filesystem on every deploy, restart, and idle shutdown. The API
-logs `storage_provider_warning` at startup when `NODE_ENV=production` uses the
-local driver without `ALLOW_EPHEMERAL_STORAGE=true`. Media that is already lost
-cannot be recreated from the database: re-upload it through the admin screens
-and run `npm run storage:audit` to list database references whose files are
-missing from the configured provider.
+Production startup requires `STORAGE_DRIVER=s3`, unless
+`ALLOW_EPHEMERAL_STORAGE=true` explicitly opts into disposable local storage.
+Do not use that override for a production store. Ephemeral hosting platforms
+delete local files on deploy, restart, and idle shutdown. Media that is already
+lost cannot be recreated from the database: re-upload it through the admin
+screens and run `npm run storage:audit` to list database references whose
+files are missing from the configured provider.
+
+To migrate files before changing the deployment's `STORAGE_DRIVER`, make the
+local `data\uploads` and `data\certificates` directories available to a backend
+process configured with the destination S3 credentials, then run
+`npm run storage:migrate` from `backend\`. The command copies files without
+overwriting objects and verifies matching objects by SHA-256, so it can safely
+resume after interruption. Do not run multiple copies concurrently. Pause media
+uploads during the final copy, then run `npm run storage:audit` against the S3
+configuration before routing production traffic to the new provider.
 
 `GET /api/uploads/:filename` exposes only `cover-`, `merchandise-`, and
 `preview-` files, supports byte ranges for audio seeking, and caches public
@@ -98,6 +110,26 @@ media immutably. Master audio remains behind the authenticated, signed customer
 download route, and request sample audio remains admin-authenticated. Generated
 certificates stay private and are streamed only through the authenticated
 certificate routes.
+
+## Serverless deployment and background work
+
+Vercel serves the static frontend from `frontend\` and routes `/api/*` to the
+Express handlers in `api\`. The app module does not listen on a port when
+imported as a serverless function. Configure `DATABASE_URL` as a pooled
+PostgreSQL connection string, production signing secrets, `STORAGE_DRIVER=s3`,
+and the bucket credentials in project environment settings. The frontend uses
+same-origin `/api` requests by default.
+
+Vercel functions do not run the email outbox poller. Run
+`npm run email:worker --prefix backend` in a persistent worker service. The
+worker and web functions may share the same database; outbox claims use row
+locks and a lease. PostgreSQL migrations take an advisory lock so concurrent
+function cold starts cannot apply the same migration simultaneously.
+
+The rate-limit table is also shared through PostgreSQL. Expired buckets are
+pruned opportunistically in batches by API requests. Monitor table growth and
+schedule a cleanup task if deployment traffic is too low to regularly trigger
+pruning.
 
 Back up the bucket (or the local media directories when the local driver is
 used) separately from the PostgreSQL backups. The database stores only file

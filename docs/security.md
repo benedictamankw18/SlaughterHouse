@@ -24,6 +24,9 @@ commands are in [`../backend/README.md`](../backend/README.md).
   are set by the server bootstrap.
 - Configure `TRUST_PROXY` only for the known proxy path. Do not set it to
   `true` unless every request is guaranteed to pass through the trusted proxy.
+- Rate-limit counters are stored in PostgreSQL so independent serverless
+  instances share enforcement. The API fails closed with `503` if the shared
+  counter store is unavailable.
 
 ## Authentication and authorization
 
@@ -41,16 +44,15 @@ production or development databases for integration tests.
 
 ## File access
 
-Uploads and certificates are stored outside the frontend web root. The public
+Uploads and certificates are stored outside the frontend web root. Production
+requires the S3-compatible storage driver; configure a private bucket for paid
+master audio, stems, samples, and certificates. The public
 uploads endpoint serves only uniquely named `cover-`, `merchandise-`, and
 `preview-` assets. Master audio and stems are served only through
 customer-authenticated, signed download flows. Request sample audio requires
 administrator authentication. Do not expose the backend data directories
-through a reverse proxy or static-file server.
-
-The current provider is local filesystem storage. A private object-storage
-provider has not been configured; secure the host filesystem and backups
-accordingly.
+through a reverse proxy or static-file server. Local storage is restricted to
+development or explicitly disposable deployments.
 
 ## Secrets and logging
 
@@ -91,9 +93,9 @@ mobile, tablet, laptop, and desktop viewport widths.
 
 ## Remaining deployment decisions
 
-- Configure private object storage before moving user data to a deployment
-  where local disk is ephemeral or shared across multiple instances.
-- Use a shared rate-limit store or trusted gateway when running multiple API
-  instances; the in-process limiter does not coordinate across replicas.
+- Configure the email outbox worker as a persistent process outside Vercel
+  Functions; function invocations do not run background polling.
+- Confirm large uploads fit the hosting provider's request-body limit or add
+  direct-to-object-storage uploads before accepting larger files.
 - Configure regular encrypted backups and perform documented scratch-database
   restore tests before relying on backups for recovery.

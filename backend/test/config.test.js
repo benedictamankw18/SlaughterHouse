@@ -8,7 +8,8 @@ const validSecrets = {
   NODE_ENV: 'production',
   DOWNLOAD_SIGNING_SECRET: 'd'.repeat(32),
   CERTIFICATE_SIGNING_SECRET: 'c'.repeat(32),
-  PAYSTACK_SECRET_KEY: ''
+  PAYSTACK_SECRET_KEY: '',
+  ALLOW_EPHEMERAL_STORAGE: 'true'
 };
 
 function runConfig(overrides = {}) {
@@ -48,6 +49,38 @@ test('production rejects short or reused signing secrets', () => {
 test('production measures secret minimums in UTF-8 bytes', () => {
   const result = runConfig({ DOWNLOAD_SIGNING_SECRET: 'é'.repeat(16) });
   assert.equal(result.status, 0, result.stderr);
+});
+
+test('production requires durable storage unless ephemeral media is explicitly allowed', () => {
+  const result = runConfig({ ALLOW_EPHEMERAL_STORAGE: '' });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /STORAGE_DRIVER=s3/);
+});
+
+test('Vercel derives same-origin API and frontend URLs and trusts its proxy', () => {
+  const result = spawnSync(process.execPath, ['-e', "const config = require('./config'); process.stdout.write(JSON.stringify({ apiPublicUrl: config.apiPublicUrl, frontendOrigin: config.frontendOrigin, trustProxy: config.trustProxy }))"], {
+    cwd: backendDirectory,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      ...validSecrets,
+      VERCEL: '1',
+      VERCEL_URL: 'store.example.test',
+      API_PUBLIC_URL: '',
+      STORAGE_DRIVER: 's3',
+      S3_BUCKET: 'media-bucket',
+      S3_REGION: 'auto',
+      S3_ACCESS_KEY_ID: 'test-key',
+      S3_SECRET_ACCESS_KEY: 'test-secret',
+      FRONTEND_ORIGIN: ''
+    }
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), {
+    apiPublicUrl: 'https://store.example.test',
+    frontendOrigin: 'https://store.example.test',
+    trustProxy: true
+  });
 });
 
 test('database readiness configuration recognizes DATABASE_URL', () => {

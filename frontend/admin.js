@@ -1,6 +1,4 @@
-const configuredApiUrl = window.ULTBIGBOY_API_URL || new URLSearchParams(location.search).get('apiBaseUrl');
-const isLocalApiHost = location.protocol === 'file:' || ['localhost', '127.0.0.1'].includes(location.hostname);
-const API = configuredApiUrl || (isLocalApiHost ? 'http://localhost:3000' : 'https://slaughterhouse.onrender.com');
+const API = window.ULTBIGBOY_API_URL || '';
 let adminToken = sessionStorage.getItem('adminToken');
 let dashboardData = { sales: [], requests: [], orders: [], reviews: [], artists: [], withdrawals: [], analytics: {} };
 let staffRecords = [];

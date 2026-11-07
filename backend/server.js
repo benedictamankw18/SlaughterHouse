@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const config = require('./config');
 const database = require('./database');
-const { startEmailOutbox } = require('./services/email/outbox');
 const { isAllowedOrigin } = require('./services/cors-origin');
 const logger = require('./services/logger');
 const { requestContext } = require('./middleware/request-context');
@@ -54,23 +53,24 @@ app.use((error, request, response, next) => {
   sendError(response, 500, 'An unexpected server error occurred.', { code: 'INTERNAL_ERROR' });
 });
 
-database.ready().then(() => {
+async function startServer() {
+  await database.ready();
   const server = app.listen(config.port, () => {
-    startEmailOutbox(database, { apiKey: config.emailApiKey, from: config.emailFrom });
     logger.info('api_started', { port: config.port });
-    if (config.storageDriver === 'local' && config.isProduction && !config.allowEphemeralStorage) {
-      logger.warn('storage_provider_warning', {
-        driver: 'local',
-        message: 'Media is stored on the local filesystem and will be lost on redeploy. Set STORAGE_DRIVER=s3 for durable storage.'
-      });
-    }
   });
   server.requestTimeout = 120000;
   server.headersTimeout = 15000;
-}).catch(error => {
-  logger.error('api_startup_failed', { code: error?.code });
-  database.close().catch(closeError => {
-    logger.error('database_shutdown_failed', { code: closeError?.code });
+  return server;
+}
+
+if (require.main === module) {
+  startServer().catch(error => {
+    logger.error('api_startup_failed', { code: error?.code });
+    database.close().catch(closeError => {
+      logger.error('database_shutdown_failed', { code: closeError?.code });
+    });
+    process.exitCode = 1;
   });
-  process.exitCode = 1;
-});
+}
+
+module.exports = { app, startServer };

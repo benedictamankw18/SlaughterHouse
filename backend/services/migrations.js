@@ -597,6 +597,18 @@ const migrations = [
       "ALTER TABLE license_definition_status ALTER COLUMN is_active TYPE BOOLEAN USING (is_active::text IN ('1', 't', 'true'))",
       'ALTER TABLE license_definition_status ALTER COLUMN is_active SET DEFAULT TRUE'
     ]
+  },
+  {
+    version: 29,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS rate_limit_buckets (
+        bucket_key CHAR(64) PRIMARY KEY,
+        window_started_at TIMESTAMP NOT NULL,
+        request_count INTEGER NOT NULL,
+        expires_at TIMESTAMP NOT NULL
+      )`,
+      'CREATE INDEX IF NOT EXISTS idx_rate_limit_buckets_expiry ON rate_limit_buckets (expires_at)'
+    ]
   }
 ];
 
@@ -675,7 +687,10 @@ async function runQuery(pool, query, parameters = []) {
 
 async function applyMigrations(pool) {
   const connection = typeof pool.connect === 'function' ? await pool.connect() : pool;
+  let migrationLockAcquired = false;
   try {
+    await connection.query('SELECT pg_advisory_lock(90210, 29)');
+    migrationLockAcquired = true;
     await connection.query(`CREATE OR REPLACE FUNCTION set_updated_at() RETURNS trigger AS $$
       BEGIN
         NEW.updated_at = CURRENT_TIMESTAMP;
@@ -716,7 +731,16 @@ async function applyMigrations(pool) {
       }
     }
   } finally {
-    connection.release?.();
+    let released = false;
+    try {
+      if (migrationLockAcquired) await connection.query('SELECT pg_advisory_unlock(90210, 29)');
+    } catch (error) {
+      connection.release?.(error);
+      released = true;
+      throw error;
+    } finally {
+      if (!released) connection.release?.();
+    }
   }
 }
 

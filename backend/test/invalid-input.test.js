@@ -311,7 +311,8 @@ test('invalid certificate license IDs are rejected before database access', asyn
         next();
       },
       requireAdmin: (request, response, next) => next()
-    }
+    },
+    '../services/rate-limit': { rateLimit: () => (request, response, next) => next() }
   });
 
   try {

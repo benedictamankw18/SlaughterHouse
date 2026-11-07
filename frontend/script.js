@@ -1,12 +1,4 @@
-const configuredApiUrl = new URLSearchParams(location.search).get('apiBaseUrl');
-const isLocalApiHost = ['localhost', '127.0.0.1'].includes(location.hostname);
-const defaultApiUrl = location.protocol === 'file:'
-  ? 'http://localhost:3000'
-  : isLocalApiHost
-    ? `${location.protocol}//${location.hostname}:3000`
-    : 'https://slaughterhouse.onrender.com';
-window.ULTBIGBOY_API_URL = window.ULTBIGBOY_API_URL || configuredApiUrl || defaultApiUrl;
-const API = window.ULTBIGBOY_API_URL;
+const API = window.ULTBIGBOY_API_URL || '';
 window.ultbigboyCsrfHeaders = method => {
   if (['GET', 'HEAD', 'OPTIONS'].includes(String(method || 'GET').toUpperCase())) return {};
   const token = sessionStorage.getItem('customerCsrfToken') || sessionStorage.getItem('adminCsrfToken') || '';
@@ -201,9 +193,9 @@ if (loginButton) {
         <h3>Choose a new password</h3>
         <input name="token" type="hidden">
         <label for="reset-new-password">New password</label>
-        <div class="auth-password-field"><input id="reset-new-password" name="password" type="password" minlength="12" maxlength="128" pattern="\S{12,128}" autocomplete="new-password" required><button class="auth-password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
+        <div class="auth-password-field"><input id="reset-new-password" name="password" type="password" minlength="12" maxlength="128" pattern="\\S{12,128}" autocomplete="new-password" required><button class="auth-password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
         <label for="reset-confirm-password">Confirm new password</label>
-        <div class="auth-password-field"><input id="reset-confirm-password" name="confirmPassword" type="password" minlength="12" maxlength="128" pattern="\S{12,128}" autocomplete="new-password" required><button class="auth-password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
+        <div class="auth-password-field"><input id="reset-confirm-password" name="confirmPassword" type="password" minlength="12" maxlength="128" pattern="\\S{12,128}" autocomplete="new-password" required><button class="auth-password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
         <p class="auth-password-hint">Use at least 12 characters. Avoid spaces and common passwords.</p>
         <button class="auth-primary-button" type="submit">Update password</button>
         <p class="auth-message" id="reset-password-message" role="status" aria-live="polite"></p>
@@ -265,11 +257,11 @@ if (loginButton) {
         <div class="phone-field"><select id="signup-country-code" aria-label="Country code" style="width: 100px; background: #22c55e38; border: 1px solid #ccc; padding: 5px;"><option value="+233">GH +233</option><option value="+1">US +1</option><option value="+44">UK +44</option><option value="+234">NG +234</option></select><input id="signup-phone" name="phone" type="tel" autocomplete="tel" placeholder="24 000 0000" required></div>
         <div id="address-field" hidden><label for="signup-address">Address</label><textarea id="signup-address" name="address" rows="2" autocomplete="street-address"></textarea></div>
         <label for="signup-password">Password</label>
-        <div class="auth-password-field"><input id="signup-password" name="password" type="password" minlength="12" maxlength="128" pattern="\S{12,128}" autocomplete="new-password" required><button class="auth-password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
+        <div class="auth-password-field"><input id="signup-password" name="password" type="password" minlength="12" maxlength="128" pattern="\\S{12,128}" autocomplete="new-password" required><button class="auth-password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
         <div class="auth-password-strength" aria-live="polite"><span class="auth-password-strength-track"><i></i></span><span class="auth-password-strength-label">Password strength</span></div>
         <p class="auth-password-hint">Use at least 12 characters without spaces.</p>
         <label for="signup-confirm-password">Confirm password</label>
-        <div class="auth-password-field"><input id="signup-confirm-password" name="confirmPassword" type="password" minlength="12" maxlength="128" pattern="\S{12,128}" autocomplete="new-password" required><button class="auth-password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
+        <div class="auth-password-field"><input id="signup-confirm-password" name="confirmPassword" type="password" minlength="12" maxlength="128" pattern="\\S{12,128}" autocomplete="new-password" required><button class="auth-password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button></div>
         <p class="auth-password-hint">Use at least 12 characters without spaces.</p>
         <button class="auth-primary-button" type="submit">Create account</button>
         <button class="auth-link-button" data-auth-switch="login" type="button">Already have an account? Log in</button>

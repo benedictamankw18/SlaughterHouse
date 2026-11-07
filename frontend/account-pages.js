@@ -26,8 +26,7 @@ const accountPageRoot = document.getElementById('account-page');
 if (accountPageRoot) {
   const pageType = accountPageRoot.dataset.accountPage;
   const page = accountPageDefinitions[pageType];
-  const isLocalApiHost = location.protocol === 'file:' || ['localhost', '127.0.0.1'].includes(location.hostname);
-  const apiBase = window.ULTBIGBOY_API_URL || (isLocalApiHost ? 'http://localhost:3000' : 'https://slaughterhouse.onrender.com');
+  const apiBase = window.ULTBIGBOY_API_URL || '';
   const escapeAccountHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
   const money = value => `GHS ${Number(value || 0).toFixed(2)}`;
 

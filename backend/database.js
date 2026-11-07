@@ -12,12 +12,16 @@ if (!databaseUrl) throw new Error('Configure DATABASE_URL with a PostgreSQL conn
 if (!/^postgres(?:ql)?:\/\//i.test(databaseUrl)) {
   throw new Error('DATABASE_URL must use the postgres:// or postgresql:// protocol.');
 }
+const poolMax = Number(process.env.DB_POOL_MAX || (process.env.VERCEL === '1' ? 3 : 10));
+if (!Number.isInteger(poolMax) || poolMax < 1 || poolMax > 50) {
+  throw new Error('DB_POOL_MAX must be an integer between 1 and 50.');
+}
 
 const pool = new Pool({
   connectionString: databaseUrl,
   connectionTimeoutMillis: 10000,
   idleTimeoutMillis: 30000,
-  max: 10
+  max: poolMax
 });
 
 function reportDatabaseError(error) {

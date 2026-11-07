@@ -130,7 +130,7 @@ async function processEmailOutbox(database, { send = sendEmail, batchSize = MAX_
   return processed;
 }
 
-function startEmailOutbox(database, { apiKey = process.env.EMAIL_API_KEY, from = process.env.EMAIL_FROM } = {}) {
+function startEmailOutbox(database, { apiKey = process.env.EMAIL_API_KEY, from = process.env.EMAIL_FROM, keepAlive = false } = {}) {
   if (!apiKey || !from) {
     logger.warn('email_outbox_idle', { reason: 'EMAIL_API_KEY and EMAIL_FROM are not configured.' });
     return null;
@@ -151,7 +151,7 @@ function startEmailOutbox(database, { apiKey = process.env.EMAIL_API_KEY, from =
     }
   };
   const timer = setInterval(poll, POLL_INTERVAL_MS);
-  timer.unref();
+  if (!keepAlive) timer.unref();
   setImmediate(poll);
   return timer;
 }

@@ -110,6 +110,49 @@ Set `FRONTEND_ORIGIN` and, when needed, comma-separated `FRONTEND_ORIGINS` to
 the trusted browser origins. Set `TRUST_PROXY` only to the backend's known
 reverse-proxy hop count or trusted proxy addresses.
 
+## Vercel deployment
+
+The repository root contains `vercel.json`; Vercel serves `frontend\` as the
+static output and routes `/api` requests through the Express serverless
+handlers. The handlers wait for the database initialization promise and do not
+start a persistent HTTP listener. Vercel sets `VERCEL_URL`; set
+`FRONTEND_ORIGIN` to the production custom-domain origin and configure a
+pooled PostgreSQL `DATABASE_URL` plus the signing and payment secrets in the
+Vercel project environment.
+
+Production configuration requires `STORAGE_DRIVER=s3` and the
+`S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY`
+settings. Use a private bucket for master audio, stems, samples, and
+certificates. Set `PUBLIC_MEDIA_BASE_URL` only to a CDN or public prefix for
+catalogue artwork and preview audio. The project fails startup if production
+would otherwise use ephemeral local storage. Do not set
+`ALLOW_EPHEMERAL_STORAGE=true` on a deployment that stores customer media.
+Before switching an existing installation from local storage, run
+`npm run storage:migrate` from `backend\` while the source files and destination
+bucket are both accessible. The copy is resumable and verifies the checksum of
+objects already present. Do not run multiple copies concurrently; pause uploads
+for the final copy and run `npm run storage:audit` before cutover.
+
+Vercel functions do not run the email polling worker. Run
+`npm run email:worker --prefix backend` in a persistent worker service with
+the same database and email environment variables. Web startup only queues
+messages. The worker claims messages through the database outbox, so multiple
+worker instances can safely compete for pending work.
+
+Run `node backend/database.js` as a deployment migration step before routing
+traffic to a release. Startup also applies pending migrations under a
+PostgreSQL advisory lock as a safety net. Deployments must retain the
+`api/` handlers and static `frontend/` directory; do not configure a separate
+API origin in the browser. The shared rate limiter requires the migrated
+`rate_limit_buckets` table. The PostgreSQL pool defaults to three connections
+per Vercel function instance; tune `DB_POOL_MAX` only with the database
+provider's aggregate connection limit in mind.
+
+The platform's function request-size limits may be lower than the API's
+configured upload limits. Verify large administrator uploads against the
+selected Vercel plan; if they exceed the provider's limit, use a direct
+object-storage upload flow rather than increasing Express body limits.
+
 ## Route integration tests
 
 The route integration suite requires a local PostgreSQL server and a dedicated
