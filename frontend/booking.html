@@ -84,6 +84,7 @@
     const bookingSlots = document.getElementById('booking-slots');
     const availableBookingDays = new Set([0, 2, 3, 4]);
     let bookingFees = {};
+    let epAlbumDiscountPercent = null;
     let bookingFeesLoaded = false;
     let bookingFeesLoading = false;
     let bookingFeesError = '';
@@ -109,12 +110,12 @@
 
       let fee = bookingFees[service];
       if (isReleaseBooking && Number.isFinite(fullProductionRate) && fullProductionRate > 0) {
-        const perSongRate = fullProductionRate * 0.8;
+        const perSongRate = fullProductionRate * (1 - epAlbumDiscountPercent / 100);
         fee = Number.isInteger(songCount) && songCount > 0 && songCount <= 12 ? perSongRate * songCount : null;
         bookingPrice.classList.remove('error');
         bookingPrice.textContent = Number.isInteger(songCount) && songCount > 0 && songCount <= 12
-          ? `EP / Album (20% discount): ${songCount} songs x GHS ${perSongRate.toFixed(2)} = GHS ${fee.toFixed(2)}`
-          : `EP / Album rate after 20% discount: GHS ${perSongRate.toFixed(2)} per song. Choose up to 12 songs for your total.`;
+          ? `EP / Album (${epAlbumDiscountPercent}% discount): ${songCount} songs x GHS ${perSongRate.toFixed(2)} = GHS ${fee.toFixed(2)}`
+          : `EP / Album rate after ${epAlbumDiscountPercent}% discount: GHS ${perSongRate.toFixed(2)} per song. Choose up to 12 songs for your total.`;
       } else if (isReleaseBooking) {
         fee = null;
         if (bookingFeesLoading) {
@@ -153,6 +154,10 @@
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Could not load booking fees.');
         bookingFees = data.fees || {};
+        epAlbumDiscountPercent = Number(data.rules?.epAlbumDiscountPercent);
+        if (!Number.isFinite(epAlbumDiscountPercent) || epAlbumDiscountPercent < 0 || epAlbumDiscountPercent >= 100) {
+          throw new Error('Booking pricing rules are unavailable right now.');
+        }
         bookingFeesLoaded = true;
         bookingFeesLoading = false;
         updateBookingPrice();

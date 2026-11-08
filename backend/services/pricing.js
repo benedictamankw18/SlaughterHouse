@@ -3,6 +3,7 @@ const settingKeys = [
   'booking_fee_full_production_ghs',
   'booking_fee_beat_production_ghs',
   'booking_fee_adverts_promos_ghs',
+  'booking_ep_album_discount_percent',
   'beat_request_license_basic_ghs',
   'beat_request_license_premium_ghs',
   'beat_request_license_unlimited_ghs',
@@ -24,7 +25,7 @@ function isUsdGhsRateFresh(updatedAt, now = Date.now()) {
 function getPricing(database) {
   return new Promise((resolve, reject) => {
     database.all(
-      'SELECT setting_key, setting_value FROM settings WHERE setting_key IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'SELECT setting_key, setting_value FROM settings WHERE setting_key IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       settingKeys,
       (error, rows) => {
         if (error) return reject(error);
@@ -36,6 +37,9 @@ function getPricing(database) {
             'beat-production': values.booking_fee_beat_production_ghs,
             'adverts-promos': values.booking_fee_adverts_promos_ghs
           },
+            bookingRules: {
+              epAlbumDiscountPercent: values.booking_ep_album_discount_percent
+            },
           beatRequestLicensePrices: {
             basic: values.beat_request_license_basic_ghs,
             premium: values.beat_request_license_premium_ghs,

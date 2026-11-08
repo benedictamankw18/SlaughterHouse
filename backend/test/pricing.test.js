@@ -7,6 +7,7 @@ const settingRows = [
   { setting_key: 'booking_fee_full_production_ghs', setting_value: '1000' },
   { setting_key: 'booking_fee_beat_production_ghs', setting_value: '500' },
   { setting_key: 'booking_fee_adverts_promos_ghs', setting_value: '1000' },
+  { setting_key: 'booking_ep_album_discount_percent', setting_value: '20' },
   { setting_key: 'beat_request_license_basic_ghs', setting_value: '500' },
   { setting_key: 'beat_request_license_premium_ghs', setting_value: '1000' },
   { setting_key: 'beat_request_license_unlimited_ghs', setting_value: '2000' },
@@ -21,7 +22,7 @@ function fakeDatabase(rows) {
   return {
     all(query, parameters, callback) {
       assert.match(query, /FROM settings WHERE setting_key IN/);
-      assert.equal(parameters.length, 12);
+      assert.equal(parameters.length, 13);
       callback(null, rows);
     }
   };
@@ -35,6 +36,7 @@ test('getPricing maps settings rows into numeric fee groups', async () => {
     'beat-production': 500,
     'adverts-promos': 1000
   });
+  assert.deepEqual(pricing.bookingRules, { epAlbumDiscountPercent: 20 });
   assert.deepEqual(pricing.beatRequestLicensePrices, { basic: 500, premium: 1000, unlimited: 2000, exclusive: 4700 });
   assert.deepEqual(pricing.beatDefaultPrices, { basic: 25, premium: 45, unlimited: 150, exclusive: 420 });
 });

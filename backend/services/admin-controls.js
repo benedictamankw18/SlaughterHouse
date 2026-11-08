@@ -3,6 +3,7 @@ const BUSINESS_SETTINGS = Object.freeze({
   booking_fee_full_production_ghs: 'Full production booking fee (GHS)',
   booking_fee_beat_production_ghs: 'Beat production booking fee (GHS)',
   booking_fee_adverts_promos_ghs: 'Adverts and promos booking fee (GHS)',
+  booking_ep_album_discount_percent: 'EP / Album discount (%)',
   beat_request_license_basic_ghs: 'Basic custom beat license (GHS)',
   beat_request_license_premium_ghs: 'Premium custom beat license (GHS)',
   beat_request_license_unlimited_ghs: 'Unlimited custom beat license (GHS)',
@@ -27,6 +28,9 @@ function validateSettingUpdates(updates) {
     }
     if (key === 'usd_to_ghs_rate' && (Number(value) <= 0 || Number(value) >= 1000000)) {
       return { error: 'USD to GHS exchange rate must be greater than zero and less than 1000000.' };
+    }
+    if (key === 'booking_ep_album_discount_percent' && Number(value) >= 100) {
+      return { error: 'EP / Album discount must be less than 100%.' };
     }
     const decimalPlaces = key === 'usd_to_ghs_rate' ? 6 : 2;
     if (Number(value) !== Number(Number(value).toFixed(decimalPlaces))) {

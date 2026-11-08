@@ -15,17 +15,20 @@ test('calculateBookingFee returns the configured fee for flat services', () => {
 });
 
 test('calculateBookingFee applies the per-song EP rate with the 20% discount', () => {
-  assert.equal(calculateBookingFee('ep-album', 1, fees), 800);
-  assert.equal(calculateBookingFee('ep-album', 3, fees), 2400);
-  assert.equal(calculateBookingFee('ep-album', 12, fees), 9600);
+  assert.equal(calculateBookingFee('ep-album', 1, fees, 20), 800);
+  assert.equal(calculateBookingFee('ep-album', 3, fees, 20), 2400);
+  assert.equal(calculateBookingFee('ep-album', 12, fees, 20), 9600);
+  assert.equal(calculateBookingFee('ep-album', 3, fees, 0), 3000);
 });
 
 test('calculateBookingFee rejects invalid EP song counts or missing rates', () => {
   assert.equal(calculateBookingFee('ep-album', 0, fees), null);
   assert.equal(calculateBookingFee('ep-album', 13, fees), null);
   assert.equal(calculateBookingFee('ep-album', 2.5, fees), null);
-  assert.equal(calculateBookingFee('ep-album', 3, { ...fees, 'full-production': 0 }), null);
-  assert.equal(calculateBookingFee('ep-album', 3, {}), null);
+  assert.equal(calculateBookingFee('ep-album', 3, { ...fees, 'full-production': 0 }, 20), null);
+  assert.equal(calculateBookingFee('ep-album', 3, {}, 20), null);
+  assert.equal(calculateBookingFee('ep-album', 3, fees), null);
+  assert.equal(calculateBookingFee('ep-album', 3, fees, 100), null);
 });
 
 test('isAvailableBookingSlot accepts allowed weekdays between 11:00 and 21:00', () => {
@@ -62,5 +65,5 @@ test('normalizeBookingSlots keeps only date and time', () => {
 test('calculateBookingFee rejects unknown services and missing fee data without crashing', () => {
   assert.equal(calculateBookingFee('mixtape', null, null), null);
   assert.equal(calculateBookingFee('unknown', 2, { 'full-production': 1000 }), null);
-  assert.equal(calculateBookingFee('ep-album', '3', { 'full-production': 1000 }), 2400);
+  assert.equal(calculateBookingFee('ep-album', '3', { 'full-production': 1000 }, 20), 2400);
 });

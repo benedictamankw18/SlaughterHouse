@@ -26,3 +26,12 @@ build/
 *.bak
 .DS_Store
 Thumbs.db
+
+# Local database exports and backup artifacts
+/db/*.sql
+*.dump
+*.backup
+*.sqlite
+*.sqlite3
+*.db
+/backend/data/backups/

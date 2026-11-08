@@ -301,7 +301,7 @@ function renderBeatManagement(beats = dashboardData.beats || []) {
     const active = beat.catalog_status === 'published';
     const coverSrc = beat.cover_url || (beat.cover_art ? `${API}/api/uploads/${encodeURIComponent(beat.cover_art)}` : '');
     const cover = coverSrc
-      ? `<img class="admin-beat-cover" src="${coverSrc}" alt="">`
+      ? `<img class="admin-beat-cover" src="${escapeHtml(coverSrc)}" alt="">`
       : '<div class="admin-beat-cover admin-beat-cover-empty" aria-hidden="true">No cover art</div>';
     return `<article class="admin-card admin-beat-card" data-beat-id="${id}">
       ${cover}
@@ -446,7 +446,7 @@ function renderMerchandiseManagement(merchandise = dashboardData.merchandise || 
     const active = item.catalog_status === 'published';
     const photoSrc = item.photo_url || (item.photo ? `${API}/api/uploads/${encodeURIComponent(item.photo)}` : '');
     const photo = photoSrc
-      ? `<img class="admin-beat-cover" src="${photoSrc}" alt="">`
+      ? `<img class="admin-beat-cover" src="${escapeHtml(photoSrc)}" alt="">`
       : '<div class="admin-beat-cover admin-beat-cover-empty" aria-hidden="true">No photo</div>';
     return `<article class="admin-card admin-beat-card admin-merchandise-card" data-merchandise-card="${id}">
       ${photo}

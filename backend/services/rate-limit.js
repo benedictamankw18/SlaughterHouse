@@ -4,10 +4,12 @@ const logger = require('./logger');
 
 let requestsSinceCleanup = 0;
 
-function rateLimit({ windowMs, max, message }) {
+function rateLimit({ windowMs, max, message, keyGenerator }) {
   return (request, response, next) => {
     const routePath = request.route?.path || request.path || '';
-    const identity = `${request.ip || 'unknown'}:${request.baseUrl || ''}${routePath}`;
+    const identity = typeof keyGenerator === 'function'
+      ? keyGenerator(request)
+      : `${request.ip || 'unknown'}:${request.baseUrl || ''}${routePath}`;
     const bucketKey = crypto.createHash('sha256').update(identity).digest('hex');
     database.get(
       `INSERT INTO rate_limit_buckets (bucket_key, window_started_at, request_count, expires_at)

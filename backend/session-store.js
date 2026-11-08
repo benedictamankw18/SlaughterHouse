@@ -5,7 +5,6 @@ const { normalizeRole, hasRoleAccess, hasPermission } = require('./services/role
 const logger = require('./services/logger');
 
 const adminLoginAttempts = new Map();
-const customerLoginAttempts = new Map();
 
 function getSessionCookieToken(request, preferredRole = null) {
   const cookies = {};
@@ -180,7 +179,6 @@ function requirePermission(requiredPermission) {
 
 module.exports = {
   adminLoginAttempts,
-  customerLoginAttempts,
   getSessionCookieToken,
   createSession,
   refreshCsrfToken,

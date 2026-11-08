@@ -117,7 +117,6 @@ test('duplicate signup returns a conflict for MySQL and PostgreSQL unique violat
       }
     },
     '../session-store': {
-      customerLoginAttempts: new Map(),
       adminLoginAttempts: new Map(),
       allowVisitor: (request, response, next) => next(),
       requireCustomer: (request, response, next) => next(),
@@ -176,7 +175,6 @@ test('successful password reset revokes the user sessions in the password update
       })
     },
     '../session-store': {
-      customerLoginAttempts: new Map(),
       adminLoginAttempts: new Map(),
       allowVisitor: (request, response, next) => next(),
       requireCustomer: (request, response, next) => next(),
@@ -241,7 +239,6 @@ test('verified PostgreSQL users can sign in despite folded unquoted aliases', as
       }
     },
     '../session-store': {
-      customerLoginAttempts: new Map(),
       adminLoginAttempts: new Map(),
       createSession: async () => ({ token: 'session-token', csrfToken: 'csrf-token' }),
       getSessionCookieToken: () => null,

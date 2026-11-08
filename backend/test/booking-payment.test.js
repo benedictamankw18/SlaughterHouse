@@ -37,7 +37,12 @@ function loadBookingsRouter({ unavailableTime = null } = {}) {
       paystackSecretKey: 'paystack-test-secret',
       paymentCallbackUrl: new URL('https://store.example.test/payment-success.html')
     },
-    '../services/pricing': { getPricing: async () => ({ bookingFees: { mixtape: 700 } }) },
+    '../services/pricing': {
+      getPricing: async () => ({
+        bookingFees: { mixtape: 700 },
+        bookingRules: { epAlbumDiscountPercent: 20 }
+      })
+    },
     '../services/error-messages': { databaseError: () => 'database error' }
   };
 

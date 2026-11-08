@@ -1,4 +1,4 @@
-function calculateBookingFee(service, songCount, fees = {}) {
+function calculateBookingFee(service, songCount, fees = {}, epAlbumDiscountPercent) {
   const normalizedService = typeof service === 'string' ? service.trim().toLowerCase() : '';
   const normalizedFees = fees && typeof fees === 'object' ? fees : {};
   if (!normalizedService || normalizedService !== 'ep-album') {
@@ -9,7 +9,9 @@ function calculateBookingFee(service, songCount, fees = {}) {
   if (!Number.isInteger(normalizedSongCount) || normalizedSongCount < 1 || normalizedSongCount > 12) return null;
   const fullProductionRate = Number(normalizedFees['full-production']);
   if (!Number.isFinite(fullProductionRate) || fullProductionRate <= 0) return null;
-  return Number((fullProductionRate * normalizedSongCount * 0.8).toFixed(2));
+  const discountPercent = Number(epAlbumDiscountPercent);
+  if (!Number.isFinite(discountPercent) || discountPercent < 0 || discountPercent >= 100) return null;
+  return Number((fullProductionRate * normalizedSongCount * (1 - discountPercent / 100)).toFixed(2));
 }
 
 function isAvailableBookingSlot(dateValue, timeValue) {

@@ -100,7 +100,7 @@ async function mockApi(page, options = {}) {
     } else if (path === '/api/requests/beat-license-prices') {
       body = { prices: { basic: 100, premium: 200, unlimited: 300, exclusive: 400 } };
     } else if (path === '/api/bookings/fees') {
-      body = { fees: { mixtape: 250, 'full-production': 1000, 'beat-production': 500, 'adverts-promos': 250 } };
+      body = { fees: { mixtape: 250, 'full-production': 1000, 'beat-production': 500, 'adverts-promos': 250 }, rules: { epAlbumDiscountPercent: 20 } };
     } else if (path === '/api/auth/signup') {
       body = { message: 'Account created. Verify your email.', verificationToken: 'test-verification-token' };
     } else if (path === '/api/auth/verify-email') {
@@ -198,13 +198,19 @@ async function mockApi(page, options = {}) {
       body = { definitions: [] };
     } else if (path === '/api/admin/settings') {
       body = {
-        settings: options.adminPricing ? [{
-          key: 'usd_to_ghs_rate',
-          label: 'USD to GHS exchange rate',
-          value: '12.345678',
-          updatedAt: new Date().toISOString(),
-          fresh: true
-        }] : [],
+        settings: options.adminPricing ? [
+          { key: 'booking_fee_mixtape_ghs', label: 'Mixtape booking fee (GHS)', value: '700' },
+          { key: 'booking_ep_album_discount_percent', label: 'EP / Album discount (%)', value: '20' },
+          { key: 'beat_request_license_basic_ghs', label: 'Basic custom beat license (GHS)', value: '500' },
+          { key: 'beat_default_basic_usd', label: 'Default basic beat license (USD)', value: '25' },
+          {
+            key: 'usd_to_ghs_rate',
+            label: 'USD to GHS exchange rate',
+            value: '12.345678',
+            updatedAt: new Date().toISOString(),
+            fresh: true
+          }
+        ] : [],
         canEdit: true
       };
     } else if (path === '/api/admin/staff') {
@@ -354,6 +360,37 @@ test('cart adds a catalog beat and updates the item count and selected total', a
   await expect(page.locator('#cart-count')).toHaveText('1');
   await expect(page.locator('#cart-items')).toContainText(beat.title);
   await expect(page.locator('#cart-checkout-button')).toBeEnabled();
+});
+
+test('currency selection converts merchandise prices and cart totals consistently', async ({ page }) => {
+  await mockApi(page);
+  await page.route('**/api/merchandise', route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({
+      merchandise: [{
+        id: 32,
+        title: 'Tour Shirt',
+        description: 'Storefront currency test',
+        price: 125,
+        stockQuantity: 4
+      }]
+    })
+  }));
+  await page.goto('/merchandise.html');
+
+  const price = page.locator('[data-storefront-price]');
+  await expect(price).toHaveText('₵125.00 GHS');
+  await page.getByRole('button', { name: 'Add to cart' }).click();
+  await expect(page.locator('#cart-total')).toHaveText('₵125.00 GHS');
+
+  await page.locator('#currency').selectOption('USD');
+  await expect(price).toHaveText('$10.00 USD');
+  await expect(page.locator('#cart-items')).toContainText('$10.00 USD');
+  await expect(page.locator('#cart-total')).toHaveText('$10.00 USD');
+
+  await page.locator('#currency').selectOption('GHS');
+  await expect(price).toHaveText('₵125.00 GHS');
+  await expect(page.locator('#cart-total')).toHaveText('₵125.00 GHS');
 });
 
 test('checkout sends selected cart items and stays on the mocked payment origin', async ({ page }) => {
@@ -678,6 +715,10 @@ test('admin displays saved GHS purchase amounts and exchange-rate freshness', as
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await expect(page.locator('#business-settings-form')).toContainText('Rates expire after 24 hours.');
   await expect(page.locator('#business-settings-form input[name="usd_to_ghs_rate"]')).toHaveValue('12.345678');
+  await expect(page.locator('#business-settings-form input[name="booking_fee_mixtape_ghs"]')).toHaveValue('700');
+  await expect(page.locator('#business-settings-form input[name="booking_ep_album_discount_percent"]')).toHaveValue('20');
+  await expect(page.locator('#business-settings-form input[name="beat_request_license_basic_ghs"]')).toHaveValue('500');
+  await expect(page.locator('#business-settings-form input[name="beat_default_basic_usd"]')).toHaveValue('25');
 });
 
 test('key storefront and admin pages have no automated WCAG 2.1 A/AA violations', async ({ page }) => {
