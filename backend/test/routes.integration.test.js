@@ -225,7 +225,7 @@ function routeCases(routeModules) {
   return cases;
 }
 
-function requestPath(routePath, method) {
+function requestPath(routePath, method, routeFixtures = {}) {
   if (method === 'get' && ['/admin/reports', '/admin/reports.csv'].includes(routePath)) {
     return `/api${routePath}?from=2026-01-01&to=2026-01-31`;
   }
@@ -233,6 +233,7 @@ function requestPath(routePath, method) {
     return '/api/admin/stream-releases/2147483647';
   }
   const concretePath = routePath.replace(/:([A-Za-z0-9_]+)(?:\([^)]*\))?\??/g, (_, name) => {
+    if (routeFixtures[name] !== undefined) return String(routeFixtures[name]);
     if (name === 'filename') return 'missing-integration-file.wav';
     if (name === 'reference') return 'UBB-INTEGRATION-NOT-FOUND';
     if (name === 'token') return 'invalid-integration-token';
@@ -306,7 +307,7 @@ async function seedSessions(pool) {
     { name: 'Integration Customer', email: 'integration-customer@example.test', role: 'customer' },
     { name: 'Integration Admin', email: 'integration-admin@example.test', role: 'super_admin' }
   ];
-  const sessions = {};
+  const sessions = { logoutTokens: {} };
   for (const user of users) {
     const [result] = await pool.execute(
       `INSERT INTO users (
@@ -331,6 +332,12 @@ async function seedSessions(pool) {
       [result.insertId, crypto.createHash('sha256').update(token).digest('hex'), crypto.createHash('sha256').update(crypto.randomBytes(32)).digest('hex'), user.role, new Date(Date.now() + 60 * 60 * 1000)]
     );
     sessions[user.role] = token;
+    const logoutToken = crypto.randomBytes(32).toString('hex');
+    await pool.execute(
+      'INSERT INTO user_sessions (user_id, token_hash, csrf_token_hash, role, expires_at) VALUES (?, ?, ?, ?, ?)',
+      [result.insertId, crypto.createHash('sha256').update(logoutToken).digest('hex'), crypto.createHash('sha256').update(crypto.randomBytes(32)).digest('hex'), user.role, new Date(Date.now() + 60 * 60 * 1000)]
+    );
+    sessions.logoutTokens[user.role] = logoutToken;
   }
   return sessions;
 }
@@ -359,12 +366,12 @@ async function seedSettings(pool) {
   }
 }
 
-async function invokeRoute(baseUrl, route, sessions) {
+async function invokeRoute(baseUrl, route, sessions, routeFixtures) {
   const methodsWithBody = new Set(['post', 'put', 'patch']);
   const requestBody = methodsWithBody.has(route.method) ? '{}' : undefined;
-  const url = `${baseUrl}${requestPath(route.path, route.method)}`;
+  const url = `${baseUrl}${requestPath(route.path, route.method, routeFixtures)}`;
   const candidates = route.path.endsWith('/logout')
-    ? [null, route.path.startsWith('/admin/') ? sessions.super_admin : sessions.customer]
+    ? [null, sessions.logoutTokens[route.path.startsWith('/admin/') ? 'super_admin' : 'customer']]
     : [null, sessions.customer, sessions.super_admin];
   let response;
   let responseText;
@@ -403,6 +410,11 @@ test('all registered API route methods execute against an isolated PostgreSQL te
     const routes = routeCases(loaded.routeModules).sort((left, right) =>
       Number(left.path.endsWith('/logout')) - Number(right.path.endsWith('/logout')));
     t.diagnostic(`Exercising ${routes.length} registered API route methods against PostgreSQL.`);
+    const [routeBeat] = await promisePool.execute(
+      `INSERT INTO beats (title, catalog_status) VALUES (?, 'published')`,
+      [`Integration route beat ${crypto.randomUUID()}`]
+    );
+    const routeFixtures = { beatId: routeBeat.insertId };
     const sessions = await seedSessions(promisePool);
     const app = mountIntegrationApp(loaded.routeModules, database, config);
     server = app.listen(0, '127.0.0.1');
@@ -411,7 +423,7 @@ test('all registered API route methods execute against an isolated PostgreSQL te
     const failures = [];
 
     for (const route of routes) {
-      const { response, responseText, url } = await invokeRoute(baseUrl, route, sessions);
+      const { response, responseText, url } = await invokeRoute(baseUrl, route, sessions, routeFixtures);
       const contentType = response.headers.get('content-type') || '';
       if (response.status >= 500) {
         failures.push(`${route.method.toUpperCase()} ${url}: ${response.status} ${responseText.slice(0, 250)}`);
