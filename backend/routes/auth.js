@@ -28,7 +28,7 @@ const authRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 30, message: 'T
 const loginRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: 'Too many login attempts. Try again later.' });
 const loginAccountRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 30,
+  max: 10,
   message: 'Too many login attempts for this account. Try again later.',
   keyGenerator: request => {
     const routePath = request.route?.path || request.path || '';
@@ -189,18 +189,12 @@ router.post('/auth/login', loginRateLimit, loginAccountRateLimit, (request, resp
   const password = String(request.body.password || '');
   if (!identifier) return response.status(400).json({ error: 'Email or phone number is required.' });
   if (!password) return response.status(400).json({ error: 'Password is required.' });
-  const attempt = sessions.customerLoginAttempts.get(request.ip) || { count: 0, startedAt: Date.now() };
-  if (Date.now() - attempt.startedAt > 15 * 60 * 1000) { attempt.count = 0; attempt.startedAt = Date.now(); }
-  if (attempt.count >= 10) return response.status(429).json({ error: 'Too many login attempts. Try again later.' });
   database.get('SELECT id, name, email, phone, role, password_hash, email_verified_at AS "emailVerifiedAt" FROM users WHERE (lower(email) = lower(?) OR phone = ?) AND role NOT IN (\'admin\', \'super_admin\')', [identifier, identifier], async (error, user) => {
     if (error) return response.status(500).json({ error: databaseError('Customer sign-in failed.', error) });
     if (!user || !(await passwordMatches(password, user.password_hash))) {
-      attempt.count += 1;
-      sessions.customerLoginAttempts.set(request.ip, attempt);
       recordAuditSafely(database, { action: 'customer_login_failed', details: { identifierType: identifier.includes('@') ? 'email' : 'phone' }, ipAddress: request.ip });
       return response.status(401).json({ error: 'Invalid email/phone number or password.' });
     }
-    sessions.customerLoginAttempts.delete(request.ip);
     if (!user.emailVerifiedAt) {
       recordAuditSafely(database, { userId: user.id, action: 'customer_login_blocked_unverified', entityType: 'user', entityId: user.id, ipAddress: request.ip });
       return response.status(403).json({

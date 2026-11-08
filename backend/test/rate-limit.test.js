@@ -126,35 +126,43 @@ test('rate limits are shared through database-backed counters', async () => {
   }
 });
 
-test('account login buckets are shared across IPs and isolated by account identifier', async () => {
+test('distributed login limits block an account across IPs but isolate other accounts', async () => {
   const keys = [];
+  const counts = new Map();
   const loaded = loadRateLimiter({
     get(query, parameters, callback) {
-      keys.push(parameters[0]);
-      callback(null, { request_count: 1, retry_after_seconds: 1 });
+      const key = parameters[0];
+      keys.push(key);
+      const request_count = (counts.get(key) || 0) + 1;
+      counts.set(key, request_count);
+      callback(null, { request_count, retry_after_seconds: 1 });
     }
   });
   try {
     const middleware = loaded.rateLimit({
       windowMs: 60_000,
-      max: 30,
+      max: 2,
       message: 'Too many attempts.',
       keyGenerator: request => `${request.baseUrl}${request.route.path}:account:${request.body.identifier.trim().toLowerCase()}`
     });
+    const responses = [];
     for (const [ip, identifier] of [
       ['192.0.2.4', 'Person@example.test'],
       ['198.51.100.8', 'person@example.test'],
-      ['198.51.100.8', 'other@example.test']
+      ['203.0.113.9', 'other@example.test'],
+      ['203.0.113.10', 'PERSON@example.test']
     ]) {
-      await invoke(middleware, {
+      responses.push(await invoke(middleware, {
         ip,
         baseUrl: '/api',
         route: { path: '/auth/login' },
         body: { identifier }
-      });
+      }));
     }
     assert.equal(keys[0], keys[1]);
     assert.notEqual(keys[0], keys[2]);
+    assert.deepEqual(responses.map(response => response.status), [200, 200, 200, 429]);
+    assert.equal(responses[3].body.error, 'Too many attempts.');
   } finally {
     loaded.restore();
   }

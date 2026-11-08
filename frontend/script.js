@@ -779,7 +779,7 @@ if (currencySelect && flagIcon) {
   const selectedOption = currencySelect.options[currencySelect.selectedIndex];
   flagIcon.src = selectedOption.dataset.flag;
   currentCurrency = currencySelect.value;
-  updateBeatPrices();
+  switchCurrency();
   });
 }
 
@@ -1021,6 +1021,7 @@ async function loadDisplayExchangeRate() {
     usdToGhsRate = rate;
     updateBeatPrices();
     updateCart();
+    updateMerchandisePrices();
   } catch (error) {
     console.error('Currency display conversion is unavailable:', error);
   }
@@ -1289,19 +1290,18 @@ function switchCurrency() {
   currentCurrency = currencySelect ? currencySelect.value : currentCurrency;
   updateBeatPrices();
   updateCart();
-
-  // Update all product prices on the page
-  document.querySelectorAll(".product").forEach(product => {
-    const basePrice = product.getAttribute("data-price");
-    product.querySelector(".price").textContent = convertPrice(basePrice);
-  });
+  updateMerchandisePrices();
 }
 
-function convertPrice(price) {
-  const converted = convertCartAmount(price, 'USD', currentCurrency);
-  return converted === null
-    ? `${formatCurrency(price, 'USD')} (GHS conversion unavailable)`
-    : formatCurrency(converted, currentCurrency);
+function updateMerchandisePrices() {
+  document.querySelectorAll('[data-storefront-price]').forEach(priceElement => {
+    const basePrice = Number(priceElement.dataset.price);
+    const baseCurrency = priceElement.dataset.currency;
+    const convertedPrice = convertCartAmount(basePrice, baseCurrency, currentCurrency);
+    priceElement.textContent = convertedPrice === null
+      ? `${formatCurrency(basePrice, baseCurrency)} (conversion unavailable)`
+      : formatCurrency(convertedPrice, currentCurrency);
+  });
 }
 
 function renderCatalogPagination(pagination) {
@@ -1681,7 +1681,10 @@ if (merchandiseLists.length) {
       const description = document.createElement('p');
       description.textContent = product.description || '';
       const price = document.createElement('strong');
-      price.textContent = `GHS ${Number(product.price).toFixed(2)}`;
+      price.dataset.storefrontPrice = '';
+      price.dataset.price = String(Number(product.price));
+      price.dataset.currency = 'GHS';
+      price.textContent = formatCurrency(Number(product.price), 'GHS');
       const button = document.createElement('button');
       button.className = 'merchandise-submit-button';
       button.type = 'button';
@@ -1706,6 +1709,7 @@ if (merchandiseLists.length) {
       else merchandiseList.innerHTML = '<p class="filter-empty-state">No merchandise is available to order yet.</p>';
       merchandiseList.setAttribute('aria-busy', 'false');
     });
+    updateMerchandisePrices();
     syncCartProductButtons();
     } catch (error) {
       merchandiseLists.forEach(merchandiseList => {

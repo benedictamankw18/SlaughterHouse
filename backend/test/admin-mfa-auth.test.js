@@ -91,7 +91,6 @@ function loadAuthRouter() {
   };
   const sessions = {
     adminLoginAttempts: new Map(),
-    customerLoginAttempts: new Map(),
     getSessionCookieToken: () => null,
     async createSession() {
       state.sessionsCreated += 1;
