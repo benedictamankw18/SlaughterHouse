@@ -62,7 +62,7 @@ if (location.origin !== 'null' && !isPrivatePage) {
         '@type': 'Organization',
         name: 'UltBigBoy',
         url: new URL('/', location.origin).href,
-        logo: new URL('Images/Logo%202.png', document.baseURI).href
+        logo: new URL('/Images/Logo%202.png', document.baseURI).href
       }
     });
     document.head.append(structuredData);
@@ -118,7 +118,7 @@ siteSearch?.closest('.search-form')?.addEventListener('submit', event => {
     siteSearch.focus();
     return;
   }
-  window.location.href = `beats.html?search=${encodeURIComponent(query)}#beat-listing`;
+  window.location.href = `/beats.html?search=${encodeURIComponent(query)}#beat-listing`;
 });
 
 const loginButton = document.querySelector('.login-button');
@@ -148,7 +148,7 @@ if (loginButton) {
   authPanel.setAttribute('aria-labelledby', 'auth-dialog-title');
   authPanel.innerHTML = `<div class="auth-panel-shell">
     <aside class="auth-studio-visual" aria-label="UltBigBoy music studio">
-      <a class="auth-studio-brand" href="index.html"><img src="Images/Logo 2.png" alt="UltBigBoy home"></a>
+      <a class="auth-studio-brand" href="/index.html"><img src="/Images/Logo 2.png" alt="UltBigBoy home"></a>
       <div class="auth-studio-art" aria-hidden="true">
         <div class="auth-orbit auth-orbit-one"></div>
         <div class="auth-orbit auth-orbit-two"></div>
@@ -224,15 +224,15 @@ if (loginButton) {
       </div>
       <div class="account-dashboard">
           <nav class="account-dashboard-tabs" aria-label="Account pages">
-            <a class="account-dashboard-tab" href="purchases.html">Purchases</a>
-            <a class="account-dashboard-tab" href="licenses.html">Licenses</a>
-            <a class="account-dashboard-tab" href="downloads.html">Downloads</a>
-            <a class="account-dashboard-tab" href="wishlist.html">Wishlist</a>
-            <a class="account-dashboard-tab" href="bookings.html">Bookings</a>
-            <a class="account-dashboard-tab" href="profile.html">Profile</a>
-            <a class="account-dashboard-tab" href="orders.html">Orders</a>
-            <a class="account-dashboard-tab" href="alerts.html">Alerts</a>
-            <a class="account-dashboard-tab" href="requests.html">Requests</a>
+            <a class="account-dashboard-tab" href="/user/purchases.html">Purchases</a>
+            <a class="account-dashboard-tab" href="/user/licenses.html">Licenses</a>
+            <a class="account-dashboard-tab" href="/user/downloads.html">Downloads</a>
+            <a class="account-dashboard-tab" href="/user/wishlist.html">Wishlist</a>
+            <a class="account-dashboard-tab" href="/user/bookings.html">Bookings</a>
+            <a class="account-dashboard-tab" href="/user/profile.html">Profile</a>
+            <a class="account-dashboard-tab" href="/user/orders.html">Orders</a>
+            <a class="account-dashboard-tab" href="/user/alerts.html">Alerts</a>
+            <a class="account-dashboard-tab" href="/user/requests.html">Requests</a>
           </nav>
           <div id="account-dashboard-content" class="account-dashboard-content" aria-live="polite">Loading account history...</div>
         </div>
@@ -568,7 +568,7 @@ if (loginButton) {
       if (adminResult.ok) {
         const adminData = await adminResult.json();
         localStorage.setItem('adminCsrfToken', adminData.csrfToken || '');
-        window.location.href = 'admin.html';
+        window.location.href = '/admin/admin.html';
         return;
       }
       const result = await fetch(`${API}/api/auth/login`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
@@ -689,7 +689,7 @@ if (loginButton) {
       if (!response.ok) throw new Error(data.error);
       setAuthMessage('verify-email-message', data.message, false);
       authPanel.querySelector('#verify-email-submit').disabled = true;
-      setTimeout(() => window.location.assign(new URL('index.html', window.location.href).toString()), 1200);
+      setTimeout(() => window.location.assign(new URL('/index.html', window.location.origin).toString()), 1200);
     } catch (error) {
       setAuthMessage('verify-email-message', error.message || 'Could not verify the email address.');
     } finally {
@@ -1111,7 +1111,7 @@ function renderProducedPage(releases, page) {
       anchor.title = `Listen on ${link.platform}`;
       if (link.platform === 'Spotify') {
         const platformIcon = document.createElement('img');
-        platformIcon.src = 'Images/spotify.svg';
+        platformIcon.src = '/Images/spotify.svg';
         platformIcon.alt = '';
         platformIcon.setAttribute('aria-hidden', 'true');
         anchor.append(platformIcon);
@@ -1249,7 +1249,7 @@ function updateCart() {
     const displayedPrice = displayPrice === null
       ? `${formatCurrency(item.price, priceCurrency)} (conversion unavailable)`
       : formatCurrency(displayPrice, currentCurrency);
-    li.innerHTML = `<img class="cart-item-cover" src="${escapeHTML(item.cover || 'Images/Logo 2.png')}" alt="${escapeHTML(item.name)} cover art"><label class="cart-item-select"><input type="checkbox" data-cart-index="${index}" ${item.selected ? 'checked' : ''} aria-label="Select ${escapeHTML(item.name)} for checkout"><span><strong>${escapeHTML(item.name)}</strong><small>${escapeHTML(itemKind)}</small></span></label><span class="cart-item-actions"><strong>${displayedPrice}</strong><button type="button" class="cart-remove-button" data-cart-index="${index}" aria-label="Remove ${escapeHTML(item.name)}" title="Remove item">&#128465;</button></span>`;
+    li.innerHTML = `<img class="cart-item-cover" src="${escapeHTML(item.cover || '/Images/Logo 2.png')}" alt="${escapeHTML(item.name)} cover art"><label class="cart-item-select"><input type="checkbox" data-cart-index="${index}" ${item.selected ? 'checked' : ''} aria-label="Select ${escapeHTML(item.name)} for checkout"><span><strong>${escapeHTML(item.name)}</strong><small>${escapeHTML(itemKind)}</small></span></label><span class="cart-item-actions"><strong>${displayedPrice}</strong><button type="button" class="cart-remove-button" data-cart-index="${index}" aria-label="Remove ${escapeHTML(item.name)}" title="Remove item">&#128465;</button></span>`;
     cartItems.appendChild(li);
   });
 
@@ -1389,7 +1389,7 @@ async function loadDatabaseBeatCatalog() {
     const cards = data.beats.map(beat => {
       const card = document.createElement('article');
       const prices = beat.prices || {};
-      const cover = beat.coverUrl || (beat.coverArt ? `${API}/api/uploads/${encodeURIComponent(beat.coverArt)}` : 'Images/Logo 2.png');
+      const cover = beat.coverUrl || (beat.coverArt ? `${API}/api/uploads/${encodeURIComponent(beat.coverArt)}` : '/Images/Logo 2.png');
       const preview = beat.previewUrl || (beat.previewFile ? `${API}/api/uploads/${encodeURIComponent(beat.previewFile)}` : '');
       card.className = 'beat-card';
       card.dataset.bpm = beat.bpm || '';
@@ -1446,7 +1446,7 @@ async function loadFeaturedBeatCatalog() {
     catalogList.replaceChildren(...data.beats.map(beat => {
       const card = document.createElement('article');
       const prices = beat.prices || {};
-      const cover = beat.coverUrl || (beat.coverArt ? `${API}/api/uploads/${encodeURIComponent(beat.coverArt)}` : 'Images/Logo 2.png');
+      const cover = beat.coverUrl || (beat.coverArt ? `${API}/api/uploads/${encodeURIComponent(beat.coverArt)}` : '/Images/Logo 2.png');
       const preview = beat.previewUrl || '';
       const key = String(beat.musicalKey || '').toLowerCase();
       const keyMode = key.endsWith(' minor') ? 'minor' : 'major';
@@ -1668,7 +1668,7 @@ if (merchandiseLists.length) {
       const card = document.createElement('article');
       card.className = 'storefront-merchandise-item';
       const image = document.createElement('img');
-      image.src = product.photoUrl || (product.photo ? `${API}/api/uploads/${encodeURIComponent(product.photo)}` : 'Images/Logo 2.png');
+      image.src = product.photoUrl || (product.photo ? `${API}/api/uploads/${encodeURIComponent(product.photo)}` : '/Images/Logo 2.png');
       image.alt = `${product.title} merchandise`;
       image.loading = 'lazy';
       image.decoding = 'async';
@@ -1971,7 +1971,7 @@ async function loadPublicLicenseDefinitions() {
       slide.innerHTML = `<div class="license-card">
         <div class="license-card-heading"><span class="license-badge">${escapeHTML(definition.type)}</span><h3>${escapeHTML(definition.type)} rights</h3></div>
         <ul>${details.map(detail => `<li>${escapeHTML(detail)}</li>`).join('')}</ul>
-        <a class="license-browse-button" href="beats.html?license=${encodeURIComponent(definition.type)}">Browse ${escapeHTML(definition.type)} beats</a>
+        <a class="license-browse-button" href="/beats.html?license=${encodeURIComponent(definition.type)}">Browse ${escapeHTML(definition.type)} beats</a>
       </div>`;
       return slide;
     }));
@@ -2053,11 +2053,11 @@ updateMerchandiseSlide(0);
 
 // Hero images. WebP variants are generated by backend/scripts/optimize-images.js.
 const heroImages = [
-  { png: 'Images/Hero1.png', webp: 'Images/Hero1.webp' },
-  { png: 'Images/Hero2.png', webp: 'Images/Hero2.webp' },
-  { png: 'Images/Hero3.png', webp: 'Images/Hero3.webp' },
-  { png: 'Images/Hero4.png', webp: 'Images/Hero4.webp' },
-  { png: 'Images/Hero5.png', webp: 'Images/Hero5.webp' }
+  { png: '/Images/Hero1.png', webp: '/Images/Hero1.webp' },
+  { png: '/Images/Hero2.png', webp: '/Images/Hero2.webp' },
+  { png: '/Images/Hero3.png', webp: '/Images/Hero3.webp' },
+  { png: '/Images/Hero4.png', webp: '/Images/Hero4.webp' },
+  { png: '/Images/Hero5.png', webp: '/Images/Hero5.webp' }
 ];
 
 let currentIndex = 0;

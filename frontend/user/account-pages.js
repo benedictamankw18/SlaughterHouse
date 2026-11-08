@@ -11,15 +11,15 @@ const accountPageDefinitions = {
 };
 
 const accountPageLinks = [
-  ['purchases', 'Purchases', 'purchases.html'],
-  ['licenses', 'Licenses', 'licenses.html'],
-  ['downloads', 'Downloads', 'downloads.html'],
-  ['wishlist', 'Wishlist', 'wishlist.html'],
-  ['bookings', 'Bookings', 'bookings.html'],
-  ['profile', 'Profile', 'profile.html'],
-  ['orders', 'Orders', 'orders.html'],
-  ['alerts', 'Alerts', 'alerts.html'],
-  ['requests', 'Requests', 'requests.html']
+  ['purchases', 'Purchases', '/user/purchases.html'],
+  ['licenses', 'Licenses', '/user/licenses.html'],
+  ['downloads', 'Downloads', '/user/downloads.html'],
+  ['wishlist', 'Wishlist', '/user/wishlist.html'],
+  ['bookings', 'Bookings', '/user/bookings.html'],
+  ['profile', 'Profile', '/user/profile.html'],
+  ['orders', 'Orders', '/user/orders.html'],
+  ['alerts', 'Alerts', '/user/alerts.html'],
+  ['requests', 'Requests', '/user/requests.html']
 ];
 
 const accountPageRoot = document.getElementById('account-page');
@@ -31,7 +31,7 @@ if (accountPageRoot) {
   const money = value => `GHS ${Number(value || 0).toFixed(2)}`;
 
   if (!page) {
-    accountPageRoot.innerHTML = '<section class="account-page-state" role="alert"><h1>Page not found</h1><a href="index.html">Return to UltBigBoy</a></section>';
+    accountPageRoot.innerHTML = '<section class="account-page-state" role="alert"><h1>Page not found</h1><a href="/index.html">Return to UltBigBoy</a></section>';
   } else {
     document.title = `${page.title} | UltBigBoy Account`;
     accountPageRoot.innerHTML = `
@@ -84,20 +84,20 @@ if (accountPageRoot) {
         }
         if (pageType === 'licenses') {
           const status = String(item.certificate_status || 'missing').toLowerCase();
-          const cover = item.cover_url || (item.cover_art ? `${apiBase}/api/uploads/${encodeURIComponent(item.cover_art)}` : 'Images/Logo 2.png');
+          const cover = item.cover_url || (item.cover_art ? `${apiBase}/api/uploads/${encodeURIComponent(item.cover_art)}` : '/Images/Logo 2.png');
           const downloads = Array.isArray(item.downloads) ? item.downloads : [];
           const downloadLinks = downloads.map(file => `<a href="${escapeAccountHtml(file.url)}">${escapeAccountHtml(file.format)} download</a>`).join('');
           const downloadState = status === 'expired'
-            ? '<p>This one-year license has expired. <a href="beats.html#beat-listing">Purchase it again to renew access.</a></p>'
+            ? '<p>This one-year license has expired. <a href="/beats.html#beat-listing">Purchase it again to renew access.</a></p>'
             : downloads.length ? `<div class="account-page-actions">${downloadLinks}</div>` : '<p>Downloads are available once payment is fully settled.</p>';
           const expiry = item.expires_at || 'No expiration';
-          return `<article class="account-page-card account-license-card"><img class="account-license-cover" src="${escapeAccountHtml(cover)}" alt="${escapeAccountHtml(item.beat_title || 'Beat')} cover art"><div class="account-license-content"><span class="certificate-status certificate-status-${escapeAccountHtml(status)}">${escapeAccountHtml(status)}</span><h2>${escapeAccountHtml(item.beat_title || 'Beat')}</h2><p>${escapeAccountHtml(item.license_type)} license · Order ${escapeAccountHtml(item.order_reference || '')}</p><p>Purchased ${escapeAccountHtml(item.purchased_at || '')} · Expires ${escapeAccountHtml(expiry)}</p>${downloadState}<p>Certificate ${escapeAccountHtml(item.certificate_id || 'Pending issuance')}</p><div class="account-page-actions"><a href="certificate.html?licenseId=${Number(item.id)}">View certificate</a><button type="button" data-account-action="certificate" data-id="${Number(item.id)}">Download PDF</button>${item.verification_url ? `<a href="${escapeAccountHtml(item.verification_url)}" target="_blank" rel="noopener noreferrer">Verify</a>` : ''}</div></div></article>`;
+          return `<article class="account-page-card account-license-card"><img class="account-license-cover" src="${escapeAccountHtml(cover)}" alt="${escapeAccountHtml(item.beat_title || 'Beat')} cover art"><div class="account-license-content"><span class="certificate-status certificate-status-${escapeAccountHtml(status)}">${escapeAccountHtml(status)}</span><h2>${escapeAccountHtml(item.beat_title || 'Beat')}</h2><p>${escapeAccountHtml(item.license_type)} license · Order ${escapeAccountHtml(item.order_reference || '')}</p><p>Purchased ${escapeAccountHtml(item.purchased_at || '')} · Expires ${escapeAccountHtml(expiry)}</p>${downloadState}<p>Certificate ${escapeAccountHtml(item.certificate_id || 'Pending issuance')}</p><div class="account-page-actions"><a href="/certificate.html?licenseId=${Number(item.id)}">View certificate</a><button type="button" data-account-action="certificate" data-id="${Number(item.id)}">Download PDF</button>${item.verification_url ? `<a href="${escapeAccountHtml(item.verification_url)}" target="_blank" rel="noopener noreferrer">Verify</a>` : ''}</div></div></article>`;
         }
         if (pageType === 'downloads') {
           return `<article class="account-page-card"><h2>${escapeAccountHtml(item.beat_title || 'Beat')}</h2><p>${escapeAccountHtml(item.license_type)} license · ${escapeAccountHtml(item.format)} format</p><p>Order ${escapeAccountHtml(item.order_reference || '')} · Downloaded ${escapeAccountHtml(item.created_at || '')}</p></article>`;
         }
         if (pageType === 'wishlist') {
-          return `<article class="account-page-card"><h2>${escapeAccountHtml(item.title || 'Beat')}</h2><p>${escapeAccountHtml([item.genre, item.mood, item.bpm ? `${item.bpm} BPM` : ''].filter(Boolean).join(' · ') || 'Beat')}</p><p>Added ${escapeAccountHtml(item.addedAt || '')}</p><div class="account-page-actions"><a href="beats.html#beat-listing">View beats</a><button type="button" data-account-action="remove-wishlist" data-id="${Number(item.id)}">Remove</button></div></article>`;
+          return `<article class="account-page-card"><h2>${escapeAccountHtml(item.title || 'Beat')}</h2><p>${escapeAccountHtml([item.genre, item.mood, item.bpm ? `${item.bpm} BPM` : ''].filter(Boolean).join(' · ') || 'Beat')}</p><p>Added ${escapeAccountHtml(item.addedAt || '')}</p><div class="account-page-actions"><a href="/beats.html#beat-listing">View beats</a><button type="button" data-account-action="remove-wishlist" data-id="${Number(item.id)}">Remove</button></div></article>`;
         }
         if (pageType === 'bookings') {
           let slots = [];

@@ -12,7 +12,7 @@ fixed bounds or fallback behavior noted here.
 | Fixed value or rule | Where it is used | Notes |
 | --- | --- | --- |
 | Beat prices use USD as the base currency. The storefront conversion map is `USD: 1`, `GHS: 10`, `GBP: 0.79`. | [`frontend/script.js`](./frontend/script.js#L914) | These display conversion rates are hardcoded. GHS `10` is not the Admin-managed USD/GHS rate and can show an inaccurate storefront price. Merchandise prices in GHS are divided by the same GHS rate when added to cart. |
-| Storefront display currency options are GHS, USD, and GBP; default cart display is USD. | [`frontend/index.html`](./frontend/index.html#L90), [`frontend/beats.html`](./frontend/beats.html#L67), [`frontend/script.js`](./frontend/script.js#L932) | Currency symbols are also fixed in `frontend/script.js`. |
+| Storefront display currency options are GHS, USD, and GBP; default cart display is USD. | [`frontend/index.html`](./frontend/index.html#L90), [`frontend/user/beats.html`](./frontend/user/beats.html#L70), [`frontend/script.js`](./frontend/script.js#L932) | Currency symbols are also fixed in `frontend/script.js`. |
 | Paystack checkout and booking charges use GHS. | [`backend/routes/payments.js`](./backend/routes/payments.js), [`backend/routes/bookings.js`](./backend/routes/bookings.js) | The actual USD/GHS checkout rate is read from Admin Settings, required to be greater than zero and less than 1,000,000, and must be at most six decimal places. |
 | The Admin-managed USD/GHS rate expires after 24 hours; update timestamps up to 5 minutes in the future are tolerated. | [`backend/services/pricing.js`](./backend/services/pricing.js#L16) | Stale or missing rates block beat checkout. Orders keep the exchange-rate snapshot. |
 | The integration-test fixture seeds an exchange rate of `10`. | [`backend/test/routes.integration.test.js`](./backend/test/routes.integration.test.js#L338) | Test data only; it is not the production checkout rate. |
@@ -24,7 +24,7 @@ fixed bounds or fallback behavior noted here.
 | Fixed value or rule | Where it is used | Notes |
 | --- | --- | --- |
 | Reservation hold duration is 30 minutes. | [`backend/services/booking-reservations.js`](./backend/services/booking-reservations.js#L1) | An order can confirm only slots still held by that order and not yet expired. |
-| Booking timezone is `Africa/Accra`; each session must be 140 minutes. | [`backend/routes/bookings.js`](./backend/routes/bookings.js#L57), [`frontend/booking.html`](./frontend/booking.html#L243) | Both values are validated by the backend. |
+| Booking timezone is `Africa/Accra`; each session must be 140 minutes. | [`backend/routes/bookings.js`](./backend/routes/bookings.js#L57), [`frontend/user/booking.html`](./frontend/user/booking.html#L249) | Both values are validated by the backend. |
 | Booking days are Sunday, Tuesday, Wednesday, Thursday. | [`backend/services/booking.js`](./backend/services/booking.js#L22) | The weekday set is fixed. |
 | Booking hours are 11:00–21:00; slots must end by 21:00. | [`backend/services/booking.js`](./backend/services/booking.js#L29) | Start/end policy is fixed. |
 | An EP/Album booking requires `ceil(song count / 2)` slots. | [`backend/routes/bookings.js`](./backend/routes/bookings.js#L62) | Fixed slot-count rule. |
@@ -61,7 +61,7 @@ fixed bounds or fallback behavior noted here.
 | Local API port defaults to 3000; local frontend origin defaults to `http://localhost:5500`; API URL also falls back to `http://localhost:<PORT>`. | [`backend/config.js`](./backend/config.js#L5), [`frontend/api-config.js`](./frontend/api-config.js#L4) | Environment variables override the backend defaults. The browser fallback is for local development. |
 | Storage defaults to `local`; production requires `s3` unless `ALLOW_EPHEMERAL_STORAGE=true`. | [`backend/config.js`](./backend/config.js#L73) | The default is not suitable for durable production uploads. |
 | Paystack API origin is `https://api.paystack.co`. | [`backend/routes/payments.js`](./backend/routes/payments.js) | API host is fixed; credentials are environment-configured. |
-| Currency flags are fetched from `flagcdn.com`; stylesheet fonts are fetched from Google Fonts. | [`frontend/index.html`](./frontend/index.html#L91), [`frontend/beats.html`](./frontend/beats.html#L68), [`frontend/style.css`](./frontend/style.css#L1) | Third-party URL references are embedded in frontend source. |
+| Currency flags are fetched from `flagcdn.com`; stylesheet fonts are fetched from Google Fonts. | [`frontend/index.html`](./frontend/index.html#L91), [`frontend/user/beats.html`](./frontend/user/beats.html#L70), [`frontend/style.css`](./frontend/style.css#L1) | Third-party URL references are embedded in frontend source. |
 | CORS recognizes `localhost` and `127.0.0.1` as local aliases. | [`backend/services/cors-origin.js`](./backend/services/cors-origin.js#L1) | Local-development behavior. |
 
 ## Highest-priority cleanup

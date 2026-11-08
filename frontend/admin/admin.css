@@ -142,3 +142,25 @@
 .admin-certificate-detail-panel ol { display: grid; gap: 10px; padding-left: 22px; }
 .admin-certificate-detail-panel a { color: #86efac; }
 .admin-certificate-card .certificate-status { flex: 0 0 auto; }
+
+/* Busy state for admin add/create/save/delete actions. The spinner replaces
+   the action label while the request is in flight and the button is disabled. */
+.admin-spinner {
+  display: inline-block;
+  width: .9em;
+  height: .9em;
+  margin-right: .45em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  vertical-align: -.1em;
+  animation: admin-spinner-rotate .7s linear infinite;
+}
+.admin-busy-label { vertical-align: middle; }
+button.is-busy { cursor: progress; }
+button.is-busy:disabled { opacity: .75; cursor: progress; }
+@keyframes admin-spinner-rotate { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .admin-spinner { animation-duration: 1.6s; }
+}
+
