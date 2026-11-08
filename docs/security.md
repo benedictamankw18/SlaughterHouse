@@ -18,7 +18,7 @@ commands are in [`../backend/README.md`](../backend/README.md).
   stores it in session storage. Bearer-authenticated requests do not rely on
   ambient cookies and do not require this header. Paystack webhooks are
   authenticated by their HMAC signature.
-- JSON request bodies are limited to 256 KB by default, 35 MB for administrator
+- JSON request bodies are limited to 256 KB by default, 150 MB for administrator
   catalog uploads, 20 MB for custom requests, and 1 MB for the raw payment
   webhook. URL-encoded bodies are not enabled. HTTP request and header timeouts
   are set by the server bootstrap.

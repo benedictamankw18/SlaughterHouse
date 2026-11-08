@@ -23,8 +23,8 @@ Cookie-authenticated unsafe requests require the server-verified
 `X-CSRF-Token` returned by login. Existing sessions without a token hash must
 sign in again before cookie-authenticated mutations; bearer-authenticated
 requests and the HMAC-verified payment webhook are exempt. JSON bodies are
-limited to 256 KB by default, 35 MB on admin beat/merchandise upload routes,
-and 20 MB for custom requests. URL-encoded bodies are not accepted.
+limited to 256 KB by default, 150 MB on admin beat/merchandise/stream-release
+upload routes, and 20 MB for custom requests. URL-encoded bodies are not accepted.
 
 ## Database backups
 
@@ -32,6 +32,11 @@ Configure `DATABASE_URL` with a PostgreSQL connection string. Install `pg_dump`
 and `pg_restore`, and set `PGDUMP_PATH` / `PGRESTORE_PATH` if they are not on
 `PATH`. The backup tools pass the database password through `PGPASSWORD`, not
 as a command-line argument.
+
+Backup and restore prefer `BACKUP_DATABASE_URL`, then `DATABASE_URL_UNPOOLED`,
+then `DATABASE_URL`. Point them at a direct (unpooled) connection when the API
+uses a pooled endpoint, and set `BACKUP_DIR` to a persistent directory when the
+default `backend/data/backups` path is ephemeral.
 
 Create a full custom-format PostgreSQL backup and JSON manifest (table row
 counts, byte size, and SHA-256 checksum):
@@ -166,3 +171,37 @@ names, so a database restore cannot recreate missing media.
 ## Migration recovery
 
 Database migrations are forward-only. Do not edit or remove an applied migration to roll it back. For a failed deployment, stop writes if necessary, restore the latest verified backup into a separate database, and use a reviewed forward migration to reconcile schema or data. Promote a restored database only after application-level validation and an explicit operational approval. Preserve the failed database and logs for investigation.
+
+## Staging and production promotion
+
+Use a separate staging database, object-storage bucket or key prefix, signing
+secrets, Paystack key, email sender, and stable HTTPS hostname. Do not use a
+Neon production branch or a shared bucket for staging tests, and do not run the
+integration suite against staging or production.
+
+1. Provision the staging database and bucket, then configure secrets in the
+   hosting provider rather than a tracked file.
+2. Run migrations with a direct connection (`DATABASE_URL` set to the unpooled
+   URL on the migration host).
+3. Deploy the API and static frontend, then confirm `GET /api/health` and
+   `GET /api/ready` succeed.
+4. Create the first super-admin with `npm run admin:create`, enroll MFA, and
+   configure the USD-to-GHS rate, booking services, license definitions, and
+   business settings.
+5. Run the acceptance checks against the deployed host, including a real
+   administrator upload, a paid download, a Paystack test checkout and webhook
+   retry, and the email outbox worker.
+6. Create a staging backup, restore it into an empty scratch database, and run
+   `verify:backup` before treating backups as recoverable.
+7. Run `npm run storage:audit` against the staging bucket and confirm there are
+   no missing or failed references.
+
+For promotion, take and verify a production backup first, apply pending
+migrations with the direct URL, deploy, and repeat the smoke checks. Keep the
+previous deployment available for rollback. If a forward migration or data
+change fails, restore the verified backup into a separate database and follow
+the migration-recovery procedure instead of editing applied migrations.
+
+The Compose nginx proxy allows 160 MB admin upload bodies and 25 MB custom
+requests. Deployments on other hosting must verify the platform request-body
+limit before accepting administrator audio uploads.

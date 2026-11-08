@@ -150,10 +150,11 @@ API origin in the browser. The shared rate limiter requires the migrated
 per Vercel function instance; tune `DB_POOL_MAX` only with the database
 provider's aggregate connection limit in mind.
 
-The platform's function request-size limits may be lower than the API's
-configured upload limits. Verify large administrator uploads against the
-selected Vercel plan; if they exceed the provider's limit, use a direct
-object-storage upload flow rather than increasing Express body limits.
+Vercel Functions commonly cap request bodies at 4.5 MB, while the API accepts
+150 MB administrator catalog bodies (25 MB audio inside base64 JSON). Verify
+large administrator uploads against the selected plan before launch; if they
+exceed the platform limit, use direct object-storage uploads or host the API as
+a container instead of raising Express body limits.
 
 ## Route integration tests
 
@@ -419,14 +420,29 @@ the migration and are not exposed in API responses.
 When email delivery is not configured, local development responses expose a token
 when `NODE_ENV` is not `production`, while production responses never expose tokens.
 
-Authentication and administrator routes are rate-limited by client IP. The limiter
-is intentionally local to each process; deploy behind a shared gateway or move
-the bucket store to a shared service when running multiple instances.
+Authentication and administrator routes are rate-limited by client IP. Counters
+are stored in PostgreSQL, so separate API instances share the same limits. The
+limiter fails closed with `503` when the shared counter store is unavailable.
 
-Administrator accounts are stored in the PostgreSQL `users` table. Set a user's
-`role` to `admin` to allow access to the administrator login; administrator
+Administrator accounts are stored in the PostgreSQL `users` table. Administrator
 credentials are not read from environment variables. Withdrawal confirmation
 uses the authenticated administrator's account password.
+
+### Create the first super-admin
+
+Run from `backend\` with the deployment database configured. Set the password in
+the environment so it does not appear in shell history or process arguments:
+
+```powershell
+$env:ADMIN_EMAIL = 'owner@example.com'
+$env:ADMIN_NAME = 'Site Owner'
+$env:ADMIN_PASSWORD = 'a-strong-unique-passphrase'
+npm run admin:create
+```
+
+The command creates a verified `super_admin`. If the account already exists it
+fails unless `--update` is passed, which resets the password and ensures the
+super-admin role. The plaintext password is never printed or stored.
 
 ## Production secret rotation checklist
 

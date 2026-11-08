@@ -8,7 +8,7 @@ The project currently has:
 
 - A consolidated static frontend in `frontend/`.
 - An Express backend in `backend/`.
-- MySQL schema initialization in `backend/database.js`.
+- PostgreSQL schema initialization in `backend/database.js`.
 - Modular API routers under `backend/routes/`.
 - Modular services for authentication, pricing, bookings, uploads, downloads, and security.
 - Customer and administrator login flows.
@@ -20,7 +20,7 @@ The existing implementation should be preserved while the SRS features are compl
 
 ## 2. Delivery Principles
 
-- MySQL is the production source of truth; do not hardcode business data.
+- PostgreSQL is the production source of truth; do not hardcode business data.
 - Keep HTTP routes in `backend/routes/`, business logic in `backend/services/`, and schema changes in `backend/database.js` or migrations.
 - Validate every request at the API boundary.
 - Never trust prices, ownership, permissions, payment status, or file names from the browser.
@@ -50,7 +50,7 @@ The existing implementation should be preserved while the SRS features are compl
 - [x] Add foreign keys, indexes, unique constraints, and timestamps to the new tables.
 - [x] Add a migration/version table so schema changes are repeatable.
 - [x] Replace schema-altering startup logic with ordered migrations where practical.
-- [x] Document local MySQL setup, environment variables, and migration commands.
+- [x] Document local PostgreSQL setup, environment variables, and migration commands.
 
 ### Acceptance
 
@@ -103,7 +103,7 @@ The existing implementation should be preserved while the SRS features are compl
 
 ### Acceptance
 
-- Every displayed beat comes from MySQL.
+- Every displayed beat comes from PostgreSQL.
 - Checkout uses server-side prices only.
 - Preview files are accessible, but master files are protected.
 - Exclusive beats cannot be purchased after an exclusive sale.
@@ -332,7 +332,7 @@ The existing implementation should be preserved while the SRS features are compl
 - [x] Document security controls and update the backend README.
 - [x] Run JavaScript syntax checks, `npm test`, `npm audit --omit=dev`, and the tracked-file secret scan.
 - [x] Resolve the development-dependency advisories by upgrading the dev-only SQLite migration dependency; `npm audit` reports 0 vulnerabilities.
-- [x] Rerun MySQL route integration tests with `TEST_MYSQL_URL` set to the dedicated local test schema; all 90 registered API route methods passed.
+- [x] Rerun PostgreSQL route integration tests with `TEST_DATABASE_URL` set to the dedicated local test database; all 100 registered API route methods passed.
 
 ### Acceptance
 
@@ -345,11 +345,11 @@ The existing implementation should be preserved while the SRS features are compl
 
 - [x] Unit-test validators, pricing fallback, booking slot validation, password hashing, and download token signing.
 - [x] Unit-test database-backed license rights, editable definitions, and purchase snapshots.
-- [x] Integration-test every registered API route method with the dedicated MySQL test database.
+- [x] Integration-test every registered API route method with the dedicated PostgreSQL test database.
 - [x] Unit-test customer/admin/super-admin permission boundaries.
 - [x] Test duplicate signup, invalid JSON, malformed uploads, invalid payment methods, and invalid IDs.
 - [x] Test Paystack success, failure, mismatch, duplicate webhook, and refund scenarios.
-- [x] Test concurrent booking and inventory operations against MySQL.
+- [x] Test concurrent booking and inventory operations against PostgreSQL.
 - [x] Unit-test download token scoping across orders, products, licenses, formats, and expiry.
   Route-level authorization against a test database remains covered by the integration item above.
 - [x] Add browser tests for signup, login, search, cart, checkout, booking, reviews, and admin workflows.
@@ -374,7 +374,7 @@ The platform is ready for production when:
 
 - All SRS-in-scope pages and API workflows are implemented.
 - Authentication, authorization, payments, downloads, and bookings pass integration tests.
-- All business data and prices come from MySQL or controlled migrations.
+- All business data and prices come from PostgreSQL or controlled migrations.
 - The admin dashboard manages real records without hardcoded catalog data.
 - Paystack webhooks are verified and idempotent.
 - Master files are private and downloads verify ownership.

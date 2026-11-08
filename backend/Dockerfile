@@ -4,7 +4,9 @@ ENV NODE_ENV=production
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN apk add --no-cache postgresql-client \
+    && npm ci --omit=dev \
+    && npm cache clean --force
 
 COPY --chown=node:node . .
 RUN mkdir -p /app/data/uploads /app/data/certificates \

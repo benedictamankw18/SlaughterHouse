@@ -5,8 +5,13 @@ const { pipeline } = require('node:stream/promises');
 const { Pool } = require('pg');
 
 function getDatabaseConfig() {
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) throw new Error('Configure DATABASE_URL with a PostgreSQL connection string.');
+  // Backup and restore operations need a direct connection. Pooled endpoints
+  // such as Neon's do not support pg_dump/pg_restore reliably, so prefer the
+  // explicit backup URL and the unpooled URL before the runtime connection.
+  const connectionString = process.env.BACKUP_DATABASE_URL
+    || process.env.DATABASE_URL_UNPOOLED
+    || process.env.DATABASE_URL;
+  if (!connectionString) throw new Error('Configure DATABASE_URL (or BACKUP_DATABASE_URL / DATABASE_URL_UNPOOLED) with a PostgreSQL connection string.');
   const url = new URL(connectionString);
   if (!['postgres:', 'postgresql:'].includes(url.protocol)) {
     throw new Error('DATABASE_URL must use the postgres:// or postgresql:// protocol.');
