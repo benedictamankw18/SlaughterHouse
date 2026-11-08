@@ -61,6 +61,7 @@
 .certificate-terms h2 { margin-top: 0; }
 .certificate-terms ul { display: grid; gap: 10px; padding-left: 22px; }
 .certificate-terms strong { color: #f7f5ed; }
+.policy-page .certificate-terms a { color: #86efac; }
 @media (max-width: 680px) {
   .certificate-document-header { align-items: flex-start; flex-direction: column; }
   .certificate-document-title { text-align: left; }

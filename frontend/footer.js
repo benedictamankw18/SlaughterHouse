@@ -15,9 +15,25 @@ document.querySelectorAll('.site-footer-contact h2').forEach(heading => {
   heading.textContent = 'CONTACT';
 });
 
-document.querySelectorAll('.site-footer-bottom a').forEach(backToTopLink => {
+document.querySelectorAll('.site-footer-bottom > a').forEach(backToTopLink => {
   backToTopLink.href = '#top';
   backToTopLink.textContent = 'Back to top';
+});
+
+document.querySelectorAll('.site-footer-bottom').forEach(footerBottom => {
+  if (footerBottom.querySelector('.site-footer-policy-links')) return;
+  const policyLinks = document.createElement('nav');
+  policyLinks.className = 'site-footer-policy-links';
+  policyLinks.setAttribute('aria-label', 'Policies and terms');
+  policyLinks.innerHTML = [
+    ['privacy.html', 'Privacy'],
+    ['terms.html', 'Terms'],
+    ['refunds.html', 'Refunds'],
+    ['cookies.html', 'Cookies'],
+    ['license-terms.html', 'Beat license terms']
+  ].map(([href, label]) => `<a href="${href}">${label}</a>`).join('');
+  const backToTopLink = footerBottom.querySelector('a');
+  footerBottom.insertBefore(policyLinks, backToTopLink);
 });
 
 document.querySelectorAll('.site-footer-contact').forEach(contact => {

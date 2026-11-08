@@ -561,6 +561,50 @@ test('admin completes required MFA enrollment before entering the dashboard', as
   ]));
 });
 
+test('policy pages are reachable and cross-linked from the footer', async ({ page }) => {
+  const policies = [
+    { path: '/privacy.html', title: 'Privacy Policy' },
+    { path: '/terms.html', title: 'Terms of Service' },
+    { path: '/refunds.html', title: 'Refund & Cancellation Policy' },
+    { path: '/cookies.html', title: 'Cookie Policy' }
+  ];
+
+  for (const policy of policies) {
+    await page.goto(policy.path);
+    await expect(page.getByRole('heading', { level: 1, name: policy.title })).toBeVisible();
+    const policyNavigation = page.getByRole('navigation', { name: 'Policies and terms' });
+    await expect(policyNavigation.getByRole('link', { name: 'Privacy', exact: true })).toHaveAttribute('href', 'privacy.html');
+    await expect(policyNavigation.getByRole('link', { name: 'Terms', exact: true })).toHaveAttribute('href', 'terms.html');
+    await expect(policyNavigation.getByRole('link', { name: 'Refunds', exact: true })).toHaveAttribute('href', 'refunds.html');
+    await expect(policyNavigation.getByRole('link', { name: 'Cookies', exact: true })).toHaveAttribute('href', 'cookies.html');
+  }
+});
+
+test('policy pages have no automated WCAG 2.1 A/AA violations', async ({ page }) => {
+  const policies = [
+    { path: '/privacy.html', heading: 'Privacy Policy' },
+    { path: '/terms.html', heading: 'Terms of Service' },
+    { path: '/refunds.html', heading: 'Refund & Cancellation Policy' },
+    { path: '/cookies.html', heading: 'Cookie Policy' }
+  ];
+  const violations = [];
+
+  for (const policy of policies) {
+    await page.goto(policy.path);
+    await expect(page.getByRole('heading', { level: 1, name: policy.heading })).toBeVisible();
+    const scan = await new AxeBuilder({ page })
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+      .analyze();
+    violations.push(...scan.violations.map(violation => ({
+      page: policy.path,
+      id: violation.id,
+      nodes: violation.nodes.map(node => ({ target: node.target, summary: node.failureSummary }))
+    })));
+  }
+
+  expect(violations).toEqual([]);
+});
+
 test('admin resolves paid booking cases by assigning replacement sessions or requesting refunds', async ({ page }) => {
   const calls = await mockApi(page, { adminLogin: true, adminReconciliation: true });
   await seedAdminSession(page);

@@ -1370,7 +1370,8 @@ header {
 .site-footer-services h2,
 .site-footer-store h2,
 .site-footer-contact h2 { color: #22c55e; }
-.site-footer-bottom { display: flex; justify-content: space-between; gap: 16px; padding-top: 16px; border-top: 1px solid rgba(255, 255, 255, 0.14); color: rgba(255, 255, 255, 0.5); font-size: 0.75rem; }
+.site-footer-bottom { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding-top: 16px; border-top: 1px solid rgba(255, 255, 255, 0.14); color: rgba(255, 255, 255, 0.5); font-size: 0.75rem; }
+.site-footer-policy-links { display: flex; flex-wrap: wrap; gap: 8px 16px; }
 
 @media (max-width: 650px) {
   .site-footer-inner { grid-template-columns: 1fr; }
