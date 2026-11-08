@@ -92,9 +92,15 @@ function loadAuthRouter() {
   const sessions = {
     adminLoginAttempts: new Map(),
     customerLoginAttempts: new Map(),
+    getSessionCookieToken: () => null,
     async createSession() {
       state.sessionsCreated += 1;
       return { token: 'a'.repeat(64), csrfToken: 'b'.repeat(64) };
+    },
+    async refreshCsrfToken() { return 'b'.repeat(64); },
+    allowVisitor: (request, response, next) => {
+      request.role = 'visitor';
+      next();
     },
     requireAdmin: (request, response, next) => next(),
     requireCustomer: (request, response, next) => next()
@@ -105,7 +111,7 @@ function loadAuthRouter() {
     '../config': {
       sessionDurationMs: 60 * 60 * 1000,
       sessionCookieNames: { customer: 'customer_session', admin: 'admin_session' },
-      secureCookies: false,
+      secureCookies: true,
       adminMfaEncryptionKey: encryptionKey,
       frontendOrigin: 'https://store.example.test'
     },
@@ -159,7 +165,7 @@ async function post(router, path, body) {
       headers: { 'Content-Type': 'application/json', Connection: 'close' },
       body: JSON.stringify(body)
     });
-    return { status: response.status, body: await response.json() };
+    return { status: response.status, headers: response.headers, body: await response.json() };
   } finally {
     await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }
@@ -192,7 +198,10 @@ test('administrator enrollment requires TOTP and recovery-code acknowledgement b
       challengeToken: login.body.challengeToken
     });
     assert.equal(complete.status, 200);
-    assert.equal(complete.body.token, 'a'.repeat(64));
+    assert.equal(Object.hasOwn(complete.body, 'token'), false);
+    assert.match(complete.headers.get('set-cookie') || '', /HttpOnly/);
+    assert.match(complete.headers.get('set-cookie') || '', /Secure/);
+    assert.match(complete.headers.get('set-cookie') || '', /SameSite=Lax/);
     assert.equal(loaded.state.sessionsCreated, 1);
   } finally {
     loaded.restore();

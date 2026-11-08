@@ -41,13 +41,7 @@ function createCsrfProtection({ database, config }) {
     if (!validateRequestOrigin(request, config)) {
       return sendError(response, 403, 'Request origin is not allowed.', { code: 'ORIGIN_NOT_ALLOWED' });
     }
-    if (/^\/api\/(?:auth\/(?:signup|login|resend-verification|request-password-reset|reset-password|verify-email)|admin\/login)$/.test(request.path)) {
-      return next();
-    }
-
-    const authHeader = request.get('Authorization') || '';
-    if (/^Bearer\s+\S+/i.test(authHeader)) {
-      request.authSource = 'bearer';
+    if (/^\/api\/(?:auth\/(?:signup|login|resend-verification|request-password-reset|reset-password|verify-email)|admin\/(?:login|mfa\/(?:verify|complete)))$/.test(request.path)) {
       return next();
     }
 
@@ -61,7 +55,13 @@ function createCsrfProtection({ database, config }) {
         continue;
       }
     }
-    const sessionToken = cookies[config.sessionCookieNames.customer] || cookies[config.sessionCookieNames.admin];
+    const preferredSessionCookie = request.path.startsWith('/api/admin/')
+      ? config.sessionCookieNames.admin
+      : config.sessionCookieNames.customer;
+    const fallbackSessionCookie = preferredSessionCookie === config.sessionCookieNames.admin
+      ? config.sessionCookieNames.customer
+      : config.sessionCookieNames.admin;
+    const sessionToken = cookies[preferredSessionCookie] || cookies[fallbackSessionCookie];
     if (!sessionToken) return next();
     request.authSource = 'cookie';
 

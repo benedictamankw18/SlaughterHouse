@@ -57,7 +57,6 @@
 			message.textContent = 'We could not find an order reference.';
 		} else {
 			const verifyUrl = new URL(`/api/payments/verify/${encodeURIComponent(reference)}`, apiBaseUrl || location.origin);
-			const customerToken = sessionStorage.getItem('customerToken');
 
 			function showVerificationRetry(errorMessage) {
 				title.textContent = 'Payment needs attention';
@@ -78,7 +77,7 @@
 				message.textContent = 'Please wait while we confirm your transaction.';
 				links.replaceChildren();
 				try {
-					const response = await fetch(verifyUrl, { headers: customerToken ? { Authorization: `Bearer ${customerToken}` } : {} });
+					const response = await fetch(verifyUrl, { credentials: 'include' });
 					const data = await response.json();
 					if (!response.ok) throw new Error(data.error || 'Could not verify payment.');
 					if (data.status !== 'success' || !Array.isArray(data.downloads)) {

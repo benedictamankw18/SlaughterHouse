@@ -14,6 +14,7 @@ const { DEFAULT_LICENSE_RIGHTS, loadLicenseDefinitions, loadLicenseRights } = re
 const { ensureCertificateForLicense, certificateToken } = require('../services/license-certificates');
 const { checkReadiness } = require('../services/health');
 const { getDownloadItems } = require('../services/downloads');
+const { getUsdGhsRate } = require('../services/pricing');
 
 const router = express.Router();
 const queryRows = (query, parameters = []) => new Promise((resolve, reject) => database.all(query, parameters, (error, rows) => error ? reject(error) : resolve(rows || [])));
@@ -51,6 +52,16 @@ function mapBeat(beat, defaults, activeLicenseTypes) {
 }
 
 router.get('/health', (request, response) => response.json({ status: 'ok' }));
+
+router.get('/exchange-rate', async (request, response) => {
+  response.setHeader('Cache-Control', 'no-store');
+  try {
+    const exchangeRate = await getUsdGhsRate(database);
+    response.json({ usdToGhsRate: exchangeRate.rate, updatedAt: exchangeRate.updatedAt });
+  } catch (error) {
+    response.status(503).json({ error: databaseError('Loading the current exchange rate failed.', error) });
+  }
+});
 
 router.get('/ready', async (request, response) => {
   const readiness = await checkReadiness(database, config, storage);

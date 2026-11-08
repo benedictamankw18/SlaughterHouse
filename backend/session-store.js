@@ -7,10 +7,7 @@ const logger = require('./services/logger');
 const adminLoginAttempts = new Map();
 const customerLoginAttempts = new Map();
 
-function getAuthToken(request, preferredRole = null) {
-  const authorization = request.get('Authorization');
-  const bearer = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
-  if (bearer) return { token: bearer, source: 'bearer' };
+function getSessionCookieToken(request, preferredRole = null) {
   const cookies = {};
   for (const part of String(request.get('Cookie') || '').split(';')) {
     const separator = part.indexOf('=');
@@ -27,13 +24,13 @@ function getAuthToken(request, preferredRole = null) {
       ? [config.sessionCookieNames.customer]
       : [config.sessionCookieNames.customer, config.sessionCookieNames.admin];
   const cookieToken = cookieOrder.map(name => cookies[name]).find(Boolean);
-  return cookieToken ? { token: cookieToken, source: 'cookie' } : { token: null, source: null };
+  return cookieToken || null;
 }
 
-function getBearerToken(request, preferredRole = null) {
-  const auth = getAuthToken(request, preferredRole);
-  request.authSource = auth.source;
-  return auth.token;
+function getSessionToken(request, preferredRole = null) {
+  const token = getSessionCookieToken(request, preferredRole);
+  request.authSource = token ? 'cookie' : null;
+  return token;
 }
 
 function createToken() {
@@ -42,6 +39,10 @@ function createToken() {
 
 function hashToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function createCsrfToken(token) {
+  return crypto.createHmac('sha256', token).update('ultbigboy-csrf-v1').digest('hex');
 }
 
 function run(query, parameters = []) {
@@ -61,12 +62,21 @@ function get(query, parameters = []) {
 
 async function createSession(value) {
   const token = createToken();
-  const csrfToken = createToken();
+  const csrfToken = createCsrfToken(token);
   await run(
     'INSERT INTO user_sessions (user_id, token_hash, csrf_token_hash, role, expires_at) VALUES (?, ?, ?, ?, ?)',
     [value.id, hashToken(token), hashToken(csrfToken), value.role, new Date(Date.now() + config.sessionDurationMs)]
   );
   return { token, csrfToken };
+}
+
+async function refreshCsrfToken(token) {
+  const csrfToken = createCsrfToken(token);
+  await run(
+    'UPDATE user_sessions SET csrf_token_hash = ? WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP',
+    [hashToken(csrfToken), hashToken(token)]
+  );
+  return csrfToken;
 }
 
 async function deleteSession(token) {
@@ -78,7 +88,7 @@ function identifySession(request, response, { optional = false, requiredRole = n
   const loginMessage = requiredRole === 'admin' || requiredRole === 'super_admin'
     ? 'Admin login required.'
     : 'Customer login required.';
-  const token = getBearerToken(request, requiredRole);
+  const token = getSessionToken(request, requiredRole);
   if (!token) {
     request.role = 'visitor';
     if (optional) return next();
@@ -171,8 +181,9 @@ function requirePermission(requiredPermission) {
 module.exports = {
   adminLoginAttempts,
   customerLoginAttempts,
-  getBearerToken,
+  getSessionCookieToken,
   createSession,
+  refreshCsrfToken,
   deleteSession,
   requireRole,
   requirePermission,

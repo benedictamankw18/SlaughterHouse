@@ -69,15 +69,17 @@ async function recordAdminMfaFailure(transaction, challenge) {
   await transaction.run('UPDATE admin_mfa_challenges SET attempt_count = attempt_count + 1 WHERE id = ?', [challenge.id]);
 }
 
-async function createAdminSessionResponse(response, admin, extra = {}) {
+async function createAdminSessionResponse(request, response, admin, extra = {}) {
   const { token, csrfToken } = await sessions.createSession({
     id: admin.id,
     name: admin.name,
     email: admin.email,
     role: admin.role
   });
+  const previousToken = sessions.getSessionCookieToken(request, 'admin');
+  if (previousToken && previousToken !== token) await sessions.deleteSession(previousToken);
   response.setHeader('Set-Cookie', cookieOptions(config.sessionCookieNames.admin, token));
-  response.json({ token, csrfToken, email: admin.email, role: admin.role, ...extra });
+  response.json({ csrfToken, email: admin.email, role: admin.role, ...extra });
 }
 
 function duplicateAccountMessage(error) {
@@ -172,6 +174,7 @@ router.post('/auth/signup', authRateLimit, async (request, response) => {
 });
 
 router.post('/auth/login', loginRateLimit, (request, response) => {
+  response.setHeader('Cache-Control', 'no-store');
   const identifier = String(request.body.identifier || '').trim();
   const password = String(request.body.password || '');
   if (!identifier) return response.status(400).json({ error: 'Email or phone number is required.' });
@@ -198,8 +201,14 @@ router.post('/auth/login', loginRateLimit, (request, response) => {
     recordAuditSafely(database, { userId: user.id, action: 'customer_login', entityType: 'user', entityId: user.id, ipAddress: request.ip });
     sessions.createSession({ id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role })
       .then(({ token, csrfToken }) => {
+        const previousToken = sessions.getSessionCookieToken(request, 'customer');
+        return previousToken && previousToken !== token
+          ? sessions.deleteSession(previousToken).then(() => ({ token, csrfToken }))
+          : { token, csrfToken };
+      })
+      .then(({ token, csrfToken }) => {
         response.setHeader('Set-Cookie', cookieOptions(config.sessionCookieNames.customer, token));
-        response.json({ token, csrfToken, user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role } });
+        response.json({ csrfToken, user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role } });
       })
       .catch(sessionError => response.status(500).json({ error: databaseError('Creating the customer login session failed.', sessionError) }));
   });
@@ -237,6 +246,41 @@ router.post('/auth/resend-verification', resetRateLimit, async (request, respons
     response.json(result);
   } catch (error) {
     response.status(500).json({ error: databaseError('Requesting email verification failed.', error) });
+  }
+});
+
+router.get('/auth/session', sessions.allowVisitor, async (request, response) => {
+  response.setHeader('Cache-Control', 'no-store');
+  if (request.role === 'visitor') return response.json({ authenticated: false });
+  try {
+    const csrfToken = await sessions.refreshCsrfToken(request.sessionToken);
+    response.json({
+      authenticated: true,
+      csrfToken,
+      user: {
+        id: request.session.id,
+        name: request.session.name,
+        email: request.session.email,
+        phone: request.session.phone,
+        role: request.role
+      }
+    });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Restoring the login session failed.', error) });
+  }
+});
+
+router.get('/admin/session', sessions.requireAdmin, async (request, response) => {
+  response.setHeader('Cache-Control', 'no-store');
+  try {
+    const csrfToken = await sessions.refreshCsrfToken(request.sessionToken);
+    response.json({
+      authenticated: true,
+      csrfToken,
+      user: { id: request.admin.id, name: request.admin.name, email: request.admin.email, role: request.role }
+    });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Restoring the administrator session failed.', error) });
   }
 });
 
@@ -513,7 +557,7 @@ router.post('/admin/mfa/verify', adminMfaRateLimit, async (request, response) =>
       entityId: outcome.admin.id,
       ipAddress: request.ip
     });
-    await createAdminSessionResponse(response, outcome.admin);
+    await createAdminSessionResponse(request, response, outcome.admin);
   } catch (error) {
     logger.error('admin_mfa_verification_failed', { code: error.code });
     response.status(500).json({ error: databaseError('Administrator MFA verification failed.', error) });
@@ -550,7 +594,7 @@ router.post('/admin/mfa/complete', adminMfaRateLimit, async (request, response) 
       entityId: admin.id,
       ipAddress: request.ip
     });
-    await createAdminSessionResponse(response, admin);
+    await createAdminSessionResponse(request, response, admin);
   } catch (error) {
     logger.error('admin_mfa_setup_completion_failed', { code: error.code });
     response.status(500).json({ error: databaseError('Administrator MFA setup could not be completed.', error) });

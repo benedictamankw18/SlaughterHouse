@@ -1,7 +1,7 @@
 const API = window.ULTBIGBOY_API_URL || '';
 window.ultbigboyCsrfHeaders = method => {
   if (['GET', 'HEAD', 'OPTIONS'].includes(String(method || 'GET').toUpperCase())) return {};
-  const token = sessionStorage.getItem('customerCsrfToken') || sessionStorage.getItem('adminCsrfToken') || '';
+  const token = localStorage.getItem('customerCsrfToken') || localStorage.getItem('adminCsrfToken') || '';
   return token ? { 'X-CSRF-Token': token } : {};
 };
 const nativeFetch = window.fetch.bind(window);
@@ -14,7 +14,7 @@ window.fetch = (input, options = {}) => {
     if (!headers.has('X-CSRF-Token')) headers.set('X-CSRF-Token', csrfHeaders['X-CSRF-Token']);
     options = { ...options, headers };
   }
-  return nativeFetch(input, options);
+  return nativeFetch(input, { ...options, credentials: options.credentials || 'include' });
 };
 const privatePageNames = new Set([
   'admin.html',
@@ -122,6 +122,7 @@ siteSearch?.closest('.search-form')?.addEventListener('submit', event => {
 });
 
 const loginButton = document.querySelector('.login-button');
+let refreshAuthPanel = () => {};
 let customerUser = null;
 try {
   customerUser = JSON.parse(sessionStorage.getItem('customerUser') || 'null');
@@ -133,7 +134,7 @@ function refreshReviewAccess() {
   const loginPrompt = document.getElementById('review-login-prompt');
   const submitButton = document.getElementById('review-submit-button');
   if (!loginPrompt || !submitButton) return;
-  const loggedIn = Boolean(customerUser?.name && customerUser?.email && sessionStorage.getItem('customerToken'));
+  const loggedIn = Boolean(customerUser?.name && customerUser?.email);
   loginPrompt.hidden = loggedIn;
   submitButton.disabled = !loggedIn;
 }
@@ -300,8 +301,8 @@ if (loginButton) {
       button.setAttribute('aria-pressed', String(active));
     });
   };
-  const refreshAuthPanel = () => {
-    const loggedIn = Boolean(customerUser?.name && customerUser?.email && sessionStorage.getItem('customerToken'));
+  refreshAuthPanel = () => {
+    const loggedIn = Boolean(customerUser?.name && customerUser?.email);
     loginButton.textContent = loggedIn ? 'Account' : 'Login';
     loginButton.setAttribute('aria-label', loggedIn ? `Open account for ${customerUser.name}` : 'Open login');
     if (loggedIn) {
@@ -369,7 +370,7 @@ if (loginButton) {
     const config = accountHistory[type];
     content.textContent = 'Loading account history...';
     try {
-      const response = await fetch(`${API}${config.endpoint}`, { credentials: 'include', headers: { Authorization: `Bearer ${sessionStorage.getItem('customerToken') || ''}` } });
+      const response = await fetch(`${API}${config.endpoint}`, { credentials: 'include' });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not load account history.');
       renderAccountHistory(type, type === 'profile' ? data[config.key] : data[config.key] || []);
@@ -384,7 +385,7 @@ if (loginButton) {
             const response = await fetch(`${API}/api/auth/profile`, {
               method: 'PATCH',
               credentials: 'include',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionStorage.getItem('customerToken') || ''}` },
+              headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(Object.fromEntries(new FormData(form)))
             });
             const result = await response.json();
@@ -431,7 +432,7 @@ if (loginButton) {
     if (certificateButton) {
       certificateButton.disabled = true;
       try {
-        const response = await fetch(`${API}/api/customer/licenses/${certificateButton.dataset.licenseCertificate}/certificate`, { credentials: 'include', headers: { Authorization: `Bearer ${sessionStorage.getItem('customerToken') || ''}` } });
+        const response = await fetch(`${API}/api/customer/licenses/${certificateButton.dataset.licenseCertificate}/certificate`, { credentials: 'include' });
         if (!response.ok) {
           const result = await response.json();
           throw new Error(result.error || 'Could not download the certificate.');
@@ -457,7 +458,7 @@ if (loginButton) {
       await fetch(`${API}/api/customer/notifications/${card.dataset.notificationId}/read`, {
         method: 'PATCH',
         credentials: 'include',
-        headers: { Authorization: `Bearer ${sessionStorage.getItem('customerToken') || ''}` }
+        credentials: 'include'
       });
       card.classList.remove('account-notification-unread');
       button.remove();
@@ -515,13 +516,10 @@ if (loginButton) {
   authPanel.querySelectorAll('.auth-role-button').forEach(button => button.addEventListener('click', () => setSignupRole(button.dataset.role)));
   authPanel.querySelector('#forgot-password-button').addEventListener('click', () => setAuthView('reset-request'));
   authPanel.querySelector('#logout-button').addEventListener('click', async () => {
-    const token = sessionStorage.getItem('customerToken');
     const logoutMessage = document.getElementById('logout-message');
     try {
-      if (token) {
-        const response = await fetch(`${API}/api/auth/logout`, { method: 'POST', credentials: 'include', headers: { Authorization: `Bearer ${token}` } });
-        if (!response.ok && response.status !== 401) throw new Error('Could not end the session.');
-      }
+      const response = await fetch(`${API}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+      if (!response.ok && response.status !== 401) throw new Error('Could not end the session.');
       logoutMessage.textContent = 'You are logged out.';
       logoutMessage.classList.remove('error');
     } catch (error) {
@@ -531,7 +529,7 @@ if (loginButton) {
       customerUser = null;
       sessionStorage.removeItem('customerUser');
       sessionStorage.removeItem('customerToken');
-      sessionStorage.removeItem('customerCsrfToken');
+      localStorage.removeItem('customerCsrfToken');
       window.dispatchEvent(new Event('ultbigboy:auth-changed'));
       refreshReviewAccess();
       refreshAuthPanel();
@@ -569,8 +567,7 @@ if (loginButton) {
       const adminResult = await fetch(`${API}/api/admin/login`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: form.identifier, password: form.password }) });
       if (adminResult.ok) {
         const adminData = await adminResult.json();
-        sessionStorage.setItem('adminToken', adminData.token);
-        sessionStorage.setItem('adminCsrfToken', adminData.csrfToken || '');
+        localStorage.setItem('adminCsrfToken', adminData.csrfToken || '');
         window.location.href = 'admin.html';
         return;
       }
@@ -584,8 +581,8 @@ if (loginButton) {
       if (!result.ok) throw new Error(data.error);
       customerUser = data.user;
       sessionStorage.setItem('customerUser', JSON.stringify(customerUser));
-      sessionStorage.setItem('customerToken', data.token);
-      sessionStorage.setItem('customerCsrfToken', data.csrfToken || '');
+      sessionStorage.removeItem('customerToken');
+      localStorage.setItem('customerCsrfToken', data.csrfToken || '');
       window.dispatchEvent(new Event('ultbigboy:auth-changed'));
       refreshAuthPanel();
       setAuthView('account');
@@ -726,6 +723,34 @@ if (loginButton) {
 
   refreshAuthPanel();
 }
+
+async function restoreCustomerSession() {
+  try {
+    const response = await fetch(`${API}/api/auth/session`, { credentials: 'include' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not restore the customer session.');
+    if (data.authenticated && data.user?.role !== 'admin' && data.user?.role !== 'super_admin') {
+      customerUser = data.user;
+      sessionStorage.setItem('customerUser', JSON.stringify(customerUser));
+      localStorage.setItem('customerCsrfToken', data.csrfToken);
+    } else {
+      customerUser = null;
+      sessionStorage.removeItem('customerUser');
+      sessionStorage.removeItem('customerToken');
+      localStorage.removeItem('customerCsrfToken');
+    }
+    refreshReviewAccess();
+    if (loginButton) refreshAuthPanel();
+  } catch (error) {
+    console.error('Could not restore the customer session:', error);
+    customerUser = null;
+    sessionStorage.removeItem('customerUser');
+    refreshReviewAccess();
+    if (loginButton) refreshAuthPanel();
+  }
+}
+const customerSessionReady = restoreCustomerSession();
+window.ultbigboyCustomerSessionReady = customerSessionReady;
 
 if (menuIcon && dropdownMenu) {
   const toggleMenu = () => {
@@ -911,12 +936,7 @@ function setupPreviewCard(card) {
 
 document.querySelectorAll('.beat-card').forEach(setupPreviewCard);
 
-// Beat prices use USD as the base currency.
-const rates = {
-  GHS: 10,
-  USD: 1,
-  GBP: 0.79
-};
+let usdToGhsRate = null;
 
 const cartStorageKey = 'ultbigboyCart';
 const pendingCartPaymentsKey = 'ultbigboyPendingCartPayments';
@@ -924,7 +944,8 @@ let cart = [];
 try {
   const savedCart = JSON.parse(localStorage.getItem(cartStorageKey) || '[]');
   if (Array.isArray(savedCart)) {
-    cart = savedCart.filter(item => item && typeof item.name === 'string' && (typeof item.license === 'string' || item.type === 'merchandise') && Number.isFinite(item.price) && typeof item.cover === 'string' && typeof item.selected === 'boolean');
+    cart = savedCart.filter(item => item && typeof item.name === 'string' && (typeof item.license === 'string' || item.type === 'merchandise') && Number.isFinite(item.price) && typeof item.cover === 'string' && typeof item.selected === 'boolean')
+      .map(item => ({ ...item, priceCurrency: item.priceCurrency === 'GHS' ? 'GHS' : 'USD' }));
   }
 } catch {
   cart = [];
@@ -942,9 +963,20 @@ function createLicenseCode() {
 
 const currencySymbols = {
   GHS: '₵',
-  USD: '$',
-  GBP: '£'
+  USD: '$'
 };
+
+function formatCurrency(value, currency) {
+  return `${currencySymbols[currency]}${Number(value).toFixed(2)} ${currency}`;
+}
+
+function convertCartAmount(value, fromCurrency, toCurrency) {
+  if (fromCurrency === toCurrency) return Number(value);
+  if (!Number.isFinite(usdToGhsRate) || usdToGhsRate <= 0) return null;
+  return fromCurrency === 'USD'
+    ? Number(value) * usdToGhsRate
+    : Number(value) / usdToGhsRate;
+}
 
 function updateBeatPrices() {
   document.querySelectorAll('.beat-card').forEach(card => {
@@ -955,8 +987,10 @@ function updateBeatPrices() {
     }
     const selectedLicense = licenseSelect.options[licenseSelect.selectedIndex];
     const basePrice = Number(selectedLicense.dataset.price);
-    const convertedPrice = (basePrice * rates[currentCurrency]).toFixed(2);
-    priceElement.textContent = `${currencySymbols[currentCurrency]}${convertedPrice} ${currentCurrency}`;
+    const convertedPrice = convertCartAmount(basePrice, 'USD', currentCurrency);
+    priceElement.textContent = convertedPrice === null
+      ? `${formatCurrency(basePrice, 'USD')} (GHS conversion unavailable)`
+      : formatCurrency(convertedPrice, currentCurrency);
   });
 }
 
@@ -976,6 +1010,22 @@ if (availableLicenses.has(requestedLicense)) {
 }
 
 updateBeatPrices();
+
+async function loadDisplayExchangeRate() {
+  try {
+    const response = await fetch(`${API}/api/exchange-rate`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not load the current exchange rate.');
+    const rate = Number(data.usdToGhsRate);
+    if (!Number.isFinite(rate) || rate <= 0) throw new Error('The server returned an invalid exchange rate.');
+    usdToGhsRate = rate;
+    updateBeatPrices();
+    updateCart();
+  } catch (error) {
+    console.error('Currency display conversion is unavailable:', error);
+  }
+}
+loadDisplayExchangeRate();
 
 const catalogFilter = document.getElementById('beats-filter');
 let currentCatalogPage = 1;
@@ -1181,21 +1231,30 @@ function updateCart() {
   if (!cartItems || !cartEmpty || !cartTotal) return;
   cartItems.innerHTML = "";
   let total = 0;
+  let totalAvailable = true;
   let selectedCount = 0;
 
   cart.forEach((item, index) => {
+    const priceCurrency = item.priceCurrency === 'GHS' ? 'GHS' : 'USD';
+    const displayPrice = convertCartAmount(item.price, priceCurrency, currentCurrency);
     if (item.selected) {
-      total += item.price;
+      if (displayPrice === null) totalAvailable = false;
+      else total += displayPrice;
       selectedCount += 1;
     }
     const li = document.createElement("li");
     li.className = 'cart-item';
     const itemKind = item.type === 'merchandise' ? 'Merchandise' : `${item.license} license`;
-    li.innerHTML = `<img class="cart-item-cover" src="${escapeHTML(item.cover || 'Images/Logo 2.png')}" alt="${escapeHTML(item.name)} cover art"><label class="cart-item-select"><input type="checkbox" data-cart-index="${index}" ${item.selected ? 'checked' : ''} aria-label="Select ${escapeHTML(item.name)} for checkout"><span><strong>${escapeHTML(item.name)}</strong><small>${escapeHTML(itemKind)}</small></span></label><span class="cart-item-actions"><strong>${convertPrice(item.price)}</strong><button type="button" class="cart-remove-button" data-cart-index="${index}" aria-label="Remove ${escapeHTML(item.name)}" title="Remove item">&#128465;</button></span>`;
+    const displayedPrice = displayPrice === null
+      ? `${formatCurrency(item.price, priceCurrency)} (conversion unavailable)`
+      : formatCurrency(displayPrice, currentCurrency);
+    li.innerHTML = `<img class="cart-item-cover" src="${escapeHTML(item.cover || 'Images/Logo 2.png')}" alt="${escapeHTML(item.name)} cover art"><label class="cart-item-select"><input type="checkbox" data-cart-index="${index}" ${item.selected ? 'checked' : ''} aria-label="Select ${escapeHTML(item.name)} for checkout"><span><strong>${escapeHTML(item.name)}</strong><small>${escapeHTML(itemKind)}</small></span></label><span class="cart-item-actions"><strong>${displayedPrice}</strong><button type="button" class="cart-remove-button" data-cart-index="${index}" aria-label="Remove ${escapeHTML(item.name)}" title="Remove item">&#128465;</button></span>`;
     cartItems.appendChild(li);
   });
 
-  cartTotal.textContent = convertPrice(total);
+  cartTotal.textContent = totalAvailable
+    ? formatCurrency(total, currentCurrency)
+    : 'Currency conversion unavailable';
   cartEmpty.hidden = cart.length > 0;
   if (checkoutButton) {
     checkoutButton.disabled = selectedCount === 0;
@@ -1239,8 +1298,10 @@ function switchCurrency() {
 }
 
 function convertPrice(price) {
-  const converted = (price * rates[currentCurrency]).toFixed(2);
-  return `${currencySymbols[currentCurrency]}${converted} ${currentCurrency}`;
+  const converted = convertCartAmount(price, 'USD', currentCurrency);
+  return converted === null
+    ? `${formatCurrency(price, 'USD')} (GHS conversion unavailable)`
+    : formatCurrency(converted, currentCurrency);
 }
 
 function renderCatalogPagination(pagination) {
@@ -1504,6 +1565,7 @@ function openCheckoutForm() {
   });
 
   submitButton.addEventListener('click', async () => {
+    await customerSessionReady;
     const currentSelectedItems = cart.filter(item => item.selected);
     if (!currentSelectedItems.length) {
       message.textContent = 'Select at least one item in your cart to continue.';
@@ -1632,7 +1694,7 @@ if (merchandiseLists.length) {
       button.disabled = outOfStock;
       button.addEventListener('click', () => {
         if (outOfStock) return;
-        addToCart({ type: 'merchandise', productId: product.id, name: product.title, price: Number(product.price) / rates.GHS, cover: image.src, selected: true });
+        addToCart({ type: 'merchandise', productId: product.id, name: product.title, price: Number(product.price), priceCurrency: 'GHS', cover: image.src, selected: true });
         setCartOpen(true);
         showCartToast('Merchandise added.');
       });
@@ -1772,6 +1834,7 @@ if (reviewsSection) {
   loadPublicReviews();
   reviewForm.addEventListener('submit', async event => {
     event.preventDefault();
+    await customerSessionReady;
     if (!customerUser?.name || !customerUser?.email) {
       reviewMessage.textContent = 'Please log in before submitting a review.';
       reviewMessage.classList.add('error');
@@ -1784,7 +1847,7 @@ if (reviewsSection) {
     }
     reviewMessage.classList.remove('error');
     try {
-      const response = await fetch(`${API}/api/reviews`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionStorage.getItem('customerToken') || ''}` }, body: JSON.stringify({ rating: Number(reviewRating.value), review: document.getElementById('public-review-text').value }) });
+      const response = await fetch(`${API}/api/reviews`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rating: Number(reviewRating.value), review: document.getElementById('public-review-text').value }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not submit review.');
       reviewMessage.textContent = data.message;

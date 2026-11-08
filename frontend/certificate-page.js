@@ -4,7 +4,7 @@
   if (!message) return;
   const certificateFetch = (url, options = {}) => {
     const method = String(options.method || 'GET').toUpperCase();
-    const csrfToken = sessionStorage.getItem('customerCsrfToken') || '';
+    const csrfToken = localStorage.getItem('customerCsrfToken') || '';
     const headers = new Headers(options.headers || {});
     if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && csrfToken && !headers.has('X-CSRF-Token')) {
       headers.set('X-CSRF-Token', csrfToken);
@@ -44,10 +44,9 @@
     message.textContent = 'Loading your certificate…';
     const licenseId = new URLSearchParams(location.search).get('licenseId');
     if (!/^[1-9]\d*$/.test(licenseId || '')) throw new Error('A valid license ID is required.');
-    const token = sessionStorage.getItem('customerToken') || '';
     const response = await certificateFetch(`${apiBase}/api/customer/licenses/${encodeURIComponent(licenseId)}/certificate/details`, {
       credentials: 'include',
-      headers: token ? { Authorization: `Bearer ${token}` } : {}
+      headers: {}
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Could not load this license certificate.');
@@ -88,7 +87,7 @@
         try {
           const pdfResponse = await certificateFetch(`${apiBase}/api/customer/licenses/${encodeURIComponent(licenseId)}/certificate`, {
             credentials: 'include',
-            headers: token ? { Authorization: `Bearer ${token}` } : {}
+            headers: {}
           });
           if (!pdfResponse.ok) {
             const errorResult = await pdfResponse.json();

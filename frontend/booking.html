@@ -219,6 +219,7 @@
 
     bookingForm.addEventListener('submit', async event => {
       event.preventDefault();
+      await window.ultbigboyCustomerSessionReady;
       const form = event.currentTarget;
       const message = document.getElementById('booking-message');
       const slots = [...bookingSlots.querySelectorAll('.booking-session-slot')].map(slot => ({

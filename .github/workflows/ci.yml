@@ -36,6 +36,8 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci --prefix backend
+      - name: Scan tracked files for secrets
+        run: npm run check:secrets --prefix backend
       - name: Audit dependencies
         run: npm audit --prefix backend --audit-level=high
       - name: Validate deployment configuration

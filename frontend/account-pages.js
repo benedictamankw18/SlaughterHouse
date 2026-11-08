@@ -49,10 +49,9 @@ if (accountPageRoot) {
 
     const content = document.getElementById('account-page-content');
     const status = document.getElementById('account-page-message');
-    const token = () => sessionStorage.getItem('customerToken') || '';
     const csrfHeaders = method => window.ultbigboyCsrfHeaders?.(method) || (() => {
       if (['GET', 'HEAD', 'OPTIONS'].includes(String(method || 'GET').toUpperCase())) return {};
-      const value = sessionStorage.getItem('customerCsrfToken') || '';
+      const value = localStorage.getItem('customerCsrfToken') || '';
       return value ? { 'X-CSRF-Token': value } : {};
     })();
     const request = async (path, options = {}) => {
@@ -61,7 +60,6 @@ if (accountPageRoot) {
         credentials: 'include',
         headers: {
           ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-          ...(token() ? { Authorization: `Bearer ${token()}` } : {}),
           ...csrfHeaders(options.method),
           ...(options.headers || {})
         }
@@ -164,19 +162,19 @@ if (accountPageRoot) {
     const loadPage = async () => {
       status.textContent = '';
       status.classList.remove('is-error');
-      if (!token()) {
-        document.getElementById('account-page-customer').textContent = '';
-        content.innerHTML = '<div class="account-page-state"><h2>Sign in to view your account</h2><p>Your account pages are private and available after signing in.</p><button class="auth-primary-button" type="button" data-open-login>Sign in</button></div>';
-        return;
-      }
       content.setAttribute('aria-busy', 'true');
       content.textContent = 'Loading your account...';
       try {
+        const session = await request('/api/auth/session');
+        if (!session.authenticated || !session.user || session.user.role === 'admin' || session.user.role === 'super_admin') {
+          document.getElementById('account-page-customer').textContent = '';
+          content.innerHTML = '<div class="account-page-state"><h2>Sign in to view your account</h2><p>Your account pages are private and available after signing in.</p><button class="auth-primary-button" type="button" data-open-login>Sign in</button></div>';
+          return;
+        }
+        localStorage.setItem('customerCsrfToken', session.csrfToken);
+        sessionStorage.setItem('customerUser', JSON.stringify(session.user));
         const result = await request(page.endpoint);
-        const user = (() => {
-          try { return JSON.parse(sessionStorage.getItem('customerUser') || 'null'); } catch { return null; }
-        })();
-        document.getElementById('account-page-customer').textContent = user?.name ? `Signed in as ${user.name}` : '';
+        document.getElementById('account-page-customer').textContent = session.user.name ? `Signed in as ${session.user.name}` : '';
         if (pageType === 'profile') renderProfile(result[page.key]);
         else renderRows(result[page.key] || []);
         content.setAttribute('aria-busy', 'false');
@@ -216,8 +214,7 @@ if (accountPageRoot) {
           await loadPage();
         } else if (action === 'certificate') {
           const response = await fetch(`${apiBase}/api/customer/licenses/${button.dataset.id}/certificate`, {
-            credentials: 'include',
-            headers: { Authorization: `Bearer ${token()}` }
+            credentials: 'include'
           });
           if (!response.ok) {
             const result = await response.json();
