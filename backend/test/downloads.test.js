@@ -85,6 +85,17 @@ test('getDownloadItems only offers formats allowed by the purchased license', ()
   }
 });
 
+test('getDownloadItems accepts PostgreSQL-parsed order items', () => {
+  const items = getDownloadItems({
+    reference,
+    items_json: [{ type: 'beat', productId, name: 'Beat A', license: 'basic' }]
+  }, 'http://localhost:3000');
+
+  assert.equal(items.length, 1);
+  assert.deepEqual(items[0].files.map(file => file.format), ['MP3']);
+  assert.match(items[0].files[0].url, /token=/);
+});
+
 test('getDownloadItems safely rejects malformed order payloads and missing base URLs', () => {
   assert.deepEqual(getDownloadItems({ reference, items_json: '{bad json' }, 'http://localhost:3000'), []);
 

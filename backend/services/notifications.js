@@ -32,7 +32,7 @@ function notifyAdminsSafely(database, { type, title, message, dedupeKey }) {
   return new Promise(resolve => {
     database.run(
       `INSERT INTO notifications (user_id, type, title, message, dedupe_key)
-       SELECT id, ?, ?, ?, CONCAT(?, ':', id)
+       SELECT id, ?, ?, ?, CONCAT(?::text, ':', id)
        FROM users WHERE role IN ('admin', 'super_admin')
        ON CONFLICT (dedupe_key) DO NOTHING`,
       [type, title, message, dedupeKey],

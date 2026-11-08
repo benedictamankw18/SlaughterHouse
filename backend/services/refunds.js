@@ -3,6 +3,7 @@ const { isEmailAddress, queueEmailSafely } = require('./email/outbox');
 const config = require('../config');
 const logger = require('./logger');
 const { releaseBookingHold } = require('./booking-reservations');
+const { parseOrderItems } = require('./order-items');
 
 const FULL_REFUND_TOLERANCE = 0.005;
 
@@ -61,12 +62,7 @@ async function emailAdmins(db, order, refundedAmount) {
 }
 
 function parseItems(order) {
-  try {
-    const items = JSON.parse(order.items_json);
-    return Array.isArray(items) ? items : [];
-  } catch {
-    return [];
-  }
+  return parseOrderItems(order.items_json) || [];
 }
 
 async function applyRefund(db, order, { amountGhs, reference, reason = null }) {

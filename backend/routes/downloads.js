@@ -4,6 +4,7 @@ const database = require('../database');
 const { sendStoredFile } = require('../services/storage/response');
 const { requireCustomer } = require('../session-store');
 const { verifyDownloadToken, isDownloadableOrderStatus } = require('../services/downloads');
+const { parseOrderItems } = require('../services/order-items');
 const { databaseError } = require('../services/error-messages');
 const { rateLimit } = require('../services/rate-limit');
 const { rightsForPurchasedLicense, allowedFormats } = require('../services/license-rights');
@@ -21,8 +22,8 @@ router.get('/orders/:reference/downloads/:productId', rateLimit({ windowMs: 60 *
     if (!order) return response.status(404).json({ error: `No order was found for reference ${request.params.reference}.` });
     if (!isDownloadableOrderStatus(order.status)) return response.status(403).json({ error: 'Downloads are available only for fully paid orders.' });
     if (request.customer.id === undefined || request.customer.email.toLowerCase() !== String(order.customer_email).toLowerCase()) return response.status(403).json({ error: 'This download belongs to a different customer account.' });
-    let items;
-    try { items = JSON.parse(order.items_json); } catch { return response.status(500).json({ error: 'Order data is invalid.' }); }
+    const items = parseOrderItems(order.items_json);
+    if (!items) return response.status(500).json({ error: 'Order data is invalid.' });
     const item = items.find(candidate => String(candidate.productId) === String(request.params.productId) && (!candidate.type || candidate.type === 'beat'));
     if (!item || item.license !== license) return response.status(403).json({ error: 'Download is not available for this order.' });
 

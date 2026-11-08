@@ -23,6 +23,7 @@ const monitoring = require('../services/monitoring');
 const { checkReadiness } = require('../services/health');
 const storage = require('../services/storage');
 const { sendStoredFile } = require('../services/storage/response');
+const { parseOrderItems } = require('../services/order-items');
 
 const router = express.Router();
 router.use(rateLimit({ windowMs: 60 * 1000, max: 60, message: 'Too many administrator requests. Try again shortly.' }));
@@ -113,7 +114,7 @@ router.get('/admin/data', sessions.requireAdmin, (request, response) => {
     const orders = rawOrders.map(order => {
       let items = [];
       try {
-        items = JSON.parse(order.items_json).map(item => {
+        items = parseOrderItems(order.items_json).map(item => {
           const type = item.type || 'beat';
           const snapshot = orderItemSnapshots.get(`${order.id}:${type}:${item.productId}:${item.license || ''}`);
           return {
@@ -180,7 +181,7 @@ router.post('/admin/stream-releases', sessions.requireAdmin, async (request, res
       if (!coverFile) return response.status(400).json({ error: 'Choose a cover image or provide a cover URL.' });
       release.coverUrl = storage.publicUrl(coverFile);
     }
-    const sortRows = await queryRows('SELECT COALESCE(MAX(sort_order), 0) + 1 AS nextOrder FROM stream_releases');
+    const sortRows = await queryRows('SELECT COALESCE(MAX(sort_order), 0) + 1 AS "nextOrder" FROM stream_releases');
     const result = await runQuery(
       'INSERT INTO stream_releases (title, artist, credits_json, cover_url, links_json, sort_order, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [release.title, release.artist, JSON.stringify(release.credits), release.coverUrl, JSON.stringify(release.links), sortRows[0].nextOrder, 'unpublished']
@@ -673,9 +674,9 @@ router.patch('/admin/orders/:reference/fulfillment', sessions.requireAdmin, (req
   database.get('SELECT id, reference, items_json FROM orders WHERE reference = ?', [request.params.reference], async (error, order) => {
     if (error) return response.status(500).json({ error: databaseError('Loading the order failed.', error) });
     if (!order) return response.status(404).json({ error: `No order was found with reference ${request.params.reference}.` });
-    let items;
-    try { items = JSON.parse(order.items_json); } catch { return response.status(500).json({ error: 'Order data is invalid.' }); }
-    if (!Array.isArray(items) || !items.some(item => item.type === 'merchandise')) return response.status(400).json({ error: 'Fulfillment tracking only applies to orders that contain merchandise.' });
+    const items = parseOrderItems(order.items_json);
+    if (!items) return response.status(500).json({ error: 'Order data is invalid.' });
+    if (!items.some(item => item.type === 'merchandise')) return response.status(400).json({ error: 'Fulfillment tracking only applies to orders that contain merchandise.' });
     try {
       const result = await database.transaction(tx => updateFulfillmentStatus(tx, {
         orderId: order.id,
@@ -869,12 +870,8 @@ router.delete('/admin/merchandise/:id', sessions.requireAdmin, async (request, r
       queryRows("SELECT items_json FROM orders WHERE status IN ('pending', 'paid', 'partially_refunded')"),
     ]);
     const referencedByOrder = orders.some(order => {
-      try {
-        const items = typeof order.items_json === 'string' ? JSON.parse(order.items_json) : order.items_json;
-        return Array.isArray(items) && items.some(item => item.type === 'merchandise' && Number(item.productId) === merchandiseId);
-      } catch {
-        return false;
-      }
+      const items = parseOrderItems(order.items_json);
+      return items?.some(item => item.type === 'merchandise' && Number(item.productId) === merchandiseId) || false;
     });
     if (orderItems.length || sales.length || referencedByOrder) {
       return response.status(409).json({ error: 'This merchandise appears in order history and cannot be deleted. Deactivate it to remove it from the catalog.' });
@@ -1041,9 +1038,8 @@ router.post('/admin/orders/:reference/booking-resolution', sessions.requireAdmin
         if (!order) return { status: 404, error: 'No order was found for this reference.' };
         if (!order.fulfillment_review_required || order.status !== 'paid') return { status: 409, error: 'This paid order is not awaiting booking reconciliation.' };
         if (order.fulfillment_review_reason === 'refund_pending') return { status: 409, error: 'A refund is already pending for this order; do not assign another booking slot.' };
-        let items;
-        try { items = typeof order.items_json === 'string' ? JSON.parse(order.items_json) : order.items_json; } catch { items = null; }
-        if (!Array.isArray(items)) return { status: 500, error: 'Order details could not be read.' };
+        const items = parseOrderItems(order.items_json);
+        if (!items) return { status: 500, error: 'Order details could not be read.' };
         const bookingItem = items.find(item => item.type === 'booking');
         const oldSlots = bookingItem?.booking?.sessionSlots;
         if (!bookingItem || !Array.isArray(oldSlots) || !areAvailableBookingSlots(slots, oldSlots.length)) {

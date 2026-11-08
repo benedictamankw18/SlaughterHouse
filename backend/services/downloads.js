@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 const config = require('../config');
 const { DEFAULT_LICENSE_RIGHTS, rightsFor, allowedFormats } = require('./license-rights');
+const { parseOrderItems } = require('./order-items');
 
 const DOWNLOADABLE_ORDER_STATUSES = Object.freeze(['paid']);
 
@@ -31,16 +32,10 @@ function verifyDownloadToken(token, reference, productId, license, format) {
 
 function getDownloadItems(order, apiPublicUrl, licenseRights = null) {
   const rightsMap = licenseRights || DEFAULT_LICENSE_RIGHTS;
-  if (!order || typeof order !== 'object' || !order.items_json || typeof order.items_json !== 'string') return [];
+  if (!order || typeof order !== 'object' || order.items_json == null) return [];
 
-  let items;
-  try {
-    items = JSON.parse(order.items_json);
-  } catch {
-    return [];
-  }
-
-  if (!Array.isArray(items)) return [];
+  const items = parseOrderItems(order.items_json);
+  if (!items) return [];
 
   const baseUrl = apiPublicUrl ? String(apiPublicUrl).replace(/\/+$/, '') : '';
   return items
