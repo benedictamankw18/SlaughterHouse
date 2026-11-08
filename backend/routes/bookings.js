@@ -16,9 +16,14 @@ const queryRows = (query, parameters = []) => new Promise((resolve, reject) => d
 const run = (query, parameters = []) => new Promise((resolve, reject) => database.run(query, parameters, function (error) { error ? reject(error) : resolve(this); }));
 
 router.get('/bookings/fees', (request, response) => {
-  getPricing(database).then(({ bookingFees: fees }) => {
-    if (Object.values(fees).some(fee => !Number.isFinite(fee) || fee <= 0)) return response.status(503).json({ error: 'One or more booking service fees are missing or not greater than zero in the settings table.' });
-    response.json({ fees });
+  getPricing(database).then(({ bookingFees: fees, bookingRules }) => {
+    if (Object.values(fees).some(fee => !Number.isFinite(fee) || fee <= 0)
+      || !Number.isFinite(bookingRules.epAlbumDiscountPercent)
+      || bookingRules.epAlbumDiscountPercent < 0
+      || bookingRules.epAlbumDiscountPercent >= 100) {
+      return response.status(503).json({ error: 'One or more booking fees or pricing rules are missing or invalid in the settings table.' });
+    }
+    response.json({ fees, rules: bookingRules });
   }).catch(error => response.status(500).json({ error: databaseError('Loading booking fees failed.', error) }));
 });
 
@@ -57,7 +62,8 @@ router.post('/bookings/initialize-payment', bookingPaymentRateLimit, async (requ
   if (timezone !== 'Africa/Accra') return response.status(400).json({ error: 'Booking timezone must be Africa/Accra.' });
   if (Number(durationMinutes) !== 140) return response.status(400).json({ error: 'Each booking session must have a duration of exactly 140 minutes.' });
   let fees;
-  try { ({ bookingFees: fees } = await getPricing(database)); } catch (error) { return response.status(500).json({ error: databaseError('Loading booking fees failed.', error) }); }
+  let bookingRules;
+  try { ({ bookingFees: fees, bookingRules } = await getPricing(database)); } catch (error) { return response.status(500).json({ error: databaseError('Loading booking fees failed.', error) }); }
   const needsSongCount = service === 'ep-album';
   if (needsSongCount && (!Number.isInteger(normalizedSongCount) || normalizedSongCount < 1 || normalizedSongCount > 12)) return response.status(400).json({ error: 'Choose between 1 and 12 songs for EP / Album.' });
   const expectedSlotCount = needsSongCount ? Math.ceil(normalizedSongCount / 2) : 1;
@@ -67,7 +73,7 @@ router.post('/bookings/initialize-payment', bookingPaymentRateLimit, async (requ
   if (slots.some(slot => !slot || typeof slot !== 'object' || typeof slot.date !== 'string' || typeof slot.time !== 'string')) {
     return response.status(400).json({ error: 'Each booking slot must use the format { "date": "YYYY-MM-DD", "time": "HH:MM" }.' });
   }
-  const feeGhs = calculateBookingFee(service, normalizedSongCount, fees);
+  const feeGhs = calculateBookingFee(service, normalizedSongCount, fees, bookingRules.epAlbumDiscountPercent);
   if (!Number.isFinite(feeGhs) || feeGhs <= 0) return response.status(400).json({ error: `No valid price is configured for the "${service}" booking service.` });
   if (!areAvailableBookingSlots(slots, expectedSlotCount)) return response.status(400).json({ error: 'Choose a valid, non-overlapping Tuesday, Wednesday, Thursday, or Sunday slot for each 2h20 session. Slots must end by 9:00 PM.' });
   if (!paystackSecretKey) return response.status(503).json({ error: 'Booking payments are unavailable because PAYSTACK_SECRET_KEY is missing or still set to the example placeholder. Add a valid Paystack secret key to backend/.env and restart the server.' });

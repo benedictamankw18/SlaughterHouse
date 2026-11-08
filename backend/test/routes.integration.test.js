@@ -366,6 +366,7 @@ async function seedSettings(pool) {
     ['booking_fee_full_production_ghs', '1000'],
     ['booking_fee_beat_production_ghs', '500'],
     ['booking_fee_adverts_promos_ghs', '1000'],
+    ['booking_ep_album_discount_percent', '20'],
     ['beat_request_license_basic_ghs', '500'],
     ['beat_request_license_premium_ghs', '1000'],
     ['beat_request_license_unlimited_ghs', '2000'],

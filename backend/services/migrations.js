@@ -662,6 +662,13 @@ const migrations = [
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       )`
     ]
+  },
+  {
+    version: 34,
+    statements: [
+      `INSERT IGNORE INTO settings (setting_key, setting_value) VALUES
+        ('booking_ep_album_discount_percent', '20')`
+    ]
   }
 ];
 

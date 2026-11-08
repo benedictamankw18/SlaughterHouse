@@ -18,7 +18,8 @@
     "storage:migrate": "node scripts/migrate-local-media.js",
     "optimize:images": "node scripts/optimize-images.js",
     "storage:audit": "node scripts/audit-media.js",
-    "check:secrets": "node scripts/check-secrets.js"
+    "check:secrets": "node scripts/check-secrets.js",
+    "check:database-dumps": "node scripts/check-database-dumps.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1164.0",

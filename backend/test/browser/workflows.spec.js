@@ -100,7 +100,7 @@ async function mockApi(page, options = {}) {
     } else if (path === '/api/requests/beat-license-prices') {
       body = { prices: { basic: 100, premium: 200, unlimited: 300, exclusive: 400 } };
     } else if (path === '/api/bookings/fees') {
-      body = { fees: { mixtape: 250, 'full-production': 1000, 'beat-production': 500, 'adverts-promos': 250 } };
+      body = { fees: { mixtape: 250, 'full-production': 1000, 'beat-production': 500, 'adverts-promos': 250 }, rules: { epAlbumDiscountPercent: 20 } };
     } else if (path === '/api/auth/signup') {
       body = { message: 'Account created. Verify your email.', verificationToken: 'test-verification-token' };
     } else if (path === '/api/auth/verify-email') {
