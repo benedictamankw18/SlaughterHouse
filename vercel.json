@@ -2,6 +2,32 @@
   "version": 2,
   "installCommand": "npm ci --omit=dev --prefix backend",
   "outputDirectory": "frontend",
+  "redirects": [
+    { "source": "/admin.html", "destination": "/admin/admin.html", "permanent": true },
+    { "source": "/alerts.html", "destination": "/user/alerts.html", "permanent": true },
+    { "source": "/bookings.html", "destination": "/user/bookings.html", "permanent": true },
+    { "source": "/downloads.html", "destination": "/user/downloads.html", "permanent": true },
+    { "source": "/licenses.html", "destination": "/user/licenses.html", "permanent": true },
+    { "source": "/orders.html", "destination": "/user/orders.html", "permanent": true },
+    { "source": "/profile.html", "destination": "/user/profile.html", "permanent": true },
+    { "source": "/purchases.html", "destination": "/user/purchases.html", "permanent": true },
+    { "source": "/requests.html", "destination": "/user/requests.html", "permanent": true },
+    { "source": "/wishlist.html", "destination": "/user/wishlist.html", "permanent": true }
+  ],
+  "rewrites": [
+    { "source": "/beats.html", "destination": "/user/beats.html" },
+    { "source": "/booking.html", "destination": "/user/booking.html" },
+    { "source": "/merchandise.html", "destination": "/user/merchandise.html" },
+    { "source": "/produced.html", "destination": "/user/produced.html" },
+    { "source": "/payment-success.html", "destination": "/user/payment-success.html" },
+    { "source": "/certificate.html", "destination": "/user/certificate.html" },
+    { "source": "/verify-certificate.html", "destination": "/user/verify-certificate.html" },
+    { "source": "/cookies.html", "destination": "/user/cookies.html" },
+    { "source": "/license-terms.html", "destination": "/user/license-terms.html" },
+    { "source": "/privacy.html", "destination": "/user/privacy.html" },
+    { "source": "/refunds.html", "destination": "/user/refunds.html" },
+    { "source": "/terms.html", "destination": "/user/terms.html" }
+  ],
   "headers": [
     {
       "source": "/(.*)",
@@ -51,7 +77,7 @@
       ]
     },
     {
-      "source": "/admin.html",
+      "source": "/admin/admin.html",
       "headers": [
         { "key": "Content-Security-Policy", "value": "script-src 'self'" }
       ]
@@ -59,7 +85,7 @@
     {
       "source": "/payment-success.html",
       "headers": [
-        { "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-nGVsFfKCfCaLQItN/nXK65BD5p32r/JGc7D0oST7Co0='" }
+        { "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-MXdw84/FCBeYLnkDNOulNWziCfetaoZgYNnuUbDYo0k='" }
       ]
     },
     {
@@ -67,11 +93,11 @@
       "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
     },
     {
-      "source": "/alerts.html",
+      "source": "/user/alerts.html",
       "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
     },
     {
-      "source": "/bookings.html",
+      "source": "/user/bookings.html",
       "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
     },
     {
@@ -83,7 +109,7 @@
       "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
     },
     {
-      "source": "/downloads.html",
+      "source": "/user/downloads.html",
       "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
     },
     {
@@ -91,11 +117,11 @@
       "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
     },
     {
-      "source": "/licenses.html",
+      "source": "/user/licenses.html",
       "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
     },
     {
-      "source": "/orders.html",
+      "source": "/user/orders.html",
       "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
     },
     {
@@ -103,11 +129,11 @@
       "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
     },
     {
-      "source": "/profile.html",
+      "source": "/user/profile.html",
       "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
     },
     {
-      "source": "/purchases.html",
+      "source": "/user/purchases.html",
       "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
     },
     {
@@ -115,7 +141,7 @@
       "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
     },
     {
-      "source": "/requests.html",
+      "source": "/user/requests.html",
       "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
     },
     {
@@ -127,7 +153,55 @@
       "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
     },
     {
-      "source": "/wishlist.html",
+      "source": "/user/wishlist.html",
+      "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
+    },
+    {
+      "source": "/user/beats.html",
+      "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
+    },
+    {
+      "source": "/user/booking.html",
+      "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-aI90G5sPD7f4YuBx5WCMvswyUJTz9yhmLJsAjOYVX40='" }]
+    },
+    {
+      "source": "/user/merchandise.html",
+      "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-UjBeeDfOq49Yuuk5xvl8E68pYlsz7JX8xdCCDnGq03k='" }]
+    },
+    {
+      "source": "/user/produced.html",
+      "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
+    },
+    {
+      "source": "/user/payment-success.html",
+      "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-MXdw84/FCBeYLnkDNOulNWziCfetaoZgYNnuUbDYo0k='" }]
+    },
+    {
+      "source": "/user/certificate.html",
+      "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
+    },
+    {
+      "source": "/user/verify-certificate.html",
+      "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
+    },
+    {
+      "source": "/user/cookies.html",
+      "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
+    },
+    {
+      "source": "/user/license-terms.html",
+      "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
+    },
+    {
+      "source": "/user/privacy.html",
+      "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
+    },
+    {
+      "source": "/user/refunds.html",
+      "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
+    },
+    {
+      "source": "/user/terms.html",
       "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self'" }]
     }
   ],

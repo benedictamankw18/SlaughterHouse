@@ -236,6 +236,13 @@ async function mockApi(page, options = {}) {
       adminStreamReleases.push(release);
       status = 201;
       body = { id: release.id, title: release.title, status: release.status };
+    } else if (path === '/api/admin/merchandise' && method === 'POST') {
+      if (options.merchandiseDelayMs) await new Promise(resolve => setTimeout(resolve, options.merchandiseDelayMs));
+      status = 201;
+      body = { id: 91, title: data.title };
+    } else if (/^\/api\/admin\/merchandise\/\d+$/.test(path) && method === 'DELETE') {
+      if (options.merchandiseDelayMs) await new Promise(resolve => setTimeout(resolve, options.merchandiseDelayMs));
+      body = { id: Number(path.split('/').pop()), deleted: true };
     } else if (/^\/api\/admin\/stream-releases\/\d+\/status$/.test(path) && method === 'PATCH') {
       const release = adminStreamReleases.find(item => item.id === Number(path.split('/')[path.split('/').length - 2]));
       if (release) release.status = data.status;
@@ -458,7 +465,7 @@ test('customer submits a rated review', async ({ page }) => {
 
 test('admin signs in and approves a pending customer review', async ({ page }) => {
   const calls = await mockApi(page, { adminLogin: true, adminReview: true });
-  await page.goto('/admin.html');
+  await page.goto('/admin/admin.html');
 
   await page.locator('#admin-email').fill('admin@example.test');
   await page.locator('#admin-password').fill('Secure123');
@@ -476,7 +483,7 @@ test('admin signs in and approves a pending customer review', async ({ page }) =
 
 test('admin creates, updates, activates, deactivates, and deletes a stream release', async ({ page }) => {
   const calls = await mockApi(page, { adminLogin: true });
-  await page.goto('/admin.html');
+  await page.goto('/admin/admin.html');
   await page.locator('#admin-email').fill('admin@example.test');
   await page.locator('#admin-password').fill('Secure123');
   await page.getByRole('button', { name: 'Enter dashboard' }).click();
@@ -516,9 +523,84 @@ test('admin creates, updates, activates, deactivates, and deletes a stream relea
   expect(calls.find(call => call.path === '/api/admin/stream-releases' && call.method === 'POST').data.coverImage.name).toBe('cover.png');
 });
 
+test('admin create and delete actions disable their button and ignore duplicate submissions', async ({ page }) => {
+  const calls = await mockApi(page, { adminLogin: true, adminFilters: true, merchandiseDelayMs: 600 });
+  await page.goto('/admin/admin.html');
+  await page.locator('#admin-email').fill('admin@example.test');
+  await page.locator('#admin-password').fill('Secure123');
+  await page.getByRole('button', { name: 'Enter dashboard' }).click();
+  await expect(page.locator('#admin-dashboard')).toBeVisible();
+  await page.getByRole('button', { name: 'Content', exact: true }).click();
+  await page.getByRole('button', { name: 'Merchandise', exact: true }).click();
+  await page.getByRole('button', { name: 'Add Merchandise' }).click();
+
+  const createForm = page.locator('#merchandise-form');
+  await createForm.locator('[name="title"]').fill('Duplicate-safe item');
+  await createForm.locator('[name="description"]').fill('One request only');
+  await createForm.locator('[name="price"]').fill('20');
+  const saveButton = createForm.locator('button[type="submit"]');
+  const createResponse = page.waitForResponse(response =>
+    response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/admin/merchandise'
+  );
+  await saveButton.click();
+  await expect(saveButton).toBeDisabled();
+  await expect(saveButton).toHaveAttribute('aria-busy', 'true');
+  await expect(saveButton.locator('.admin-spinner')).toBeVisible();
+  await createForm.evaluate(form => form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+  await createResponse;
+  await expect(page.locator('#add-merchandise-dialog')).toBeHidden();
+  expect(calls.filter(call => call.path === '/api/admin/merchandise' && call.method === 'POST')).toHaveLength(1);
+
+  page.on('dialog', dialog => dialog.accept());
+  const deleteButton = page.locator('[data-merchandise-card="41"] [data-merchandise-delete="41"]');
+  const deleteResponse = page.waitForResponse(response =>
+    response.request().method() === 'DELETE' && new URL(response.url()).pathname === '/api/admin/merchandise/41'
+  );
+  await deleteButton.click();
+  await expect(deleteButton).toBeDisabled();
+  await expect(deleteButton).toHaveAttribute('aria-busy', 'true');
+  await expect(deleteButton.locator('.admin-spinner')).toBeVisible();
+  await deleteButton.evaluate(button => button.click());
+  await deleteResponse;
+  expect(calls.filter(call => call.path === '/api/admin/merchandise/41' && call.method === 'DELETE')).toHaveLength(1);
+});
+
+test('admin beat upload rejects oversized or unsupported files before sending', async ({ page }) => {
+  const calls = await mockApi(page, { adminLogin: true });
+  await page.goto('/admin/admin.html');
+  await page.locator('#admin-email').fill('admin@example.test');
+  await page.locator('#admin-password').fill('Secure123');
+  await page.getByRole('button', { name: 'Enter dashboard' }).click();
+  await expect(page.locator('#admin-dashboard')).toBeVisible();
+  await page.getByRole('button', { name: 'Content', exact: true }).click();
+  await page.getByRole('button', { name: 'Add beat' }).click();
+
+  const form = page.locator('#beat-form');
+  await form.locator('[name="title"]').fill('Upload guard test');
+  for (const price of ['basic', 'premium', 'unlimited', 'exclusive']) await form.locator(`[name="${price}"]`).fill('10');
+  await form.locator('[name="preview"]').setInputFiles({ name: 'preview.mp3', mimeType: 'audio/mpeg', buffer: Buffer.from('ID3preview') });
+  await form.locator('[name="mp3"]').setInputFiles({ name: 'track.mp3', mimeType: 'audio/mpeg', buffer: Buffer.from('ID3track') });
+  await form.locator('[name="wav"]').setInputFiles({ name: 'track.wav', mimeType: 'audio/wav', buffer: Buffer.from('RIFFtestWAVE') });
+  await form.locator('[name="stems"]').setInputFiles({ name: 'stems.txt', mimeType: 'text/plain', buffer: Buffer.from('not an audio file') });
+  await form.getByRole('button', { name: 'Save beat' }).click();
+
+  await expect(page.locator('#beat-form-message')).toContainText('Track stems: Choose a MP3, WAV, OGG, M4A, or MP4 audio file.');
+  expect(calls.filter(call => call.path === '/api/admin/beats')).toHaveLength(0);
+
+  await form.locator('[name="stems"]').evaluate(input => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([new Uint8Array(26 * 1024 * 1024)], 'stems.wav', { type: 'audio/wav' }));
+    input.files = transfer.files;
+  });
+  await form.getByRole('button', { name: 'Save beat' }).click();
+
+  await expect(page.locator('#beat-form-message')).toContainText('Track stems is 26.0 MB. The maximum is 25 MB.');
+  expect(calls.filter(call => call.path === '/api/admin/beats')).toHaveLength(0);
+});
+
 test('admin list sections search and filter their records', async ({ page }) => {
   const calls = await mockApi(page, { adminLogin: true, adminFilters: true, adminRole: 'super_admin' });
-  await page.goto('/admin.html');
+  await page.goto('/admin/admin.html');
   await page.locator('#admin-email').fill('admin@example.test');
   await page.locator('#admin-password').fill('Secure123');
   await page.getByRole('button', { name: 'Enter dashboard' }).click();
@@ -602,7 +684,7 @@ test('admin list sections search and filter their records', async ({ page }) => 
 
 test('admin completes required MFA enrollment before entering the dashboard', async ({ page }) => {
   const calls = await mockApi(page, { adminMfaEnrollment: true });
-  await page.goto('/admin.html');
+  await page.goto('/admin/admin.html');
   await page.locator('#admin-email').fill('admin@example.test');
   await page.locator('#admin-password').fill('test-password');
   await page.getByRole('button', { name: 'Enter dashboard' }).click();
@@ -640,10 +722,10 @@ test('policy pages are reachable and cross-linked from the footer', async ({ pag
     await page.goto(policy.path);
     await expect(page.getByRole('heading', { level: 1, name: policy.title })).toBeVisible();
     const policyNavigation = page.getByRole('navigation', { name: 'Policies and terms' });
-    await expect(policyNavigation.getByRole('link', { name: 'Privacy', exact: true })).toHaveAttribute('href', 'privacy.html');
-    await expect(policyNavigation.getByRole('link', { name: 'Terms', exact: true })).toHaveAttribute('href', 'terms.html');
-    await expect(policyNavigation.getByRole('link', { name: 'Refunds', exact: true })).toHaveAttribute('href', 'refunds.html');
-    await expect(policyNavigation.getByRole('link', { name: 'Cookies', exact: true })).toHaveAttribute('href', 'cookies.html');
+    await expect(policyNavigation.getByRole('link', { name: 'Privacy', exact: true })).toHaveAttribute('href', '/privacy.html');
+    await expect(policyNavigation.getByRole('link', { name: 'Terms', exact: true })).toHaveAttribute('href', '/terms.html');
+    await expect(policyNavigation.getByRole('link', { name: 'Refunds', exact: true })).toHaveAttribute('href', '/refunds.html');
+    await expect(policyNavigation.getByRole('link', { name: 'Cookies', exact: true })).toHaveAttribute('href', '/cookies.html');
   }
 });
 
@@ -675,7 +757,7 @@ test('policy pages have no automated WCAG 2.1 A/AA violations', async ({ page })
 test('admin resolves paid booking cases by assigning replacement sessions or requesting refunds', async ({ page }) => {
   const calls = await mockApi(page, { adminLogin: true, adminReconciliation: true });
   await seedAdminSession(page);
-  await page.goto('/admin.html');
+  await page.goto('/admin/admin.html');
   await expect(page.locator('#admin-dashboard')).toBeVisible();
   await page.getByRole('button', { name: 'Orders', exact: true }).click();
 
@@ -707,7 +789,7 @@ test('admin resolves paid booking cases by assigning replacement sessions or req
 test('admin displays saved GHS purchase amounts and exchange-rate freshness', async ({ page }) => {
   await mockApi(page, { adminLogin: true, adminPricing: true });
   await seedAdminSession(page);
-  await page.goto('/admin.html');
+  await page.goto('/admin/admin.html');
   await expect(page.locator('#admin-dashboard')).toBeVisible();
   await page.getByRole('button', { name: 'Artists', exact: true }).click();
   await expect(page.locator('#artists-list')).toContainText('GHS 154.32');
@@ -748,13 +830,13 @@ test('key storefront and admin pages have no automated WCAG 2.1 A/AA violations'
   }
 
   await seedAdminSession(page);
-  await page.goto('/admin.html');
+  await page.goto('/admin/admin.html');
   await expect(page.locator('#admin-dashboard')).toBeVisible();
   const adminScan = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
     .analyze();
   violations.push(...adminScan.violations.map(violation => ({
-    page: '/admin.html',
+    page: '/admin/admin.html',
     id: violation.id,
     impact: violation.impact,
     description: violation.description,
@@ -790,7 +872,7 @@ test('storefront layouts fit mobile, tablet, laptop, and desktop viewports', asy
     { path: '/booking.html', heading: 'Book a session' },
     { path: '/merchandise.html', heading: 'SHOP FROM THE VAULT' },
     { path: '/produced.html', heading: 'Stream Productions' },
-    { path: '/admin.html', heading: 'Admin dashboard', admin: true }
+    { path: '/admin/admin.html', heading: 'Admin dashboard', admin: true }
   ];
   await seedAdminSession(page);
 

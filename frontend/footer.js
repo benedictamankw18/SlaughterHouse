@@ -1,9 +1,9 @@
 document.querySelectorAll('.site-footer-genres').forEach(genreLinks => {
-  const allLink = genreLinks.querySelector('a[href="beats.html#beat-listing"]');
+  const allLink = genreLinks.querySelector('a[href$="beats.html#beat-listing"]');
   if (allLink && genreLinks.firstElementChild !== allLink) genreLinks.prepend(allLink);
 });
 
-document.querySelectorAll('.site-footer-services a[href="booking.html"]').forEach(bookingLink => {
+document.querySelectorAll('.site-footer-services a[href$="booking.html"]').forEach(bookingLink => {
   bookingLink.textContent = 'Book Session';
 });
 
@@ -26,11 +26,11 @@ document.querySelectorAll('.site-footer-bottom').forEach(footerBottom => {
   policyLinks.className = 'site-footer-policy-links';
   policyLinks.setAttribute('aria-label', 'Policies and terms');
   policyLinks.innerHTML = [
-    ['privacy.html', 'Privacy'],
-    ['terms.html', 'Terms'],
-    ['refunds.html', 'Refunds'],
-    ['cookies.html', 'Cookies'],
-    ['license-terms.html', 'Beat license terms']
+    ['/privacy.html', 'Privacy'],
+    ['/terms.html', 'Terms'],
+    ['/refunds.html', 'Refunds'],
+    ['/cookies.html', 'Cookies'],
+    ['/license-terms.html', 'Beat license terms']
   ].map(([href, label]) => `<a href="${href}">${label}</a>`).join('');
   const backToTopLink = footerBottom.querySelector('a');
   footerBottom.insertBefore(policyLinks, backToTopLink);

@@ -67,9 +67,17 @@ function clearBeatCoverPreview() {
 
 async function api(path, options = {}) {
   const response = await fetch(`${API}${path}`, { ...options, credentials: 'include', headers: { 'Content-Type': 'application/json', ...adminCsrfHeaders(options.method), ...(options.headers || {}) } });
-  const data = await response.json();
+  const text = await response.text();
+  let data = {};
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = {};
+    }
+  }
   if (!response.ok) {
-    const error = new Error(data.error || 'Request failed.');
+    const error = new Error(data.error || `Request failed (${response.status}).`);
     error.code = data.code;
     error.status = response.status;
     throw error;
@@ -77,9 +85,51 @@ async function api(path, options = {}) {
   return data;
 }
 
-function fileData(file) {
+// Mirrors the server-side upload rules so an oversized or unsupported file is
+// reported before it is base64-encoded into a very large request body.
+const UPLOAD_RULES = Object.freeze({
+  image: {
+    extensions: new Set(['.jpg', '.jpeg', '.png', '.webp']),
+    mime: new Set(['image/jpeg', 'image/png', 'image/webp']),
+    maxBytes: 5 * 1024 * 1024,
+    maxLabel: '5 MB',
+    description: 'JPG, PNG, or WebP image'
+  },
+  audio: {
+    extensions: new Set(['.mp3', '.wav', '.ogg', '.m4a', '.mp4']),
+    mime: new Set(['audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/mp4', 'video/mp4']),
+    maxBytes: 25 * 1024 * 1024,
+    maxLabel: '25 MB',
+    description: 'MP3, WAV, OGG, M4A, or MP4 audio file'
+  }
+});
+
+function formatUploadSize(bytes) {
+  const megabytes = bytes / (1024 * 1024);
+  return `${megabytes < 1 ? megabytes.toFixed(2) : megabytes.toFixed(1)} MB`;
+}
+
+function validateUploadFile(file, kind, label) {
+  const rule = UPLOAD_RULES[kind];
+  if (!rule) throw new Error(`${label}: This upload type is not supported.`);
+  const extension = (/\.[^.\\/]+$/.exec(file.name) || [''])[0].toLowerCase();
+  if (!rule.extensions.has(extension) || !rule.mime.has(String(file.type || '').toLowerCase())) {
+    throw new Error(`${label}: Choose a ${rule.description}.`);
+  }
+  if (file.size > rule.maxBytes) {
+    throw new Error(`${label} is ${formatUploadSize(file.size)}. The maximum is ${rule.maxLabel}.`);
+  }
+}
+
+function fileData(file, kind, label) {
   return new Promise((resolve, reject) => {
     if (!file) return resolve(null);
+    try {
+      validateUploadFile(file, kind, label);
+    } catch (error) {
+      reject(error);
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => resolve({ name: file.name, data: reader.result });
     reader.onerror = reject;
@@ -87,10 +137,37 @@ function fileData(file) {
   });
 }
 
-async function filesFrom(form, names) {
+async function filesFrom(form, fields) {
   const result = {};
-  for (const name of names) result[name] = await fileData(form.elements[name].files[0]);
+  for (const { name, kind, label } of fields) result[name] = await fileData(form.elements[name].files[0], kind, label);
   return result;
+}
+
+// Disables an action button and shows an inline spinner until the returned
+// function is called. Calling it twice is safe, which prevents duplicate
+// add/create/delete requests from a double click or a repeated submit.
+function startButtonBusy(button, label = 'Working…') {
+  if (!button || button.dataset.busy === 'true') return null;
+  const idleHtml = button.innerHTML;
+  button.dataset.busy = 'true';
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  button.classList.add('is-busy');
+  const spinner = document.createElement('span');
+  spinner.className = 'admin-spinner';
+  spinner.setAttribute('aria-hidden', 'true');
+  const text = document.createElement('span');
+  text.className = 'admin-busy-label';
+  text.textContent = label;
+  button.replaceChildren(spinner, text);
+  return function stopButtonBusy() {
+    if (button.dataset.busy !== 'true') return;
+    delete button.dataset.busy;
+    button.disabled = false;
+    button.removeAttribute('aria-busy');
+    button.classList.remove('is-busy');
+    button.innerHTML = idleHtml;
+  };
 }
 
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
@@ -359,7 +436,7 @@ function streamReleasePayload(form) {
 
 async function streamReleasePayloadWithCover(form) {
   const payload = streamReleasePayload(form);
-  payload.coverImage = await fileData(form.elements.coverImage.files[0]);
+  payload.coverImage = await fileData(form.elements.coverImage.files[0], 'image', 'Cover image');
   return payload;
 }
 
@@ -767,16 +844,21 @@ function saveAdminSession(data) {
 
 $('#admin-login-form').addEventListener('submit', async event => {
   event.preventDefault();
+  const stopBusy = startButtonBusy(event.submitter || $('#admin-login-form button[type="submit"]'), 'Signing in…');
+  if (!stopBusy) return;
   try {
     const data = await fetch(`${API}/api/admin/login`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: $('#admin-email').value, password: $('#admin-password').value }) }).then(async response => { const result = await response.json(); if (!response.ok) throw new Error(result.error); return result; });
     $('#admin-password').value = '';
     if (data.mfaRequired || data.mfaEnrollmentRequired) return showAdminMfaChallenge(data);
     saveAdminSession(data);
   } catch (error) { message('admin-login-message', error.message, true); }
+  finally { stopBusy(); }
 });
 
 $('#admin-mfa-form').addEventListener('submit', async event => {
   event.preventDefault();
+  const stopBusy = startButtonBusy(event.submitter || $('#admin-mfa-form button[type="submit"]'), 'Verifying…');
+  if (!stopBusy) return;
   try {
     const data = await api('/api/admin/mfa/verify', {
       method: 'POST',
@@ -796,10 +878,14 @@ $('#admin-mfa-form').addEventListener('submit', async event => {
     saveAdminSession(data);
   } catch (error) {
     message('admin-mfa-message', error.message, true);
+  } finally {
+    stopBusy();
   }
 });
 
-$('#admin-mfa-confirm').addEventListener('click', async () => {
+$('#admin-mfa-confirm').addEventListener('click', async event => {
+  const stopBusy = startButtonBusy(event.currentTarget, 'Finishing setup…');
+  if (!stopBusy) return;
   try {
     const data = await api('/api/admin/mfa/complete', {
       method: 'POST',
@@ -808,16 +894,21 @@ $('#admin-mfa-confirm').addEventListener('click', async () => {
     saveAdminSession(data);
   } catch (error) {
     message('admin-mfa-message', error.message, true);
+  } finally {
+    stopBusy();
   }
 });
 
-$('#admin-logout').addEventListener('click', async () => {
+$('#admin-logout').addEventListener('click', async event => {
+  const stopBusy = startButtonBusy(event.currentTarget, 'Logging out…');
+  if (!stopBusy) return;
   await api('/api/admin/logout', { method: 'POST' }).catch(error => {
     console.warn('Admin session could not be invalidated remotely:', error.message);
   }).finally(() => {
     sessionStorage.removeItem('adminToken');
     localStorage.removeItem('adminCsrfToken');
     sessionStorage.removeItem(activeAdminSectionKey);
+    stopBusy();
     location.reload();
   });
 });
@@ -833,11 +924,12 @@ $('#report-filter').addEventListener('submit', event => {
 
 $('#export-report').addEventListener('click', async event => {
   const button = event.currentTarget;
+  const stopBusy = startButtonBusy(button, 'Exporting…');
+  if (!stopBusy) return;
   const form = $('#report-filter');
   const query = new URLSearchParams();
   if (form.elements.from.value) query.set('from', form.elements.from.value);
   if (form.elements.to.value) query.set('to', form.elements.to.value);
-  button.disabled = true;
   try {
     const response = await fetch(`${API}/api/admin/reports.csv?${query}`, {
       credentials: 'include'
@@ -854,7 +946,7 @@ $('#export-report').addEventListener('click', async event => {
   } catch (error) {
     message('report-message', error.message || 'Could not export the filtered report.', true);
   } finally {
-    button.disabled = false;
+    stopBusy();
   }
 });
 
@@ -868,8 +960,8 @@ $('#business-settings-form').addEventListener('submit', async event => {
   const form = event.currentTarget;
   const settings = Object.fromEntries([...form.elements].filter(element => element.name && element.type === 'number').map(element => [element.name, element.value]));
   if (!window.confirm('Save these business settings? Price and exchange-rate changes affect future checkouts and requests.')) return;
-  const button = form.querySelector('button[type="submit"]');
-  button.disabled = true;
+  const stopBusy = startButtonBusy(form.querySelector('button[type="submit"]'), 'Saving…');
+  if (!stopBusy) return;
   try {
     await api('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ settings }) });
     message('business-settings-message', 'Business settings saved.');
@@ -877,7 +969,7 @@ $('#business-settings-form').addEventListener('submit', async event => {
   } catch (error) {
     message('business-settings-message', error.message || 'Could not save business settings.', true);
   } finally {
-    button.disabled = false;
+    stopBusy();
   }
 });
 
@@ -887,9 +979,9 @@ $('#staff-list').addEventListener('submit', async event => {
   event.preventDefault();
   const role = form.elements.role.value;
   if (!window.confirm(`Change this user's role to ${role}? Their active sessions will be revoked.`)) return;
-  const button = form.querySelector('button[type="submit"]');
+  const stopBusy = startButtonBusy(form.querySelector('button[type="submit"]'), 'Updating…');
+  if (!stopBusy) return;
   const status = form.querySelector('[data-staff-message]');
-  button.disabled = true;
   try {
     await api(`/api/admin/staff/${form.dataset.staffId}/role`, { method: 'PATCH', body: JSON.stringify({ role }) });
     await loadStaff();
@@ -897,20 +989,23 @@ $('#staff-list').addEventListener('submit', async event => {
   } catch (error) {
     status.textContent = error.message || 'Could not update this role.';
     status.classList.add('error');
-    button.disabled = false;
+  } finally {
+    stopBusy();
   }
 });
 
 $('#admin-notifications-list').addEventListener('click', async event => {
   const button = event.target.closest('[data-admin-notification-state]');
   if (!button) return;
-  button.disabled = true;
+  const stopBusy = startButtonBusy(button, 'Updating…');
+  if (!stopBusy) return;
   try {
     await api(`/api/admin/notifications/${button.dataset.notificationId}/${button.dataset.adminNotificationState}`, { method: 'PATCH' });
     await loadAdminAlerts();
   } catch (error) {
-    button.disabled = false;
     message('admin-alert-message', error.message, true);
+  } finally {
+    stopBusy();
   }
 });
 
@@ -920,8 +1015,8 @@ $('#license-rights-list').addEventListener('submit', async event => {
   event.preventDefault();
   const card = form.closest('[data-license-card]');
   const status = card.querySelector('[data-license-message]');
-  const button = form.querySelector('button[type="submit"]');
-  button.disabled = true;
+  const stopBusy = startButtonBusy(form.querySelector('button[type="submit"]'), 'Saving…');
+  if (!stopBusy) return;
   try {
     let usageLimits;
     try { usageLimits = JSON.parse(form.elements.usageLimits.value); } catch { throw new Error('Usage limits must be valid JSON.'); }
@@ -936,9 +1031,10 @@ $('#license-rights-list').addEventListener('submit', async event => {
     await api(`/api/admin/license-rights/${encodeURIComponent(form.dataset.licenseType)}`, { method: 'PUT', body: JSON.stringify(definition) });
     await loadLicenseRights();
   } catch (error) {
-    button.disabled = false;
     status.textContent = error.message || 'Could not save this license definition.';
     status.classList.add('error');
+  } finally {
+    stopBusy();
   }
 });
 
@@ -965,7 +1061,8 @@ $('#license-rights-list').addEventListener('click', async event => {
   if (deleteButton && !window.confirm(`Delete the ${type} license definition? Its custom rights will be removed and the tier deactivated. Rights snapshots already issued to customers will be kept.`)) return;
   if (statusButton && !window.confirm(`Deactivate the ${type} license? It will no longer be offered for new beat purchases.`)) return;
   const actionButton = statusButton || deleteButton;
-  actionButton.disabled = true;
+  const stopBusy = startButtonBusy(actionButton, deleteButton ? 'Deleting…' : 'Deactivating…');
+  if (!stopBusy) return;
   try {
     if (deleteButton) {
       await api(`/api/admin/license-definitions/${encodeURIComponent(type)}`, { method: 'DELETE' });
@@ -977,9 +1074,10 @@ $('#license-rights-list').addEventListener('click', async event => {
     }
     await loadLicenseRights();
   } catch (error) {
-    actionButton.disabled = false;
     status.textContent = error.message || `Could not update the ${type} license.`;
     status.classList.add('error');
+  } finally {
+    stopBusy();
   }
 });
 
@@ -994,7 +1092,8 @@ $('#certificate-list').addEventListener('click', async event => {
   const actionButton = event.target.closest('[data-certificate-action]');
   if (!detailsButton && !pdfButton && !actionButton) return;
   const button = detailsButton || pdfButton || actionButton;
-  button.disabled = true;
+  const stopBusy = startButtonBusy(button, actionButton ? 'Working…' : 'Loading…');
+  if (!stopBusy) return;
   try {
     if (detailsButton) {
       const card = detailsButton.closest('.admin-certificate-card');
@@ -1044,7 +1143,7 @@ $('#certificate-list').addEventListener('click', async event => {
   } catch (error) {
     message('certificate-admin-message', error.message || 'Could not complete the certificate action.', true);
   } finally {
-    button.disabled = false;
+    stopBusy();
   }
 });
 
@@ -1061,9 +1160,9 @@ $('#close-add-license').addEventListener('click', () => $('#add-license-dialog')
 $('#license-form').addEventListener('submit', async event => {
   event.preventDefault();
   const form = event.currentTarget;
-  const button = form.querySelector('button[type="submit"]');
   const formMessage = $('#license-form-message');
-  button.disabled = true;
+  const stopBusy = startButtonBusy(form.querySelector('button[type="submit"]'), 'Activating…');
+  if (!stopBusy) return;
   try {
     await api('/api/admin/license-definitions', {
       method: 'POST',
@@ -1075,7 +1174,7 @@ $('#license-form').addEventListener('submit', async event => {
     formMessage.textContent = error.message || 'Could not activate this license.';
     formMessage.classList.add('error');
   } finally {
-    button.disabled = false;
+    stopBusy();
   }
 });
 
@@ -1098,6 +1197,7 @@ $('#add-beat-button').addEventListener('click', () => {
   form.reset();
   clearBeatCoverPreview();
   message('beat-message', '');
+  message('beat-form-message', '');
   $('#add-beat-dialog').showModal();
   form.elements.title.focus();
 });
@@ -1110,7 +1210,7 @@ $('#beat-form').elements.cover.addEventListener('change', event => {
   if (!file) return;
   if (!file.type.startsWith('image/')) {
     event.currentTarget.value = '';
-    message('beat-message', 'Cover art must be an image file.', true);
+    message('beat-form-message', 'Cover art must be an image file.', true);
     return;
   }
   beatCoverObjectUrl = URL.createObjectURL(file);
@@ -1162,8 +1262,8 @@ $('#stream-release-form').elements.coverImage.addEventListener('change', event =
 $('#stream-release-form').addEventListener('submit', async event => {
   event.preventDefault();
   const form = event.currentTarget;
-  const button = form.querySelector('button[type="submit"]');
-  button.disabled = true;
+  const stopBusy = startButtonBusy(form.querySelector('button[type="submit"]'), 'Creating…');
+  if (!stopBusy) return;
   try {
     await api('/api/admin/stream-releases', { method: 'POST', body: JSON.stringify(await streamReleasePayloadWithCover(form)) });
     $('#add-stream-release-dialog').close();
@@ -1172,7 +1272,7 @@ $('#stream-release-form').addEventListener('submit', async event => {
   } catch (error) {
     message('stream-release-form-message', error.message || 'Could not create stream release.', true);
   } finally {
-    button.disabled = false;
+    stopBusy();
   }
 });
 
@@ -1202,8 +1302,8 @@ $('#stream-release-management-list').addEventListener('submit', async event => {
   if (!form) return;
   event.preventDefault();
   const statusMessage = form.querySelector('[data-stream-release-item-message]');
-  const button = form.querySelector('button[type="submit"]');
-  button.disabled = true;
+  const stopBusy = startButtonBusy(form.querySelector('button[type="submit"]'), 'Saving…');
+  if (!stopBusy) return;
   try {
     await api(`/api/admin/stream-releases/${form.dataset.streamReleaseId}`, {
       method: 'PATCH',
@@ -1215,7 +1315,7 @@ $('#stream-release-management-list').addEventListener('submit', async event => {
     statusMessage.textContent = error.message || 'Could not update stream release.';
     statusMessage.classList.add('error');
   } finally {
-    button.disabled = false;
+    stopBusy();
   }
 });
 
@@ -1241,7 +1341,8 @@ $('#stream-release-management-list').addEventListener('click', async event => {
   const card = button.closest('[data-stream-release-id]');
   const statusMessage = card.querySelector('[data-stream-release-item-message]');
   if (deleteButton && !window.confirm('Delete this stream release? This cannot be undone.')) return;
-  button.disabled = true;
+  const stopBusy = startButtonBusy(button, deleteButton ? 'Deleting…' : 'Updating…');
+  if (!stopBusy) return;
   try {
     if (statusButton) {
       await api(`/api/admin/stream-releases/${id}/status`, {
@@ -1257,7 +1358,7 @@ $('#stream-release-management-list').addEventListener('click', async event => {
   } catch (error) {
     statusMessage.textContent = error.message || 'Could not update stream release.';
     statusMessage.classList.add('error');
-    button.disabled = false;
+    stopBusy();
   }
 });
 
@@ -1282,7 +1383,8 @@ $('#orders-list').addEventListener('click', async event => {
   const section = button.closest('[data-booking-resolution]');
   const statusMessage = section.querySelector('[data-booking-resolution-message]');
   const reference = section.dataset.bookingResolution;
-  button.disabled = true;
+  const stopBusy = startButtonBusy(button, assignButton ? 'Assigning…' : 'Requesting…');
+  if (!stopBusy) return;
   try {
     if (assignButton) {
       const dates = [...section.querySelectorAll('[data-replacement-date]')];
@@ -1309,7 +1411,7 @@ $('#orders-list').addEventListener('click', async event => {
     statusMessage.textContent = error.message || 'Could not resolve the booking payment.';
     statusMessage.classList.add('error');
   } finally {
-    button.disabled = false;
+    stopBusy();
   }
 });
 
@@ -1340,7 +1442,8 @@ $('#certificate-filter').querySelectorAll('select, input[type="date"]').forEach(
 
 $('#export-orders').addEventListener('click', async event => {
   const button = event.currentTarget;
-  button.disabled = true;
+  const stopBusy = startButtonBusy(button, 'Exporting…');
+  if (!stopBusy) return;
   try {
     const response = await fetch(`${API}/api/admin/orders.csv`, { credentials: 'include' });
     if (!response.ok) {
@@ -1355,7 +1458,7 @@ $('#export-orders').addEventListener('click', async event => {
   } catch (error) {
     message('admin-login-message', error.message, true);
   } finally {
-    button.disabled = false;
+    stopBusy();
   }
 });
 
@@ -1365,14 +1468,15 @@ $('#reviews-list').addEventListener('click', async event => {
   if (button.dataset.reviewStatus === 'removed' && !window.confirm('Remove this review from public listings?')) return;
   const card = button.closest('.admin-list-item');
   const reviewId = card.querySelector('[data-review-id]').dataset.reviewId;
-  button.disabled = true;
+  const stopBusy = startButtonBusy(button, 'Saving…');
+  if (!stopBusy) return;
   try {
     await api(`/api/admin/reviews/${reviewId}/status`, { method: 'PATCH', body: JSON.stringify({ status: button.dataset.reviewStatus }) });
     await loadDashboard();
   } catch (error) {
-    button.disabled = false;
     card.querySelector('[data-review-message]').textContent = error.message;
     card.querySelector('[data-review-message]').classList.add('error');
+    stopBusy();
   }
 });
 
@@ -1384,24 +1488,25 @@ $('#bookings-list').addEventListener('click', async event => {
   const notes = card.querySelector(`[data-booking-notes="${button.dataset.saveBookingStatus}"]`);
   const statusMessage = card.querySelector('[data-booking-message]');
   if (select.value === 'cancelled' && !window.confirm('Cancel this booking? This sends a cancellation notice to the customer.')) return;
-  button.disabled = true;
+  const stopBusy = startButtonBusy(button, 'Saving…');
+  if (!stopBusy) return;
   try {
     await api(`/api/admin/bookings/${button.dataset.saveBookingStatus}/status`, { method: 'PATCH', body: JSON.stringify({ status: select.value, notes: notes.value }) });
     statusMessage.textContent = 'Booking status saved.';
     statusMessage.classList.remove('error');
     await loadDashboard();
   } catch (error) {
-    button.disabled = false;
     statusMessage.textContent = error.message;
     statusMessage.classList.add('error');
+    stopBusy();
   }
 });
 
 $('#booking-availability-form').addEventListener('submit', async event => {
   event.preventDefault();
   const form = event.currentTarget;
-  const button = form.querySelector('button[type="submit"]');
-  button.disabled = true;
+  const stopBusy = startButtonBusy(form.querySelector('button[type="submit"]'), 'Saving…');
+  if (!stopBusy) return;
   try {
     const result = await api('/api/admin/bookings/availability', {
       method: 'POST',
@@ -1411,16 +1516,16 @@ $('#booking-availability-form').addEventListener('submit', async event => {
   } catch (error) {
     message('booking-availability-message', error.message || 'Could not update booking availability.', true);
   } finally {
-    button.disabled = false;
+    stopBusy();
   }
 });
 
-$('#remove-booking-slot').addEventListener('click', async () => {
+$('#remove-booking-slot').addEventListener('click', async event => {
   const form = $('#booking-availability-form');
   if (!form.reportValidity()) return;
   if (!window.confirm(`Remove the availability override for ${form.elements.date.value} at ${form.elements.time.value}?`)) return;
-  const button = $('#remove-booking-slot');
-  button.disabled = true;
+  const stopBusy = startButtonBusy(event.currentTarget, 'Removing…');
+  if (!stopBusy) return;
   try {
     const query = new URLSearchParams({ date: form.elements.date.value, time: form.elements.time.value });
     await api(`/api/admin/bookings/availability?${query}`, { method: 'DELETE' });
@@ -1428,22 +1533,32 @@ $('#remove-booking-slot').addEventListener('click', async () => {
   } catch (error) {
     message('booking-availability-message', error.message || 'Could not remove booking availability.', true);
   } finally {
-    button.disabled = false;
+    stopBusy();
   }
 });
 
 $('#beat-form').addEventListener('submit', async event => {
   event.preventDefault();
   const form = event.currentTarget;
+  const stopBusy = startButtonBusy(form.querySelector('button[type="submit"]'), 'Saving beat…');
+  if (!stopBusy) return;
   try {
-    const files = await filesFrom(form, ['cover', 'preview', 'mp3', 'wav', 'stems']);
+    const files = await filesFrom(form, [
+      { name: 'cover', kind: 'image', label: 'Cover art' },
+      { name: 'preview', kind: 'audio', label: 'Tagged preview file' },
+      { name: 'mp3', kind: 'audio', label: 'Main MP3' },
+      { name: 'wav', kind: 'audio', label: 'WAV file' },
+      { name: 'stems', kind: 'audio', label: 'Track stems' }
+    ]);
     await api('/api/admin/beats', { method: 'POST', body: JSON.stringify({ title: form.elements.title.value, bpm: form.elements.bpm.value, previewDurationSeconds: form.elements.previewDurationSeconds.value, musicalKey: form.elements.musicalKey.value, genre: form.elements.genre.value, mood: form.elements.mood.value, prices: { basic: form.elements.basic.value, premium: form.elements.premium.value, unlimited: form.elements.unlimited.value, exclusive: form.elements.exclusive.value }, files }) });
     form.reset();
     clearBeatCoverPreview();
+    message('beat-form-message', '');
     $('#add-beat-dialog').close();
     message('beat-message', 'Beat saved.');
     await loadDashboard();
-  } catch (error) { message('beat-message', error.message, true); }
+  } catch (error) { message('beat-form-message', error.message, true); }
+  finally { stopBusy(); }
 });
 
 $('#beat-management-list').addEventListener('submit', async event => {
@@ -1452,8 +1567,8 @@ $('#beat-management-list').addEventListener('submit', async event => {
   event.preventDefault();
   const fields = form.elements;
   const statusMessage = form.closest('.admin-beat-card').querySelector('[data-beat-message]');
-  const saveButton = form.querySelector('button[type="submit"]');
-  saveButton.disabled = true;
+  const stopBusy = startButtonBusy(form.querySelector('button[type="submit"]'), 'Saving…');
+  if (!stopBusy) return;
   try {
     await api(`/api/admin/beats/${form.dataset.beatId}`, { method: 'PATCH', body: JSON.stringify({
       title: fields.title.value,
@@ -1468,9 +1583,9 @@ $('#beat-management-list').addEventListener('submit', async event => {
     statusMessage.classList.remove('error');
     await loadDashboard();
   } catch (error) {
-    saveButton.disabled = false;
     statusMessage.textContent = error.message;
     statusMessage.classList.add('error');
+    stopBusy();
   }
 });
 
@@ -1495,40 +1610,42 @@ $('#beat-management-list').addEventListener('click', async event => {
     const status = statusButton.dataset.nextStatus;
     const verb = status === 'published' ? 'Activate' : 'Deactivate';
     if (!window.confirm(`${verb} "${card.querySelector('.admin-beat-editor [name="title"]').value}"?`)) return;
-    statusButton.disabled = true;
+    const stopBusy = startButtonBusy(statusButton, status === 'published' ? 'Activating…' : 'Deactivating…');
+    if (!stopBusy) return;
     try {
       await api(`/api/admin/beats/${statusButton.dataset.beatStatus}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
       await loadDashboard();
     } catch (error) {
-      statusButton.disabled = false;
       statusMessage.textContent = error.message || 'Could not update beat status.';
       statusMessage.classList.add('error');
+      stopBusy();
     }
     return;
   }
   const deleteButton = event.target.closest('[data-beat-delete]');
   if (!deleteButton) return;
   if (!window.confirm(`Permanently delete "${card.querySelector('.admin-beat-editor [name="title"]').value}"? This cannot be undone.`)) return;
-  deleteButton.disabled = true;
   const statusMessage = card.querySelector('[data-beat-message]');
+  const stopBusy = startButtonBusy(deleteButton, 'Deleting…');
+  if (!stopBusy) return;
   try {
     await api(`/api/admin/beats/${deleteButton.dataset.beatDelete}`, { method: 'DELETE' });
     await loadDashboard();
   } catch (error) {
-    deleteButton.disabled = false;
     statusMessage.textContent = error.message || 'Could not delete beat.';
     statusMessage.classList.add('error');
+    stopBusy();
   }
 });
 
 $('#merchandise-form').addEventListener('submit', async event => {
   event.preventDefault();
   const form = event.currentTarget;
-  const submitButton = form.querySelector('button[type="submit"]');
   const formMessage = $('#merchandise-form-message');
-  submitButton.disabled = true;
+  const stopBusy = startButtonBusy(form.querySelector('button[type="submit"]'), 'Saving…');
+  if (!stopBusy) return;
   try {
-    await api('/api/admin/merchandise', { method: 'POST', body: JSON.stringify({ title: form.elements.title.value, description: form.elements.description.value, price: form.elements.price.value, photo: await fileData(form.elements.photo.files[0]) }) });
+    await api('/api/admin/merchandise', { method: 'POST', body: JSON.stringify({ title: form.elements.title.value, description: form.elements.description.value, price: form.elements.price.value, photo: await fileData(form.elements.photo.files[0], 'image', 'Photo') }) });
     form.reset();
     $('#add-merchandise-dialog').close();
     formMessage.textContent = '';
@@ -1539,7 +1656,7 @@ $('#merchandise-form').addEventListener('submit', async event => {
     formMessage.textContent = error.message || 'Could not save merchandise.';
     formMessage.classList.add('error');
   } finally {
-    submitButton.disabled = false;
+    stopBusy();
   }
 });
 
@@ -1547,10 +1664,10 @@ $('#merchandise-management-list').addEventListener('submit', async event => {
   const inventoryForm = event.target.closest('.admin-inventory-form');
   if (inventoryForm) {
     event.preventDefault();
-    const button = inventoryForm.querySelector('button[type="submit"]');
     const statusMessage = inventoryForm.querySelector('[data-inventory-message]');
     const value = inventoryForm.elements.stockQuantity.value.trim();
-    button.disabled = true;
+    const stopBusy = startButtonBusy(inventoryForm.querySelector('button[type="submit"]'), 'Saving…');
+    if (!stopBusy) return;
     try {
       await api(`/api/admin/merchandise/${inventoryForm.dataset.merchandiseId}/inventory`, {
         method: 'PATCH',
@@ -1560,9 +1677,9 @@ $('#merchandise-management-list').addEventListener('submit', async event => {
       statusMessage.classList.remove('error');
       await loadDashboard();
     } catch (error) {
-      button.disabled = false;
       statusMessage.textContent = error.message || 'Could not save inventory.';
       statusMessage.classList.add('error');
+      stopBusy();
     }
     return;
   }
@@ -1570,9 +1687,9 @@ $('#merchandise-management-list').addEventListener('submit', async event => {
   if (!form) return;
   event.preventDefault();
   const card = form.closest('.admin-merchandise-card');
-  const button = form.querySelector('button[type="submit"]');
   const statusMessage = card.querySelector('[data-merchandise-message]');
-  button.disabled = true;
+  const stopBusy = startButtonBusy(form.querySelector('button[type="submit"]'), 'Saving…');
+  if (!stopBusy) return;
   try {
     await api(`/api/admin/merchandise/${form.dataset.merchandiseId}`, {
       method: 'PATCH',
@@ -1580,14 +1697,14 @@ $('#merchandise-management-list').addEventListener('submit', async event => {
         title: form.elements.title.value,
         description: form.elements.description.value,
         price: form.elements.price.value,
-        photo: await fileData(form.elements.photo.files[0])
+        photo: await fileData(form.elements.photo.files[0], 'image', 'Photo')
       })
     });
     await loadDashboard();
   } catch (error) {
-    button.disabled = false;
     statusMessage.textContent = error.message || 'Could not update merchandise.';
     statusMessage.classList.add('error');
+    stopBusy();
   }
 });
 
@@ -1611,7 +1728,8 @@ $('#merchandise-management-list').addEventListener('click', async event => {
     const status = statusButton.dataset.nextStatus;
     const title = card.querySelector('.admin-merchandise-editor [name="title"]').value;
     if (!window.confirm(`${status === 'published' ? 'Activate' : 'Deactivate'} "${title}"?`)) return;
-    statusButton.disabled = true;
+    const stopBusy = startButtonBusy(statusButton, status === 'published' ? 'Activating…' : 'Deactivating…');
+    if (!stopBusy) return;
     try {
       await api(`/api/admin/merchandise/${statusButton.dataset.merchandiseStatus}/status`, {
         method: 'PATCH',
@@ -1619,10 +1737,10 @@ $('#merchandise-management-list').addEventListener('click', async event => {
       });
       await loadDashboard();
     } catch (error) {
-      statusButton.disabled = false;
       const messageElement = card.querySelector('[data-merchandise-message]');
       messageElement.textContent = error.message || 'Could not update merchandise status.';
       messageElement.classList.add('error');
+      stopBusy();
     }
     return;
   }
@@ -1630,15 +1748,16 @@ $('#merchandise-management-list').addEventListener('click', async event => {
   if (!deleteButton) return;
   const title = card.querySelector('.admin-merchandise-editor [name="title"]').value;
   if (!window.confirm(`Permanently delete "${title}"? This cannot be undone.`)) return;
-  deleteButton.disabled = true;
+  const stopBusy = startButtonBusy(deleteButton, 'Deleting…');
+  if (!stopBusy) return;
   try {
     await api(`/api/admin/merchandise/${deleteButton.dataset.merchandiseDelete}`, { method: 'DELETE' });
     await loadDashboard();
   } catch (error) {
-    deleteButton.disabled = false;
     const messageElement = card.querySelector('[data-merchandise-message]');
     messageElement.textContent = error.message || 'Could not delete merchandise.';
     messageElement.classList.add('error');
+    stopBusy();
   }
 });
 
@@ -1646,9 +1765,9 @@ $('#requests-list').addEventListener('submit', async event => {
   const form = event.target.closest('[data-request-id]');
   if (!form) return;
   event.preventDefault();
-  const button = form.querySelector('button[type="submit"]');
   const statusMessage = form.querySelector('[data-request-message]');
-  button.disabled = true;
+  const stopBusy = startButtonBusy(form.querySelector('button[type="submit"]'), 'Saving…');
+  if (!stopBusy) return;
   try {
     await api(`/api/admin/requests/${form.dataset.requestId}/status`, {
       method: 'PATCH',
@@ -1662,9 +1781,9 @@ $('#requests-list').addEventListener('submit', async event => {
     statusMessage.classList.remove('error');
     await loadDashboard();
   } catch (error) {
-    button.disabled = false;
     statusMessage.textContent = error.message;
     statusMessage.classList.add('error');
+    stopBusy();
   }
 });
 
@@ -1672,5 +1791,15 @@ $('#withdrawal-form').addEventListener('submit', async event => {
   event.preventDefault();
   const form = event.currentTarget;
   if (!window.confirm(`Record a withdrawal of ${formatMoney(form.elements.amount.value)}?`)) return;
-  try { await api('/api/admin/withdraw', { method: 'POST', body: JSON.stringify({ amount: form.elements.amount.value, password: form.elements.password.value }) }); form.reset(); message('withdrawal-message', 'Withdrawal recorded.'); } catch (error) { message('withdrawal-message', error.message, true); }
+  const stopBusy = startButtonBusy(form.querySelector('button[type="submit"]'), 'Recording…');
+  if (!stopBusy) return;
+  try {
+    await api('/api/admin/withdraw', { method: 'POST', body: JSON.stringify({ amount: form.elements.amount.value, password: form.elements.password.value }) });
+    form.reset();
+    message('withdrawal-message', 'Withdrawal recorded.');
+  } catch (error) {
+    message('withdrawal-message', error.message, true);
+  } finally {
+    stopBusy();
+  }
 });
