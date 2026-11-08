@@ -37,7 +37,7 @@ test('administrator alerts are inserted for every admin with recipient-specific 
     dedupeKey: 'payment-failed:REF:charge.failed'
   });
   assert.equal(result, true);
-  assert.match(call.query, /SELECT id, \?, \?, \?, CONCAT\(\?, ':', id\)/);
+  assert.match(call.query, /SELECT id, \?, \?, \?, CONCAT\(\?::text, ':', id\)/);
   assert.match(call.query, /FROM users WHERE role IN \('admin', 'super_admin'\)/);
   assert.match(call.query, /ON CONFLICT \(dedupe_key\) DO NOTHING/);
   assert.deepEqual(call.parameters, ['payment_failed', 'Payment failed', 'Order REF failed.', 'payment-failed:REF:charge.failed']);

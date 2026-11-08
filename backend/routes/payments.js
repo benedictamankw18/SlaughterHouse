@@ -4,6 +4,7 @@ const database = require('../database');
 const config = require('../config');
 const { getPricing, getUsdGhsRate } = require('../services/pricing');
 const { getDownloadItems } = require('../services/downloads');
+const { parseOrderItems } = require('../services/order-items');
 const { databaseError } = require('../services/error-messages');
 const validators = require('../services/input-validation');
 const { recordAuditSafely } = require('../services/audit');
@@ -41,8 +42,8 @@ async function hasPaidExclusiveLicense(queryAll, beatId, excludedReference = nul
     parameters
   );
   return rows.some(order => {
-    let items;
-    try { items = JSON.parse(order.items_json); } catch { return false; }
+    const items = parseOrderItems(order.items_json);
+    if (!items) return false;
     const purchasedExclusive = items.some(item => item.type === 'beat' && Number(item.productId) === Number(beatId) && item.license === 'exclusive');
     return purchasedExclusive && (!order.license_id || (!order.revoked_at && Number(order.license_active)));
   });
@@ -354,8 +355,10 @@ router.post('/payments/webhook', paymentWebhookRateLimit, async (request, respon
         conflict: { reason: 'order_already_refunded', reference: eventReference }
       };
       if (Number(event.data.amount) !== Math.round(Number(order.amount) * 100) || event.data.currency !== order.currency) rejectWebhook(400, { error: 'Payment webhook amount could not be reconciled.' });
+      const orderItems = parseOrderItems(order.items_json);
+      if (!orderItems) rejectWebhook(500, { error: 'Order data is invalid.' });
       let items;
-      try { items = snapshotLegacyBeatPrices(order, JSON.parse(order.items_json)); } catch (error) {
+      try { items = snapshotLegacyBeatPrices(order, orderItems); } catch (error) {
         rejectWebhook(500, { error: error.code === 'ORDER_PRICING_INVALID' ? error.message : 'Order data is invalid.' });
       }
       await lockExclusiveBeats(tx, items);
@@ -548,8 +551,10 @@ router.get('/payments/verify/:reference', paymentVerificationRateLimit, async (r
     const outcome = await database.transaction(async tx => {
       const order = await tx.get('SELECT * FROM orders WHERE reference = ? FOR UPDATE', [request.params.reference]);
       if (!order) return { httpStatus: 404, body: { error: `No order was found for payment reference ${request.params.reference}.` } };
+      const orderItems = parseOrderItems(order.items_json);
+      if (!orderItems) return { httpStatus: 500, body: { error: 'Order data is invalid.' } };
       let items;
-      try { items = snapshotLegacyBeatPrices(order, JSON.parse(order.items_json)); } catch (error) {
+      try { items = snapshotLegacyBeatPrices(order, orderItems); } catch (error) {
         return { httpStatus: 500, body: { error: error.code === 'ORDER_PRICING_INVALID' ? error.message : 'Order data is invalid.' } };
       }
       const bookingItem = items.find(item => item.type === 'booking');
