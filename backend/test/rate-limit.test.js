@@ -44,7 +44,7 @@ function loadRateLimiter(database) {
   }
 }
 
-function invoke(middleware) {
+function invoke(middleware, request = { ip: '192.0.2.4', baseUrl: '/api', path: '/auth/login' }) {
   return new Promise(resolve => {
     const headers = {};
     const response = {
@@ -58,12 +58,40 @@ function invoke(middleware) {
       }
     };
     middleware(
-      { ip: '192.0.2.4', baseUrl: '/api', path: '/auth/login' },
+      request,
       response,
       () => resolve({ status: 200, headers })
     );
   });
 }
+
+test('route parameters share a rate-limit bucket through the route template', async () => {
+  const keys = [];
+  const loaded = loadRateLimiter({
+    get(query, parameters, callback) {
+      keys.push(parameters[0]);
+      callback(null, { request_count: 1, retry_after_seconds: 1 });
+    }
+  });
+  try {
+    const middleware = loaded.rateLimit({ windowMs: 60_000, max: 10, message: 'Too many requests.' });
+    await invoke(middleware, {
+      ip: '192.0.2.4',
+      baseUrl: '/api',
+      path: '/payments/verify/ORDER-1',
+      route: { path: '/payments/verify/:reference' }
+    });
+    await invoke(middleware, {
+      ip: '192.0.2.4',
+      baseUrl: '/api',
+      path: '/payments/verify/ORDER-2',
+      route: { path: '/payments/verify/:reference' }
+    });
+    assert.equal(keys[0], keys[1]);
+  } finally {
+    loaded.restore();
+  }
+});
 
 test('rate limits are shared through database-backed counters', async () => {
   const buckets = new Map();

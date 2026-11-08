@@ -101,11 +101,28 @@ function createPromisePoolAdapter(pool) {
   return {
     async execute(query, parameters = []) {
       const result = await pool.query(toPostgresQuery(withReturningId(query)), parameters);
-      if (/^\s*(SELECT|WITH)\b/i.test(query)) return [result.rows, result.fields];
+      if (/^\s*(SELECT|WITH)\b/i.test(query) || /\bRETURNING\b/i.test(query)) {
+        return [result.rows, result.fields];
+      }
       return [summarizeResult(result), result.fields];
     }
   };
 }
+
+test('PostgreSQL adapter exposes rows from INSERT RETURNING queries', async () => {
+  const expected = { request_count: 1, retry_after_seconds: 0 };
+  const adapter = createPromisePoolAdapter({
+    async query() {
+      return { rows: [expected], fields: [] };
+    }
+  });
+
+  const [rows] = await adapter.execute(
+    'INSERT INTO rate_limit_buckets (bucket_key) VALUES (?) RETURNING request_count, retry_after_seconds',
+    ['a'.repeat(64)]
+  );
+  assert.deepEqual(rows, [expected]);
+});
 
 function testConfig() {
   return {
@@ -610,6 +627,12 @@ test('all registered API route methods execute against an isolated PostgreSQL te
        ON CONFLICT (slot_date, start_time) DO UPDATE SET status = 'available', booking_id = NULL`,
       ['2030-01-08', '11:00', '11:00']
     );
+    await promisePool.execute(
+      `INSERT INTO booking_availability (slot_date, start_time, end_time, status)
+       VALUES (?, ?, ?::time + INTERVAL '2 hours 20 minutes', 'available')
+       ON CONFLICT (slot_date, start_time) DO UPDATE SET status = 'available', booking_id = NULL`,
+      ['2030-01-09', '11:00', '11:00']
+    );
     const bookingItem = {
       type: 'booking',
       name: 'Mixtape',
@@ -629,6 +652,12 @@ test('all registered API route methods execute against an isolated PostgreSQL te
     for (const reference of bookingReferences) {
       await insertPaidOrderCandidate(promisePool, { reference, amount: 700, item: bookingItem });
     }
+    await promisePool.execute(
+      `UPDATE booking_availability
+       SET status = 'reserved', booking_order_reference = ?, hold_expires_at = CURRENT_TIMESTAMP + INTERVAL '30 minutes'
+       WHERE slot_date = ? AND start_time = ?`,
+      [bookingReferences[0], '2030-01-08', '11:00']
+    );
     const bookingResults = await Promise.all(bookingReferences.map(reference => postSignedWebhook(baseUrl, {
       event: 'charge.success',
       data: { reference, status: 'success', amount: 70000, currency: 'GHS' }
@@ -644,6 +673,24 @@ test('all registered API route methods execute against an isolated PostgreSQL te
     );
     assert.equal(Number(bookingCounts[0].slots), 1);
     assert.equal(Number(bookingCounts[0].bookings), 1);
+    const reconciliationReference = bookingReferences[bookingResults.findIndex(result => result.body.conflict === 'booking_slot_unavailable')];
+    const resolutionResponse = await fetch(`${baseUrl}/api/admin/orders/${reconciliationReference}/booking-resolution`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${sessions.super_admin}`,
+        'Content-Type': 'application/json',
+        Connection: 'close'
+      },
+      body: JSON.stringify({ action: 'assign_slot', slots: [{ date: '2030-01-09', time: '11:00' }] })
+    });
+    assert.equal(resolutionResponse.status, 200, 'An administrator can assign an available alternative slot.');
+    const resolution = await resolutionResponse.json();
+    assert.equal(resolution.resolution, 'assigned');
+    const [reviewOrder] = await promisePool.execute(
+      'SELECT fulfillment_review_required FROM orders WHERE reference = ?',
+      [reconciliationReference]
+    ).then(([rows]) => rows);
+    assert.equal(reviewOrder.fulfillment_review_required, false, 'Successful reassignment clears the fulfillment review.');
 
     const [inventoryResult] = await promisePool.execute(
       `INSERT INTO merchandise (title, description, price, stock_quantity, catalog_status)

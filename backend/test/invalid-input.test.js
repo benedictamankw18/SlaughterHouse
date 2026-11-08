@@ -332,6 +332,7 @@ test('malformed custom-request audio upload is rejected before saving', async ()
 test('unsupported payment methods are rejected before payment setup', async () => {
   const loaded = loadRouter('../routes/payments', {
     '../database': {},
+    '../services/rate-limit': { rateLimit: () => (request, response, next) => next() },
     '../config': {
       apiPublicUrl: 'https://api.example.test',
       paymentCallbackUrl: new URL('https://store.example.test/payment-success.html'),

@@ -90,11 +90,22 @@ async function mockApi(page, options = {}) {
     } else if (path === '/api/auth/verify-email') {
       body = { message: 'Email address verified successfully.' };
     } else if (path === '/api/admin/login') {
-      if (options.adminLogin) body = { token: 'test-admin-token', csrfToken: 'test-admin-csrf' };
+      if (options.adminMfaEnrollment) {
+        body = {
+          mfaEnrollmentRequired: true,
+          challengeToken: 'test-mfa-challenge',
+          secret: 'JBSWY3DPEHPK3PXP',
+          qrCodeDataUrl: 'data:image/png;base64,aGVsbG8='
+        };
+      } else if (options.adminLogin) body = { token: 'test-admin-token', csrfToken: 'test-admin-csrf' };
       else {
         status = 401;
         body = { error: 'Invalid administrator credentials.' };
       }
+    } else if (path === '/api/admin/mfa/verify') {
+      body = { mfaSetupComplete: true, recoveryCodes: ['A'.repeat(20), 'B'.repeat(20)] };
+    } else if (path === '/api/admin/mfa/complete') {
+      body = { token: 'test-admin-token', csrfToken: 'test-admin-csrf' };
     } else if (path === '/api/auth/login') {
       body = { token: 'test-customer-token', csrfToken: 'test-customer-csrf', user: customer };
     } else if (path === '/api/payments/initialize' || path === '/api/bookings/initialize-payment') {
@@ -520,6 +531,78 @@ test('admin list sections search and filter their records', async ({ page }) => 
   await expect(page.locator('#staff-list')).not.toContainText('Admin One');
   await page.locator('#staff-search').fill('no match');
   await expect(page.locator('#staff-list')).toContainText('No staff accounts match these filters.');
+});
+
+test('admin completes required MFA enrollment before entering the dashboard', async ({ page }) => {
+  const calls = await mockApi(page, { adminMfaEnrollment: true });
+  await page.goto('/admin.html');
+  await page.locator('#admin-email').fill('admin@example.test');
+  await page.locator('#admin-password').fill('test-password');
+  await page.getByRole('button', { name: 'Enter dashboard' }).click();
+
+  await expect(page.locator('#admin-mfa-panel')).toBeVisible();
+  await expect(page.locator('#admin-mfa-title')).toHaveText('Set up authenticator MFA');
+  await expect(page.locator('#admin-mfa-qr')).toBeVisible();
+  await expect(page.locator('#admin-mfa-secret')).toHaveText('JBSWY3DPEHPK3PXP');
+  await page.locator('#admin-mfa-code').fill('123456');
+  await page.getByRole('button', { name: 'Verify code' }).click();
+
+  await expect(page.locator('#admin-mfa-recovery')).toBeVisible();
+  await expect(page.locator('#admin-mfa-recovery-codes li')).toHaveCount(2);
+  await page.getByRole('button', { name: 'I saved my recovery codes' }).click();
+
+  await expect(page.locator('#admin-dashboard')).toBeVisible();
+  await expect.poll(() => calls.some(call => call.path === '/api/admin/data')).toBe(true);
+  expect(calls.map(call => call.path)).toEqual(expect.arrayContaining([
+    '/api/admin/login',
+    '/api/admin/mfa/verify',
+    '/api/admin/mfa/complete',
+    '/api/admin/data'
+  ]));
+});
+
+test('policy pages are reachable and cross-linked from the footer', async ({ page }) => {
+  const policies = [
+    { path: '/privacy.html', title: 'Privacy Policy' },
+    { path: '/terms.html', title: 'Terms of Service' },
+    { path: '/refunds.html', title: 'Refund & Cancellation Policy' },
+    { path: '/cookies.html', title: 'Cookie Policy' }
+  ];
+
+  for (const policy of policies) {
+    await page.goto(policy.path);
+    await expect(page.getByRole('heading', { level: 1, name: policy.title })).toBeVisible();
+    const policyNavigation = page.getByRole('navigation', { name: 'Policies and terms' });
+    await expect(policyNavigation.getByRole('link', { name: 'Privacy', exact: true })).toHaveAttribute('href', 'privacy.html');
+    await expect(policyNavigation.getByRole('link', { name: 'Terms', exact: true })).toHaveAttribute('href', 'terms.html');
+    await expect(policyNavigation.getByRole('link', { name: 'Refunds', exact: true })).toHaveAttribute('href', 'refunds.html');
+    await expect(policyNavigation.getByRole('link', { name: 'Cookies', exact: true })).toHaveAttribute('href', 'cookies.html');
+  }
+});
+
+test('policy pages have no automated WCAG 2.1 A/AA violations', async ({ page }) => {
+  const policies = [
+    { path: '/privacy.html', heading: 'Privacy Policy' },
+    { path: '/terms.html', heading: 'Terms of Service' },
+    { path: '/refunds.html', heading: 'Refund & Cancellation Policy' },
+    { path: '/cookies.html', heading: 'Cookie Policy' }
+  ];
+  const violations = [];
+
+  for (const policy of policies) {
+    await page.goto(policy.path);
+    await expect(page.getByRole('heading', { level: 1, name: policy.heading })).toBeVisible();
+    const scan = await new AxeBuilder({ page })
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+      .analyze();
+    violations.push(...scan.violations.map(violation => ({
+      page: policy.path,
+      id: violation.id,
+      nodes: violation.nodes.map(node => ({ target: node.target, summary: node.failureSummary }))
+    })));
+  }
+
+  expect(violations).toEqual([]);
 });
 
 test('admin resolves paid booking cases by assigning replacement sessions or requesting refunds', async ({ page }) => {

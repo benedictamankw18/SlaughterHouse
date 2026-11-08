@@ -29,8 +29,10 @@ async function reserveBookingSlots(db, orderReference, slots) {
       `UPDATE booking_availability
        SET status = 'reserved', booking_order_reference = ?, hold_expires_at = CURRENT_TIMESTAMP + INTERVAL '${HOLD_DURATION_MINUTES} minutes', booking_id = NULL
        WHERE slot_date = ? AND start_time = ?
-         AND (status = 'available' OR (status = 'reserved' AND hold_expires_at <= CURRENT_TIMESTAMP))`,
-      [orderReference, slot.date, slot.time]
+         AND (status = 'available'
+           OR (status = 'reserved' AND hold_expires_at <= CURRENT_TIMESTAMP)
+           OR (status = 'reserved' AND booking_order_reference = ?))`,
+      [orderReference, slot.date, slot.time, orderReference]
     );
     if (result.changes !== 1) {
       throw Object.assign(new Error('One or more selected booking slots are already reserved. Refresh availability and choose different slots.'), {
@@ -46,7 +48,9 @@ async function confirmBookingSlots(db, orderReference, slots) {
       `UPDATE booking_availability
        SET status = 'booked', booking_order_reference = NULL, hold_expires_at = NULL
        WHERE slot_date = ? AND start_time = ?
-         AND (status = 'available' OR (status = 'reserved' AND booking_order_reference = ?))`,
+         AND status = 'reserved'
+         AND booking_order_reference = ?
+         AND hold_expires_at > CURRENT_TIMESTAMP`,
       [slot.date, slot.time, orderReference]
     );
     if (result.changes !== 1) {

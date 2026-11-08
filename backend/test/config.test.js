@@ -8,6 +8,7 @@ const validSecrets = {
   NODE_ENV: 'production',
   DOWNLOAD_SIGNING_SECRET: 'd'.repeat(32),
   CERTIFICATE_SIGNING_SECRET: 'c'.repeat(32),
+  ADMIN_MFA_ENCRYPTION_KEY: 'm'.repeat(32),
   PAYSTACK_SECRET_KEY: '',
   ALLOW_EPHEMERAL_STORAGE: 'true'
 };
@@ -20,7 +21,7 @@ function runConfig(overrides = {}) {
   });
 }
 
-test('production accepts distinct signing secrets of at least 32 bytes', () => {
+test('production accepts distinct signing and MFA encryption secrets of at least 32 bytes', () => {
   const result = runConfig();
   assert.equal(result.status, 0, result.stderr);
 });
@@ -28,7 +29,8 @@ test('production accepts distinct signing secrets of at least 32 bytes', () => {
 test('production requires both signing secrets without falling back between them', () => {
   for (const [name, overrides] of [
     ['DOWNLOAD_SIGNING_SECRET', { DOWNLOAD_SIGNING_SECRET: '' }],
-    ['CERTIFICATE_SIGNING_SECRET', { CERTIFICATE_SIGNING_SECRET: '' }]
+    ['CERTIFICATE_SIGNING_SECRET', { CERTIFICATE_SIGNING_SECRET: '' }],
+    ['ADMIN_MFA_ENCRYPTION_KEY', { ADMIN_MFA_ENCRYPTION_KEY: '' }]
   ]) {
     const result = runConfig(overrides);
     assert.notEqual(result.status, 0);
@@ -44,6 +46,14 @@ test('production rejects short or reused signing secrets', () => {
   const reusedSecret = runConfig({ CERTIFICATE_SIGNING_SECRET: validSecrets.DOWNLOAD_SIGNING_SECRET });
   assert.notEqual(reusedSecret.status, 0);
   assert.match(reusedSecret.stderr, /must be different/);
+
+  const shortMfaKey = runConfig({ ADMIN_MFA_ENCRYPTION_KEY: 'm'.repeat(31) });
+  assert.notEqual(shortMfaKey.status, 0);
+  assert.match(shortMfaKey.stderr, /ADMIN_MFA_ENCRYPTION_KEY must be at least 32 bytes/);
+
+  const reusedMfaKey = runConfig({ ADMIN_MFA_ENCRYPTION_KEY: validSecrets.DOWNLOAD_SIGNING_SECRET });
+  assert.notEqual(reusedMfaKey.status, 0);
+  assert.match(reusedMfaKey.stderr, /ADMIN_MFA_ENCRYPTION_KEY must be different/);
 });
 
 test('production measures secret minimums in UTF-8 bytes', () => {

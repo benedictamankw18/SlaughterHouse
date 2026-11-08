@@ -27,6 +27,7 @@ const paystackSecretKey = configuredPaystackKey && configuredPaystackKey !== 'sk
   : null;
 const configuredDownloadSecret = String(process.env.DOWNLOAD_SIGNING_SECRET || '').trim();
 const configuredCertificateSecret = String(process.env.CERTIFICATE_SIGNING_SECRET || '').trim();
+const configuredAdminMfaKey = String(process.env.ADMIN_MFA_ENCRYPTION_KEY || '').trim();
 const databaseConfigured = Boolean(process.env.DATABASE_URL);
 const configuredTrustProxy = String(process.env.TRUST_PROXY || '').trim();
 const trustProxy = configuredTrustProxy === 'true'
@@ -42,11 +43,13 @@ const downloadSigningSecret = configuredDownloadSecret || (isProduction ? null :
 // In development the certificate secret intentionally falls back to the download secret so
 // verification stays stable across restarts. Production requires both to be set and distinct.
 const certificateSigningSecret = configuredCertificateSecret || configuredDownloadSecret || (isProduction ? null : crypto.randomBytes(32).toString('hex'));
+const adminMfaEncryptionKey = configuredAdminMfaKey || (isProduction ? null : 'local-development-admin-mfa-encryption-key');
 
 if (isProduction) {
   const missingSecrets = [];
   if (!downloadSigningSecret) missingSecrets.push('DOWNLOAD_SIGNING_SECRET');
   if (!configuredCertificateSecret) missingSecrets.push('CERTIFICATE_SIGNING_SECRET');
+  if (!adminMfaEncryptionKey) missingSecrets.push('ADMIN_MFA_ENCRYPTION_KEY');
   if (missingSecrets.length) {
     throw new Error(`Set ${missingSecrets.join(', ')} before starting in production.`);
   }
@@ -58,6 +61,12 @@ if (isProduction) {
   }
   if (downloadSigningSecret === certificateSigningSecret) {
     throw new Error('CERTIFICATE_SIGNING_SECRET must be different from DOWNLOAD_SIGNING_SECRET in production.');
+  }
+  if (Buffer.byteLength(adminMfaEncryptionKey, 'utf8') < 32) {
+    throw new Error('ADMIN_MFA_ENCRYPTION_KEY must be at least 32 bytes in production.');
+  }
+  if ([downloadSigningSecret, certificateSigningSecret].includes(adminMfaEncryptionKey)) {
+    throw new Error('ADMIN_MFA_ENCRYPTION_KEY must be different from the download and certificate signing secrets.');
   }
 }
 
@@ -110,6 +119,7 @@ module.exports = {
   uploadDirectory: path.join(__dirname, 'data', 'uploads'),
   certificateDirectory: path.join(__dirname, 'data', 'certificates'),
   certificateSigningSecret,
+  adminMfaEncryptionKey,
   paystackSecretKey,
   downloadSigningSecret,
   storageDriver,

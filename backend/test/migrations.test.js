@@ -136,6 +136,22 @@ test('migration 32 timestamps pricing updates and snapshots order exchange rates
   ]);
 });
 
+test('migration 33 adds encrypted administrator MFA state and one-time challenges', () => {
+  const migration = migrations.find(candidate => candidate.version === 33);
+  assert.ok(migration, 'migration 33 must exist');
+  assert.deepEqual(migration.statements.slice(0, 3).map(statement => statement.ensureColumn), [
+    { table: 'users', column: 'admin_mfa_secret', definition: 'TEXT NULL' },
+    { table: 'users', column: 'admin_mfa_enabled_at', definition: 'TIMESTAMP NULL' },
+    { table: 'users', column: 'admin_mfa_last_counter', definition: 'BIGINT NULL' }
+  ]);
+  const sql = migration.statements.join('\n');
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS admin_mfa_challenges/);
+  assert.match(sql, /token_hash CHAR\(64\) NOT NULL UNIQUE/);
+  assert.match(sql, /pending_secret TEXT NULL/);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS admin_mfa_recovery_codes/);
+  assert.match(sql, /used_at TIMESTAMP NULL/);
+});
+
 test('migration 23 stores certificates and immutable administrative history', () => {
   const migration = migrations.find(candidate => candidate.version === 23);
   assert.ok(migration, 'migration 23 must exist');

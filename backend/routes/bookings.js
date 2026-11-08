@@ -7,9 +7,11 @@ const { getPricing } = require('../services/pricing');
 const { databaseError } = require('../services/error-messages');
 const validators = require('../services/input-validation');
 const { HOLD_DURATION_MINUTES, reserveBookingSlots, releaseBookingHold, expireBookingHolds } = require('../services/booking-reservations');
+const { rateLimit } = require('../services/rate-limit');
 
 const router = express.Router();
 const { bookingServiceLabels, paystackSecretKey, paymentCallbackUrl } = config;
+const bookingPaymentRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, message: 'Too many booking payment requests. Try again later.' });
 const queryRows = (query, parameters = []) => new Promise((resolve, reject) => database.all(query, parameters, (error, rows) => error ? reject(error) : resolve(rows || [])));
 const run = (query, parameters = []) => new Promise((resolve, reject) => database.run(query, parameters, function (error) { error ? reject(error) : resolve(this); }));
 
@@ -34,7 +36,7 @@ router.get('/bookings/availability', async (request, response) => {
 
 router.post('/bookings', (request, response) => response.status(402).json({ error: 'Payment is required before a booking can be submitted.' }));
 
-router.post('/bookings/initialize-payment', async (request, response) => {
+router.post('/bookings/initialize-payment', bookingPaymentRateLimit, async (request, response) => {
   const { name, email, phone, service, artistCount, songCount, slots, details, paymentMethod, timezone, durationMinutes } = request.body;
   const normalizedEmail = String(email || '').trim().toLowerCase();
   const normalizedArtistCount = Number(artistCount);

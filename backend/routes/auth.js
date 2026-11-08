@@ -1,4 +1,6 @@
 const express = require('express');
+const crypto = require('node:crypto');
+const QRCode = require('qrcode');
 const database = require('../database');
 const sessions = require('../session-store');
 const config = require('../config');
@@ -9,14 +11,26 @@ const { issueToken, consumeToken } = require('../services/account-tokens');
 const { recordAuditSafely } = require('../services/audit');
 const { rateLimit } = require('../services/rate-limit');
 const { createEmailIdempotencyKey, queueEmailSafely } = require('../services/email/outbox');
+const {
+  createChallengeToken,
+  createRecoveryCodes,
+  decryptSecret,
+  encryptSecret,
+  generateTotpSecret,
+  hashChallengeToken,
+  hashRecoveryCode,
+  matchingTotpCounter
+} = require('../services/admin-mfa');
 const logger = require('../services/logger');
 
 const router = express.Router();
 const authRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 30, message: 'Too many authentication requests. Try again later.' });
 const loginRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: 'Too many login attempts. Try again later.' });
 const resetRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, message: 'Too many password reset requests. Try again later.' });
+const adminMfaRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: 'Too many administrator MFA attempts. Try again later.' });
 const cookieOptions = (name, token) => `${name}=${encodeURIComponent(token)}; Max-Age=${Math.floor(config.sessionDurationMs / 1000)}; Path=/; HttpOnly; SameSite=Lax${config.secureCookies ? '; Secure' : ''}`;
 const clearCookie = name => `${name}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax${config.secureCookies ? '; Secure' : ''}`;
+const ADMIN_MFA_MAX_ATTEMPTS = 5;
 
 function queryOne(query, parameters = []) {
   return new Promise((resolve, reject) => database.get(query, parameters, (error, row) => error ? reject(error) : resolve(row)));
@@ -33,6 +47,37 @@ function accountActionUrl(parameter, token) {
   const url = new URL('/', config.frontendOrigin);
   url.searchParams.set(parameter, token);
   return url.toString();
+}
+
+async function createAdminMfaChallenge(admin, purpose, secret = null) {
+  const token = createChallengeToken();
+  const encryptedSecret = secret ? encryptSecret(secret, config.adminMfaEncryptionKey) : null;
+  await execute('DELETE FROM admin_mfa_challenges WHERE user_id = ?', [admin.id]);
+  await execute(
+    `INSERT INTO admin_mfa_challenges (user_id, token_hash, purpose, pending_secret, expires_at)
+     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP + INTERVAL '10 minutes')`,
+    [admin.id, hashChallengeToken(token), purpose, encryptedSecret]
+  );
+  return token;
+}
+
+async function recordAdminMfaFailure(transaction, challenge) {
+  if (Number(challenge.attemptCount) + 1 >= ADMIN_MFA_MAX_ATTEMPTS) {
+    await transaction.run('DELETE FROM admin_mfa_challenges WHERE id = ?', [challenge.id]);
+    return;
+  }
+  await transaction.run('UPDATE admin_mfa_challenges SET attempt_count = attempt_count + 1 WHERE id = ?', [challenge.id]);
+}
+
+async function createAdminSessionResponse(response, admin, extra = {}) {
+  const { token, csrfToken } = await sessions.createSession({
+    id: admin.id,
+    name: admin.name,
+    email: admin.email,
+    role: admin.role
+  });
+  response.setHeader('Set-Cookie', cookieOptions(config.sessionCookieNames.admin, token));
+  response.json({ token, csrfToken, email: admin.email, role: admin.role, ...extra });
 }
 
 function duplicateAccountMessage(error) {
@@ -317,7 +362,8 @@ router.post('/auth/verify-email', resetRateLimit, async (request, response) => {
   }
 });
 
-router.post('/admin/login', loginRateLimit, (request, response) => {
+router.post('/admin/login', loginRateLimit, async (request, response) => {
+  response.setHeader('Cache-Control', 'no-store');
   const email = String(request.body.email || '').trim().toLowerCase();
   const password = String(request.body.password || '');
   const emailError = validators.email(email);
@@ -326,31 +372,189 @@ router.post('/admin/login', loginRateLimit, (request, response) => {
   const attempt = sessions.adminLoginAttempts.get(request.ip) || { count: 0, startedAt: Date.now() };
   if (Date.now() - attempt.startedAt > 15 * 60 * 1000) { attempt.count = 0; attempt.startedAt = Date.now(); }
   if (attempt.count >= 10) return response.status(429).json({ error: 'Too many login attempts. Try again later.' });
-  database.get(
-    "SELECT id, name, email, phone, role, password_hash FROM users WHERE lower(email) = lower(?) AND role IN ('admin', 'super_admin')",
-    [email],
-    async (error, admin) => {
-      if (error) return response.status(500).json({ error: databaseError('Administrator sign-in failed.', error) });
-      if (!admin || !(await passwordMatches(password, admin.password_hash))) {
-        attempt.count += 1;
-        sessions.adminLoginAttempts.set(request.ip, attempt);
-        recordAuditSafely(database, { action: 'admin_login_failed', details: { emailProvided: Boolean(email) }, ipAddress: request.ip });
-        return response.status(401).json({ error: 'Invalid admin credentials.' });
-      }
-      sessions.adminLoginAttempts.delete(request.ip);
-      recordAuditSafely(database, { userId: admin.id, action: 'admin_login', entityType: 'user', entityId: admin.id, ipAddress: request.ip });
-      sessions.createSession({
-        id: admin.id,
-        name: admin.name,
-        email: admin.email,
-        role: admin.role
-      }).then(({ token, csrfToken }) => {
-        response.setHeader('Set-Cookie', cookieOptions(config.sessionCookieNames.admin, token));
-        response.json({ token, csrfToken, email: admin.email, role: admin.role });
-      })
-        .catch(sessionError => response.status(500).json({ error: databaseError('Creating the administrator login session failed.', sessionError) }));
+  try {
+    const admin = await queryOne(
+      `SELECT id, name, email, phone, role, password_hash,
+              admin_mfa_enabled_at AS "adminMfaEnabledAt"
+       FROM users WHERE lower(email) = lower(?) AND role IN ('admin', 'super_admin')`,
+      [email]
+    );
+    if (!admin || !(await passwordMatches(password, admin.password_hash))) {
+      attempt.count += 1;
+      sessions.adminLoginAttempts.set(request.ip, attempt);
+      recordAuditSafely(database, { action: 'admin_login_failed', details: { emailProvided: Boolean(email) }, ipAddress: request.ip });
+      return response.status(401).json({ error: 'Invalid admin credentials.' });
     }
-  );
+
+    sessions.adminLoginAttempts.delete(request.ip);
+    response.setHeader('Set-Cookie', clearCookie(config.sessionCookieNames.admin));
+    if (admin.adminMfaEnabledAt) {
+      const challengeToken = await createAdminMfaChallenge(admin, 'login');
+      return response.json({ mfaRequired: true, challengeToken });
+    }
+
+    const secret = generateTotpSecret();
+    const challengeToken = await createAdminMfaChallenge(admin, 'setup', secret);
+    const label = encodeURIComponent(`SlaughterHouse:${admin.email}`);
+    const issuer = encodeURIComponent('SlaughterHouse');
+    const provisioningUri = `otpauth://totp/${label}?secret=${secret}&issuer=${issuer}&algorithm=SHA1&digits=6&period=30`;
+    const qrCodeDataUrl = await QRCode.toDataURL(provisioningUri);
+    response.json({ mfaEnrollmentRequired: true, challengeToken, secret, qrCodeDataUrl });
+  } catch (error) {
+    logger.error('admin_login_failed', { code: error.code });
+    response.status(500).json({ error: databaseError('Administrator sign-in failed.', error) });
+  }
+});
+
+router.post('/admin/mfa/verify', adminMfaRateLimit, async (request, response) => {
+  response.setHeader('Cache-Control', 'no-store');
+  const challengeToken = String(request.body.challengeToken || '');
+  const code = String(request.body.code || '').trim();
+  if (!/^[a-f0-9]{64}$/i.test(challengeToken) || !code) {
+    return response.status(400).json({ error: 'A valid administrator MFA challenge and code are required.' });
+  }
+
+  try {
+    const outcome = await database.transaction(async transaction => {
+      const challenge = await transaction.get(
+        `SELECT c.id, c.user_id AS "userId", c.purpose, c.pending_secret AS "pendingSecret",
+                c.attempt_count AS "attemptCount", u.name, u.email, u.role,
+                u.admin_mfa_secret AS "adminMfaSecret",
+                u.admin_mfa_last_counter AS "adminMfaLastCounter"
+         FROM admin_mfa_challenges c
+         JOIN users u ON u.id = c.user_id
+         WHERE c.token_hash = ? AND c.expires_at > CURRENT_TIMESTAMP
+         FOR UPDATE`,
+        [hashChallengeToken(challengeToken)]
+      );
+      if (!challenge || !['setup', 'login'].includes(challenge.purpose)) return { invalid: true };
+
+      const secret = challenge.purpose === 'setup'
+        ? decryptSecret(challenge.pendingSecret, config.adminMfaEncryptionKey)
+        : decryptSecret(challenge.adminMfaSecret, config.adminMfaEncryptionKey);
+      const counter = matchingTotpCounter(secret, code);
+      if (counter !== null && counter > Number(challenge.adminMfaLastCounter ?? -1)) {
+        if (challenge.purpose === 'setup') {
+          const recovery = createRecoveryCodes();
+          const enabled = await transaction.run(
+            `UPDATE users
+             SET admin_mfa_secret = ?, admin_mfa_enabled_at = CURRENT_TIMESTAMP,
+                 admin_mfa_last_counter = ?
+             WHERE id = ? AND admin_mfa_enabled_at IS NULL`,
+            [encryptSecret(secret, config.adminMfaEncryptionKey), counter, challenge.userId]
+          );
+          if (enabled.changes !== 1) {
+            await transaction.run('DELETE FROM admin_mfa_challenges WHERE id = ?', [challenge.id]);
+            return { invalid: true };
+          }
+          await transaction.run('DELETE FROM user_sessions WHERE user_id = ?', [challenge.userId]);
+          await transaction.run('DELETE FROM admin_mfa_recovery_codes WHERE user_id = ?', [challenge.userId]);
+          for (const tokenHash of recovery.hashes) {
+            await transaction.run(
+              'INSERT INTO admin_mfa_recovery_codes (user_id, token_hash) VALUES (?, ?)',
+              [challenge.userId, tokenHash]
+            );
+          }
+          await transaction.run(
+            'UPDATE admin_mfa_challenges SET purpose = ?, pending_secret = NULL, attempt_count = 0 WHERE id = ?',
+            ['recovery_ack', challenge.id]
+          );
+          return { setupComplete: true, recoveryCodes: recovery.codes, adminId: challenge.userId };
+        }
+
+        const counterUpdate = await transaction.run(
+          `UPDATE users SET admin_mfa_last_counter = ?
+           WHERE id = ? AND (admin_mfa_last_counter IS NULL OR admin_mfa_last_counter < ?)`,
+          [counter, challenge.userId, counter]
+        );
+        if (counterUpdate.changes !== 1) {
+          await recordAdminMfaFailure(transaction, challenge);
+          return { invalid: true };
+        }
+      } else {
+        const recoveryHash = hashRecoveryCode(code);
+        const recovery = recoveryHash ? await transaction.run(
+          `UPDATE admin_mfa_recovery_codes SET used_at = CURRENT_TIMESTAMP
+           WHERE user_id = ? AND token_hash = ? AND used_at IS NULL`,
+          [challenge.userId, recoveryHash]
+        ) : null;
+        if (recovery?.changes !== 1 || challenge.purpose === 'setup') {
+          await recordAdminMfaFailure(transaction, challenge);
+          return { invalid: true };
+        }
+      }
+
+      await transaction.run('DELETE FROM admin_mfa_challenges WHERE id = ?', [challenge.id]);
+      return {
+        admin: { id: challenge.userId, name: challenge.name, email: challenge.email, role: challenge.role }
+      };
+    });
+
+    if (outcome.invalid) return response.status(401).json({ error: 'The administrator MFA code is invalid or expired.' });
+    if (outcome.setupComplete) {
+      recordAuditSafely(database, {
+        userId: outcome.adminId,
+        action: 'admin_mfa_enabled',
+        entityType: 'user',
+        entityId: outcome.adminId,
+        ipAddress: request.ip
+      });
+      return response.json({
+        mfaSetupComplete: true,
+        recoveryCodes: outcome.recoveryCodes,
+        message: 'Save these one-time recovery codes before continuing.'
+      });
+    }
+
+    recordAuditSafely(database, {
+      userId: outcome.admin.id,
+      action: 'admin_login',
+      entityType: 'user',
+      entityId: outcome.admin.id,
+      ipAddress: request.ip
+    });
+    await createAdminSessionResponse(response, outcome.admin);
+  } catch (error) {
+    logger.error('admin_mfa_verification_failed', { code: error.code });
+    response.status(500).json({ error: databaseError('Administrator MFA verification failed.', error) });
+  }
+});
+
+router.post('/admin/mfa/complete', adminMfaRateLimit, async (request, response) => {
+  response.setHeader('Cache-Control', 'no-store');
+  const challengeToken = String(request.body.challengeToken || '');
+  if (!/^[a-f0-9]{64}$/i.test(challengeToken)) {
+    return response.status(400).json({ error: 'A valid administrator MFA setup challenge is required.' });
+  }
+  try {
+    const admin = await database.transaction(async transaction => {
+      const challenge = await transaction.get(
+        `SELECT c.id, c.user_id AS "userId", u.name, u.email, u.role
+         FROM admin_mfa_challenges c
+         JOIN users u ON u.id = c.user_id
+         WHERE c.token_hash = ? AND c.purpose = ? AND c.expires_at > CURRENT_TIMESTAMP
+           AND u.admin_mfa_enabled_at IS NOT NULL
+         FOR UPDATE`,
+        [hashChallengeToken(challengeToken), 'recovery_ack']
+      );
+      if (!challenge) return null;
+      await transaction.run('DELETE FROM admin_mfa_challenges WHERE id = ?', [challenge.id]);
+      return { id: challenge.userId, name: challenge.name, email: challenge.email, role: challenge.role };
+    });
+    if (!admin) return response.status(401).json({ error: 'The administrator MFA setup challenge is invalid or expired.' });
+
+    recordAuditSafely(database, {
+      userId: admin.id,
+      action: 'admin_login',
+      entityType: 'user',
+      entityId: admin.id,
+      ipAddress: request.ip
+    });
+    await createAdminSessionResponse(response, admin);
+  } catch (error) {
+    logger.error('admin_mfa_setup_completion_failed', { code: error.code });
+    response.status(500).json({ error: databaseError('Administrator MFA setup could not be completed.', error) });
+  }
 });
 
 router.post('/admin/logout', sessions.requireAdmin, (request, response) => {

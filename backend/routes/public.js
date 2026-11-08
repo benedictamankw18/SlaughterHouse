@@ -365,7 +365,7 @@ router.post('/wishlists/:beatId', requireCustomer, (request, response) => {
   const beatId = Number(request.params.beatId);
   database.run('INSERT INTO wishlists (user_id, beat_id) VALUES (?, ?)', [request.customer.id, beatId], function (error) {
     if (error?.code === 'ER_DUP_ENTRY') return response.status(409).json({ error: 'This beat is already in your wishlist.' });
-    if (error?.code === 'ER_NO_REFERENCED_ROW_2') return response.status(404).json({ error: `Beat ${beatId} was not found.` });
+    if (error?.code === 'ER_NO_REFERENCED_ROW_2' || error?.code === '23503') return response.status(404).json({ error: `Beat ${beatId} was not found.` });
     if (error) return response.status(500).json({ error: databaseError('Adding the beat to your wishlist failed.', error) });
     response.status(201).json({ message: 'Beat added to your wishlist.', beatId });
   });

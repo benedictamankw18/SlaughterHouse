@@ -1,3 +1,4 @@
+
 # SlaughterHouse
 
 SlaughterHouse is a music production and beat marketplace with customer
@@ -64,6 +65,7 @@ local `backend\.env`; never commit credentials.
 | `API_PUBLIC_URL`, `PAYMENT_CALLBACK_URL`, `TRUST_PROXY` | Public API URL, payment return URL, and trusted proxy configuration. |
 | `PAYSTACK_SECRET_KEY` | Paystack API and webhook verification secret. |
 | `DOWNLOAD_SIGNING_SECRET`, `CERTIFICATE_SIGNING_SECRET` | Distinct, stable signing secrets of at least 32 bytes in production. |
+| `ADMIN_MFA_ENCRYPTION_KEY` | Independent, stable secret of at least 32 bytes used to encrypt administrator TOTP credentials. |
 | `STORAGE_DRIVER` | Use `s3` for durable production storage. |
 | `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | S3-compatible media storage credentials. |
 | `S3_ENDPOINT`, `S3_FORCE_PATH_STYLE`, `MEDIA_KEY_PREFIX`, `PUBLIC_MEDIA_BASE_URL` | Optional S3 endpoint and media URL configuration. |

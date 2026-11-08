@@ -88,7 +88,9 @@ function identifySession(request, response, { optional = false, requiredRole = n
     return response.status(401).json({ error: loginMessage });
   }
   get(
-    `SELECT s.user_id AS id, s.csrf_token_hash AS "csrfTokenHash", u.name, u.email, u.phone, u.role, u.email_verified_at AS "emailVerifiedAt"
+    `SELECT s.user_id AS id, s.csrf_token_hash AS "csrfTokenHash", u.name, u.email, u.phone, u.role,
+            u.email_verified_at AS "emailVerifiedAt",
+            u.admin_mfa_enabled_at AS "adminMfaEnabledAt"
      FROM user_sessions s
      JOIN users u ON u.id = s.user_id
      WHERE s.token_hash = ? AND s.expires_at > CURRENT_TIMESTAMP`,
@@ -102,6 +104,16 @@ function identifySession(request, response, { optional = false, requiredRole = n
       return response.status(401).json({ error: loginMessage });
     }
     const role = normalizeRole(session.role);
+    if ((role === 'admin' || role === 'super_admin') && !session.adminMfaEnabledAt) {
+      response.setHeader(
+        'Set-Cookie',
+        `${config.sessionCookieNames.admin}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax${config.secureCookies ? '; Secure' : ''}`
+      );
+      return response.status(403).json({
+        code: 'ADMIN_MFA_REQUIRED',
+        error: 'Administrator MFA setup is required. Sign in again to enroll an authenticator app.'
+      });
+    }
     if (role === 'customer' && !session.emailVerifiedAt) {
       await deleteSession(token);
       if (optional) {

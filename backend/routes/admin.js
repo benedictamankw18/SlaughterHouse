@@ -13,6 +13,7 @@ const { createNotificationSafely, notifyAdminsSafely } = require('../services/no
 const { queueEmailSafely } = require('../services/email/outbox');
 const { isAvailableBookingSlot, areAvailableBookingSlots } = require('../services/booking');
 const { fulfillPaidBooking } = require('../services/booking-fulfillment');
+const { reserveBookingSlots } = require('../services/booking-reservations');
 const { LICENSE_TYPES, loadLicenseRights, loadLicenseDefinitions, saveLicenseRights } = require('../services/license-rights');
 const { FULFILLMENT_STATUSES, updateFulfillmentStatus } = require('../services/fulfillment');
 const { BUSINESS_SETTINGS, validateDateRange, validateSettingUpdates } = require('../services/admin-controls');
@@ -1053,6 +1054,7 @@ router.post('/admin/orders/:reference/booking-resolution', sessions.requireAdmin
           sessionSlots: slots.map(slot => ({ date: slot.date, time: slot.time }))
         };
         const updatedItems = items.map(item => item === bookingItem ? { ...item, booking: updatedBooking } : item);
+        await reserveBookingSlots(transaction, reference, updatedBooking.sessionSlots);
         await fulfillPaidBooking(transaction, order, { ...bookingItem, booking: updatedBooking });
         await transaction.run(
           `UPDATE orders
