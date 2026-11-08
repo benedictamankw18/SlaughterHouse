@@ -14,6 +14,7 @@ const { isAllowedOrigin } = require('../services/cors-origin');
 const { DEFAULT_LICENSE_RIGHTS } = require('../services/license-rights');
 const storage = require('../services/storage');
 const { summarizeResult, toPostgresQuery, withReturningId } = require('../services/postgres');
+const { encryptSecret, generateTotpSecret } = require('../services/admin-mfa');
 
 const TEST_SCHEMA = 'slaughterhouse_route_test';
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -142,6 +143,7 @@ function testConfig() {
     paystackSecretKey: 'integration-only-not-a-real-paystack-key',
     downloadSigningSecret: 'integration-download-secret-32-bytes',
     sessionDurationMs: 60 * 60 * 1000,
+    adminMfaEncryptionKey: 'integration-admin-mfa-encryption-key-32-bytes',
     sessionCookieNames: { customer: 'customer_session', admin: 'admin_session' },
     secureCookies: false,
     bookingServiceLabels: {
@@ -307,9 +309,21 @@ async function seedSessions(pool) {
   const sessions = {};
   for (const user of users) {
     const [result] = await pool.execute(
-      `INSERT INTO users (name, email, first_name, last_name, phone, role, password_hash, email_verified_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-      [user.name, user.email, user.name.split(' ')[1], user.role, user.role === 'customer' ? '+233240000001' : '+233240000002', user.role, 'integration-test-hash']
+      `INSERT INTO users (
+        name, email, first_name, last_name, phone, role, password_hash,
+        email_verified_at, admin_mfa_secret, admin_mfa_enabled_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`,
+      [
+        user.name,
+        user.email,
+        user.name.split(' ')[1],
+        user.role,
+        user.role === 'customer' ? '+233240000001' : '+233240000002',
+        user.role,
+        'integration-test-hash',
+        user.role === 'super_admin' ? encryptSecret(generateTotpSecret(), 'integration-admin-mfa-encryption-key-32-bytes') : null,
+        user.role === 'super_admin' ? new Date() : null
+      ]
     );
     const token = crypto.randomBytes(32).toString('hex');
     await pool.execute(
