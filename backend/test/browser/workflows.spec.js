@@ -565,6 +565,39 @@ test('admin create and delete actions disable their button and ignore duplicate 
   expect(calls.filter(call => call.path === '/api/admin/merchandise/41' && call.method === 'DELETE')).toHaveLength(1);
 });
 
+test('admin beat upload rejects oversized or unsupported files before sending', async ({ page }) => {
+  const calls = await mockApi(page, { adminLogin: true });
+  await page.goto('/admin/admin.html');
+  await page.locator('#admin-email').fill('admin@example.test');
+  await page.locator('#admin-password').fill('Secure123');
+  await page.getByRole('button', { name: 'Enter dashboard' }).click();
+  await expect(page.locator('#admin-dashboard')).toBeVisible();
+  await page.getByRole('button', { name: 'Content', exact: true }).click();
+  await page.getByRole('button', { name: 'Add beat' }).click();
+
+  const form = page.locator('#beat-form');
+  await form.locator('[name="title"]').fill('Upload guard test');
+  for (const price of ['basic', 'premium', 'unlimited', 'exclusive']) await form.locator(`[name="${price}"]`).fill('10');
+  await form.locator('[name="preview"]').setInputFiles({ name: 'preview.mp3', mimeType: 'audio/mpeg', buffer: Buffer.from('ID3preview') });
+  await form.locator('[name="mp3"]').setInputFiles({ name: 'track.mp3', mimeType: 'audio/mpeg', buffer: Buffer.from('ID3track') });
+  await form.locator('[name="wav"]').setInputFiles({ name: 'track.wav', mimeType: 'audio/wav', buffer: Buffer.from('RIFFtestWAVE') });
+  await form.locator('[name="stems"]').setInputFiles({ name: 'stems.txt', mimeType: 'text/plain', buffer: Buffer.from('not an audio file') });
+  await form.getByRole('button', { name: 'Save beat' }).click();
+
+  await expect(page.locator('#beat-form-message')).toContainText('Track stems: Choose a MP3, WAV, OGG, M4A, or MP4 audio file.');
+  expect(calls.filter(call => call.path === '/api/admin/beats')).toHaveLength(0);
+
+  await form.locator('[name="stems"]').evaluate(input => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([new Uint8Array(26 * 1024 * 1024)], 'stems.wav', { type: 'audio/wav' }));
+    input.files = transfer.files;
+  });
+  await form.getByRole('button', { name: 'Save beat' }).click();
+
+  await expect(page.locator('#beat-form-message')).toContainText('Track stems is 26.0 MB. The maximum is 25 MB.');
+  expect(calls.filter(call => call.path === '/api/admin/beats')).toHaveLength(0);
+});
+
 test('admin list sections search and filter their records', async ({ page }) => {
   const calls = await mockApi(page, { adminLogin: true, adminFilters: true, adminRole: 'super_admin' });
   await page.goto('/admin/admin.html');

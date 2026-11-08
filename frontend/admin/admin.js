@@ -67,9 +67,17 @@ function clearBeatCoverPreview() {
 
 async function api(path, options = {}) {
   const response = await fetch(`${API}${path}`, { ...options, credentials: 'include', headers: { 'Content-Type': 'application/json', ...adminCsrfHeaders(options.method), ...(options.headers || {}) } });
-  const data = await response.json();
+  const text = await response.text();
+  let data = {};
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = {};
+    }
+  }
   if (!response.ok) {
-    const error = new Error(data.error || 'Request failed.');
+    const error = new Error(data.error || `Request failed (${response.status}).`);
     error.code = data.code;
     error.status = response.status;
     throw error;
@@ -77,9 +85,51 @@ async function api(path, options = {}) {
   return data;
 }
 
-function fileData(file) {
+// Mirrors the server-side upload rules so an oversized or unsupported file is
+// reported before it is base64-encoded into a very large request body.
+const UPLOAD_RULES = Object.freeze({
+  image: {
+    extensions: new Set(['.jpg', '.jpeg', '.png', '.webp']),
+    mime: new Set(['image/jpeg', 'image/png', 'image/webp']),
+    maxBytes: 5 * 1024 * 1024,
+    maxLabel: '5 MB',
+    description: 'JPG, PNG, or WebP image'
+  },
+  audio: {
+    extensions: new Set(['.mp3', '.wav', '.ogg', '.m4a', '.mp4']),
+    mime: new Set(['audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/mp4', 'video/mp4']),
+    maxBytes: 25 * 1024 * 1024,
+    maxLabel: '25 MB',
+    description: 'MP3, WAV, OGG, M4A, or MP4 audio file'
+  }
+});
+
+function formatUploadSize(bytes) {
+  const megabytes = bytes / (1024 * 1024);
+  return `${megabytes < 1 ? megabytes.toFixed(2) : megabytes.toFixed(1)} MB`;
+}
+
+function validateUploadFile(file, kind, label) {
+  const rule = UPLOAD_RULES[kind];
+  if (!rule) throw new Error(`${label}: This upload type is not supported.`);
+  const extension = (/\.[^.\\/]+$/.exec(file.name) || [''])[0].toLowerCase();
+  if (!rule.extensions.has(extension) || !rule.mime.has(String(file.type || '').toLowerCase())) {
+    throw new Error(`${label}: Choose a ${rule.description}.`);
+  }
+  if (file.size > rule.maxBytes) {
+    throw new Error(`${label} is ${formatUploadSize(file.size)}. The maximum is ${rule.maxLabel}.`);
+  }
+}
+
+function fileData(file, kind, label) {
   return new Promise((resolve, reject) => {
     if (!file) return resolve(null);
+    try {
+      validateUploadFile(file, kind, label);
+    } catch (error) {
+      reject(error);
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => resolve({ name: file.name, data: reader.result });
     reader.onerror = reject;
@@ -87,9 +137,9 @@ function fileData(file) {
   });
 }
 
-async function filesFrom(form, names) {
+async function filesFrom(form, fields) {
   const result = {};
-  for (const name of names) result[name] = await fileData(form.elements[name].files[0]);
+  for (const { name, kind, label } of fields) result[name] = await fileData(form.elements[name].files[0], kind, label);
   return result;
 }
 
@@ -386,7 +436,7 @@ function streamReleasePayload(form) {
 
 async function streamReleasePayloadWithCover(form) {
   const payload = streamReleasePayload(form);
-  payload.coverImage = await fileData(form.elements.coverImage.files[0]);
+  payload.coverImage = await fileData(form.elements.coverImage.files[0], 'image', 'Cover image');
   return payload;
 }
 
@@ -1147,6 +1197,7 @@ $('#add-beat-button').addEventListener('click', () => {
   form.reset();
   clearBeatCoverPreview();
   message('beat-message', '');
+  message('beat-form-message', '');
   $('#add-beat-dialog').showModal();
   form.elements.title.focus();
 });
@@ -1159,7 +1210,7 @@ $('#beat-form').elements.cover.addEventListener('change', event => {
   if (!file) return;
   if (!file.type.startsWith('image/')) {
     event.currentTarget.value = '';
-    message('beat-message', 'Cover art must be an image file.', true);
+    message('beat-form-message', 'Cover art must be an image file.', true);
     return;
   }
   beatCoverObjectUrl = URL.createObjectURL(file);
@@ -1492,14 +1543,21 @@ $('#beat-form').addEventListener('submit', async event => {
   const stopBusy = startButtonBusy(form.querySelector('button[type="submit"]'), 'Saving beat…');
   if (!stopBusy) return;
   try {
-    const files = await filesFrom(form, ['cover', 'preview', 'mp3', 'wav', 'stems']);
+    const files = await filesFrom(form, [
+      { name: 'cover', kind: 'image', label: 'Cover art' },
+      { name: 'preview', kind: 'audio', label: 'Tagged preview file' },
+      { name: 'mp3', kind: 'audio', label: 'Main MP3' },
+      { name: 'wav', kind: 'audio', label: 'WAV file' },
+      { name: 'stems', kind: 'audio', label: 'Track stems' }
+    ]);
     await api('/api/admin/beats', { method: 'POST', body: JSON.stringify({ title: form.elements.title.value, bpm: form.elements.bpm.value, previewDurationSeconds: form.elements.previewDurationSeconds.value, musicalKey: form.elements.musicalKey.value, genre: form.elements.genre.value, mood: form.elements.mood.value, prices: { basic: form.elements.basic.value, premium: form.elements.premium.value, unlimited: form.elements.unlimited.value, exclusive: form.elements.exclusive.value }, files }) });
     form.reset();
     clearBeatCoverPreview();
+    message('beat-form-message', '');
     $('#add-beat-dialog').close();
     message('beat-message', 'Beat saved.');
     await loadDashboard();
-  } catch (error) { message('beat-message', error.message, true); }
+  } catch (error) { message('beat-form-message', error.message, true); }
   finally { stopBusy(); }
 });
 
@@ -1587,7 +1645,7 @@ $('#merchandise-form').addEventListener('submit', async event => {
   const stopBusy = startButtonBusy(form.querySelector('button[type="submit"]'), 'Saving…');
   if (!stopBusy) return;
   try {
-    await api('/api/admin/merchandise', { method: 'POST', body: JSON.stringify({ title: form.elements.title.value, description: form.elements.description.value, price: form.elements.price.value, photo: await fileData(form.elements.photo.files[0]) }) });
+    await api('/api/admin/merchandise', { method: 'POST', body: JSON.stringify({ title: form.elements.title.value, description: form.elements.description.value, price: form.elements.price.value, photo: await fileData(form.elements.photo.files[0], 'image', 'Photo') }) });
     form.reset();
     $('#add-merchandise-dialog').close();
     formMessage.textContent = '';
@@ -1639,7 +1697,7 @@ $('#merchandise-management-list').addEventListener('submit', async event => {
         title: form.elements.title.value,
         description: form.elements.description.value,
         price: form.elements.price.value,
-        photo: await fileData(form.elements.photo.files[0])
+        photo: await fileData(form.elements.photo.files[0], 'image', 'Photo')
       })
     });
     await loadDashboard();

@@ -82,13 +82,15 @@
             </div>
             <div class="admin-grid admin-prices"><label>Basic price (USD)<input name="basic" type="number" min="0" step="0.01" required></label><label>Premium price (USD)<input name="premium" type="number" min="0" step="0.01" required></label><label>Unlimited price (USD)<input name="unlimited" type="number" min="0" step="0.01" required></label><label>Exclusive price (USD)<input name="exclusive" type="number" min="0" step="0.01" required></label></div>
             <div class="admin-file-grid">
-              <label>Cover art<input name="cover" type="file" accept="image/*"><img id="beat-cover-preview" class="admin-beat-cover admin-cover-preview" alt="Cover art preview" hidden></label>
+              <label>Cover art<input name="cover" type="file" accept="image/jpeg,image/png,image/webp"><img id="beat-cover-preview" class="admin-beat-cover admin-cover-preview" alt="Cover art preview" hidden></label>
               <label>Tagged preview file<input name="preview" type="file" accept="audio/*" required></label>
               <label>Main MP3<input name="mp3" type="file" accept="audio/mpeg" required></label>
               <label>WAV<input name="wav" type="file" accept="audio/wav" required></label>
-              <label>Track stems<input name="stems" type="file" required></label>
+              <label>Track stems<input name="stems" type="file" accept="audio/*" required></label>
             </div>
+            <p class="admin-field-help">Cover art: JPG, PNG, or WebP up to 5 MB. Each audio file (MP3, WAV, OGG, M4A, or MP4) up to 25 MB.</p>
             <button class="auth-primary-button" type="submit">Save beat</button>
+            <p id="beat-form-message" class="admin-message" role="status"></p>
           </form>
         </dialog>
         <div id="beat-management">
