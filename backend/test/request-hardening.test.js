@@ -77,7 +77,10 @@ test('CSRF protection rejects cookie mutations without a matching server-verifie
     setImmediate(() => resolve({ request, response, continued: !response.body }));
   });
 
-  const missing = await run({ Cookie: 'customer_session=abc123' });
+  const missing = await run({
+    Cookie: 'customer_session=abc123',
+    Authorization: `Bearer ${'a'.repeat(64)}`
+  });
   assert.equal(missing.response.statusCode, 403);
   assert.equal(missing.response.body.code, 'CSRF_TOKEN_INVALID');
   assert.equal(missing.response.body.requestId, 'req-csrf');
@@ -86,7 +89,39 @@ test('CSRF protection rejects cookie mutations without a matching server-verifie
   assert.equal(queries, 2);
 });
 
-test('CSRF skips bearer-auth mutations, safe requests, login, and the Paystack webhook', () => {
+test('CSRF protection selects the administrator cookie for admin mutations when both sessions exist', async () => {
+  const adminSessionToken = 'admin-session-token';
+  const adminCsrfToken = crypto.randomBytes(32).toString('hex');
+  let queriedSessionHash;
+  const middleware = createCsrfProtection({
+    config,
+    database: {
+      get(query, parameters, callback) {
+        queriedSessionHash = parameters[0];
+        callback(null, { csrfTokenHash: crypto.createHash('sha256').update(adminCsrfToken).digest('hex') });
+      }
+    }
+  });
+  const request = createRequest({
+    path: '/api/admin/settings',
+    headers: {
+      Origin: 'https://admin.example.test',
+      Cookie: 'customer_session=customer-session-token; admin_session=admin-session-token',
+      'X-CSRF-Token': adminCsrfToken
+    }
+  });
+  const response = createResponse();
+  let continued = false;
+  middleware(request, response, error => {
+    assert.equal(error, undefined);
+    continued = true;
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(continued, true);
+  assert.equal(queriedSessionHash, crypto.createHash('sha256').update(adminSessionToken).digest('hex'));
+});
+
+test('CSRF skips safe requests, login, and the Paystack webhook', () => {
   let queries = 0;
   const middleware = createCsrfProtection({
     config,

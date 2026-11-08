@@ -1,5 +1,4 @@
 const API = window.ULTBIGBOY_API_URL || '';
-let adminToken = sessionStorage.getItem('adminToken');
 let adminMfaChallengeToken = null;
 let adminMfaEnrollment = false;
 let dashboardData = { sales: [], requests: [], orders: [], reviews: [], artists: [], withdrawals: [], analytics: {} };
@@ -7,7 +6,7 @@ let staffRecords = [];
 const activeAdminSectionKey = 'adminActiveSection';
 const adminCsrfHeaders = method => {
   if (['GET', 'HEAD', 'OPTIONS'].includes(String(method || 'GET').toUpperCase())) return {};
-  const token = sessionStorage.getItem('adminCsrfToken') || '';
+  const token = localStorage.getItem('adminCsrfToken') || '';
   return token ? { 'X-CSRF-Token': token } : {};
 };
 
@@ -67,11 +66,12 @@ function clearBeatCoverPreview() {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(`${API}${path}`, { ...options, credentials: 'include', headers: { 'Content-Type': 'application/json', ...adminCsrfHeaders(options.method), ...(adminToken ? { Authorization: 'Bearer ' + adminToken } : {}), ...(options.headers || {}) } });
+  const response = await fetch(`${API}${path}`, { ...options, credentials: 'include', headers: { 'Content-Type': 'application/json', ...adminCsrfHeaders(options.method), ...(options.headers || {}) } });
   const data = await response.json();
   if (!response.ok) {
     const error = new Error(data.error || 'Request failed.');
     error.code = data.code;
+    error.status = response.status;
     throw error;
   }
   return data;
@@ -706,9 +706,8 @@ function showDashboard() {
   $('#admin-dashboard').hidden = false;
   loadDashboard().catch(error => {
     if (error.code === 'ADMIN_MFA_REQUIRED') {
-      adminToken = null;
       sessionStorage.removeItem('adminToken');
-      sessionStorage.removeItem('adminCsrfToken');
+      localStorage.removeItem('adminCsrfToken');
       $('#admin-dashboard').hidden = true;
       $('#admin-login').hidden = false;
       message('admin-login-message', 'Administrator MFA setup is required. Sign in again to enroll.', true);
@@ -717,12 +716,23 @@ function showDashboard() {
     message('admin-login-message', error.message, true);
   });
 }
-if (adminToken) showDashboard();
+
+async function restoreAdminSession() {
+  try {
+    const session = await api('/api/admin/session');
+    localStorage.setItem('adminCsrfToken', session.csrfToken);
+    showDashboard();
+  } catch (error) {
+    if (![401, 403].includes(error.status)) message('admin-login-message', error.message, true);
+    $('#admin-dashboard').hidden = true;
+    $('#admin-login').hidden = false;
+  }
+}
+restoreAdminSession();
 
 function showAdminMfaChallenge(data) {
-  adminToken = null;
   sessionStorage.removeItem('adminToken');
-  sessionStorage.removeItem('adminCsrfToken');
+  localStorage.removeItem('adminCsrfToken');
   adminMfaChallengeToken = data.challengeToken;
   adminMfaEnrollment = Boolean(data.mfaEnrollmentRequired);
   $('#admin-login').hidden = true;
@@ -748,9 +758,8 @@ function showAdminMfaChallenge(data) {
 }
 
 function saveAdminSession(data) {
-  adminToken = data.token;
-  sessionStorage.setItem('adminToken', adminToken);
-  sessionStorage.setItem('adminCsrfToken', data.csrfToken || '');
+  sessionStorage.removeItem('adminToken');
+  localStorage.setItem('adminCsrfToken', data.csrfToken || '');
   adminMfaChallengeToken = null;
   $('#admin-mfa-panel').hidden = true;
   showDashboard();
@@ -759,7 +768,7 @@ function saveAdminSession(data) {
 $('#admin-login-form').addEventListener('submit', async event => {
   event.preventDefault();
   try {
-    const data = await fetch(`${API}/api/admin/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: $('#admin-email').value, password: $('#admin-password').value }) }).then(async response => { const result = await response.json(); if (!response.ok) throw new Error(result.error); return result; });
+    const data = await fetch(`${API}/api/admin/login`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: $('#admin-email').value, password: $('#admin-password').value }) }).then(async response => { const result = await response.json(); if (!response.ok) throw new Error(result.error); return result; });
     $('#admin-password').value = '';
     if (data.mfaRequired || data.mfaEnrollmentRequired) return showAdminMfaChallenge(data);
     saveAdminSession(data);
@@ -807,7 +816,7 @@ $('#admin-logout').addEventListener('click', async () => {
     console.warn('Admin session could not be invalidated remotely:', error.message);
   }).finally(() => {
     sessionStorage.removeItem('adminToken');
-    sessionStorage.removeItem('adminCsrfToken');
+    localStorage.removeItem('adminCsrfToken');
     sessionStorage.removeItem(activeAdminSectionKey);
     location.reload();
   });
@@ -831,8 +840,7 @@ $('#export-report').addEventListener('click', async event => {
   button.disabled = true;
   try {
     const response = await fetch(`${API}/api/admin/reports.csv?${query}`, {
-      credentials: 'include',
-      headers: adminToken ? { Authorization: `Bearer ${adminToken}` } : {}
+      credentials: 'include'
     });
     if (!response.ok) {
       const result = await response.json();
@@ -1007,8 +1015,7 @@ $('#certificate-list').addEventListener('click', async event => {
       }
     } else if (pdfButton) {
       const response = await fetch(`${API}/api/admin/certificates/${pdfButton.dataset.certificatePdf}/pdf`, {
-        credentials: 'include',
-        headers: adminToken ? { Authorization: `Bearer ${adminToken}` } : {}
+        credentials: 'include'
       });
       if (!response.ok) {
         let result = {};
@@ -1335,7 +1342,7 @@ $('#export-orders').addEventListener('click', async event => {
   const button = event.currentTarget;
   button.disabled = true;
   try {
-    const response = await fetch(`${API}/api/admin/orders.csv`, { credentials: 'include', headers: { Authorization: `Bearer ${adminToken || ''}` } });
+    const response = await fetch(`${API}/api/admin/orders.csv`, { credentials: 'include' });
     if (!response.ok) {
       const result = await response.json();
       throw new Error(result.error || 'Could not export orders.');

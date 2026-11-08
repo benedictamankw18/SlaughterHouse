@@ -18,7 +18,7 @@ app.use(securityHeaders);
 app.use(cors({
   credentials: true,
   methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'X-Request-ID'],
+  allowedHeaders: ['Content-Type', 'X-CSRF-Token', 'X-Request-ID'],
   exposedHeaders: ['X-Request-ID', 'Retry-After'],
   maxAge: 600,
   origin(origin, callback) {

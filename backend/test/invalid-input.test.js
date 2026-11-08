@@ -75,7 +75,7 @@ async function requestFrom(router, path, { method = 'POST', body, rawBody, conte
       },
       body: payload
     });
-    return { status: response.status, body: await response.json() };
+    return { status: response.status, headers: response.headers, body: await response.json() };
   } finally {
     if (server.listening) {
       await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
@@ -119,6 +119,7 @@ test('duplicate signup returns a conflict for MySQL and PostgreSQL unique violat
     '../session-store': {
       customerLoginAttempts: new Map(),
       adminLoginAttempts: new Map(),
+      allowVisitor: (request, response, next) => next(),
       requireCustomer: (request, response, next) => next(),
       requireAdmin: (request, response, next) => next(),
       deleteSession: async () => {}
@@ -177,6 +178,7 @@ test('successful password reset revokes the user sessions in the password update
     '../session-store': {
       customerLoginAttempts: new Map(),
       adminLoginAttempts: new Map(),
+      allowVisitor: (request, response, next) => next(),
       requireCustomer: (request, response, next) => next(),
       requireAdmin: (request, response, next) => next(),
       deleteSession: async () => {}
@@ -242,6 +244,8 @@ test('verified PostgreSQL users can sign in despite folded unquoted aliases', as
       customerLoginAttempts: new Map(),
       adminLoginAttempts: new Map(),
       createSession: async () => ({ token: 'session-token', csrfToken: 'csrf-token' }),
+      getSessionCookieToken: () => null,
+      allowVisitor: (request, response, next) => next(),
       requireCustomer: (request, response, next) => next(),
       requireAdmin: (request, response, next) => next(),
       deleteSession: async () => {}
@@ -271,6 +275,8 @@ test('verified PostgreSQL users can sign in despite folded unquoted aliases', as
     });
     assert.equal(result.status, 200);
     assert.equal(result.body.user.email, 'person@example.test');
+    assert.equal(Object.hasOwn(result.body, 'token'), false);
+    assert.match(result.headers.get('set-cookie') || '', /HttpOnly/);
   } finally {
     loaded.restore();
   }

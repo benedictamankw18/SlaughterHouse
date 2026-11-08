@@ -60,6 +60,9 @@ async function mockApi(page, options = {}) {
       }]
     }
   ];
+  await page.addInitScript(() => {
+    window.ULTBIGBOY_API_URL = '';
+  });
   await page.route('https://**/*', route => route.abort());
   await page.route('**/api/**', async route => {
     const request = route.request();
@@ -72,10 +75,23 @@ async function mockApi(page, options = {}) {
     } catch {}
     let status = 200;
     let body = {};
+    const responseHeaders = {};
+    const cookies = request.headers().cookie || '';
 
     calls.push({ method, path, search: url.search, data });
 
-    if (path === '/api/beats') {
+    if (path === '/api/auth/session') {
+      body = cookies.includes('ultbigboy_customer_session=test-customer-token')
+        ? { authenticated: true, csrfToken: 'test-customer-csrf', user: customer }
+        : { authenticated: false };
+    } else if (path === '/api/admin/session') {
+      body = cookies.includes('ultbigboy_admin_session=test-admin-token')
+        ? { authenticated: true, csrfToken: 'test-admin-csrf', email: 'admin@example.test', role: options.adminRole || 'admin' }
+        : { error: 'Admin login required.' };
+      if (!cookies.includes('ultbigboy_admin_session=test-admin-token')) status = 401;
+    } else if (path === '/api/exchange-rate') {
+      body = { usdToGhsRate: 12.5, updatedAt: new Date().toISOString() };
+    } else if (path === '/api/beats') {
       body = { beats: [beat], pagination: { page: 1, pages: 1, total: 1 } };
     } else if (path === '/api/reviews') {
       body = method === 'POST'
@@ -97,7 +113,10 @@ async function mockApi(page, options = {}) {
           secret: 'JBSWY3DPEHPK3PXP',
           qrCodeDataUrl: 'data:image/png;base64,aGVsbG8='
         };
-      } else if (options.adminLogin) body = { token: 'test-admin-token', csrfToken: 'test-admin-csrf' };
+      } else if (options.adminLogin) {
+        body = { csrfToken: 'test-admin-csrf', email: 'admin@example.test', role: options.adminRole || 'admin' };
+        responseHeaders['Set-Cookie'] = 'ultbigboy_admin_session=test-admin-token; Path=/; HttpOnly; SameSite=Lax';
+      }
       else {
         status = 401;
         body = { error: 'Invalid administrator credentials.' };
@@ -105,9 +124,11 @@ async function mockApi(page, options = {}) {
     } else if (path === '/api/admin/mfa/verify') {
       body = { mfaSetupComplete: true, recoveryCodes: ['A'.repeat(20), 'B'.repeat(20)] };
     } else if (path === '/api/admin/mfa/complete') {
-      body = { token: 'test-admin-token', csrfToken: 'test-admin-csrf' };
+      body = { csrfToken: 'test-admin-csrf', email: 'admin@example.test', role: options.adminRole || 'admin' };
+      responseHeaders['Set-Cookie'] = 'ultbigboy_admin_session=test-admin-token; Path=/; HttpOnly; SameSite=Lax';
     } else if (path === '/api/auth/login') {
-      body = { token: 'test-customer-token', csrfToken: 'test-customer-csrf', user: customer };
+      body = { csrfToken: 'test-customer-csrf', user: customer };
+      responseHeaders['Set-Cookie'] = 'ultbigboy_customer_session=test-customer-token; Path=/; HttpOnly; SameSite=Lax';
     } else if (path === '/api/payments/initialize' || path === '/api/bookings/initialize-payment') {
       body = {
         reference: 'browser-test-reference',
@@ -231,6 +252,7 @@ async function mockApi(page, options = {}) {
     await route.fulfill({
       status,
       contentType: 'application/json',
+      headers: responseHeaders,
       body: JSON.stringify(body)
     });
   });
@@ -244,18 +266,25 @@ async function openAuth(page, view = 'login') {
 }
 
 async function seedCustomerSession(page) {
-  await page.addInitScript(({ user }) => {
-    sessionStorage.setItem('customerUser', JSON.stringify(user));
-    sessionStorage.setItem('customerToken', 'test-customer-token');
-    sessionStorage.setItem('customerCsrfToken', 'test-customer-csrf');
-  }, { user: customer });
+  await page.context().addCookies([{
+    name: 'ultbigboy_customer_session',
+    value: 'test-customer-token',
+    url: 'http://127.0.0.1:4173',
+    httpOnly: true,
+    sameSite: 'Lax'
+  }]);
+  await page.addInitScript(() => localStorage.setItem('customerCsrfToken', 'test-customer-csrf'));
 }
 
 async function seedAdminSession(page) {
-  await page.addInitScript(() => {
-    sessionStorage.setItem('adminToken', 'test-admin-token');
-    sessionStorage.setItem('adminCsrfToken', 'test-admin-csrf');
-  });
+  await page.context().addCookies([{
+    name: 'ultbigboy_admin_session',
+    value: 'test-admin-token',
+    url: 'http://127.0.0.1:4173',
+    httpOnly: true,
+    sameSite: 'Lax'
+  }]);
+  await page.addInitScript(() => localStorage.setItem('adminCsrfToken', 'test-admin-csrf'));
 }
 
 test('signup submits the entered profile and enters email verification', async ({ page }) => {
@@ -289,7 +318,7 @@ test('successful email verification redirects to index.html', async ({ page }) =
   expect(calls.some(call => call.path === '/api/auth/verify-email')).toBe(true);
 });
 
-test('login stores the customer session and opens the account view', async ({ page }) => {
+test('login keeps the session in a cookie and opens the account view', async ({ page }) => {
   await mockApi(page);
   await openAuth(page);
 
@@ -298,8 +327,9 @@ test('login stores the customer session and opens the account view', async ({ pa
   await page.getByRole('button', { name: 'Sign in' }).click();
 
   await expect(page.getByRole('heading', { name: customer.name })).toBeVisible();
-  await expect.poll(() => page.evaluate(() => sessionStorage.getItem('customerToken'))).toBe('test-customer-token');
-  await expect.poll(() => page.evaluate(() => sessionStorage.getItem('customerCsrfToken'))).toBe('test-customer-csrf');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('customerCsrfToken'))).toBe('test-customer-csrf');
+  expect(await page.evaluate(() => sessionStorage.getItem('customerToken'))).toBeNull();
+  expect(await page.evaluate(() => document.cookie)).not.toContain('customer_session');
 });
 
 test('search navigates to the catalog and forwards the query to the beats API', async ({ page }) => {

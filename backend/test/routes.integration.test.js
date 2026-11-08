@@ -162,6 +162,19 @@ function testConfig() {
   };
 }
 
+function csrfTokenForSession(token) {
+  return crypto.createHmac('sha256', token).update('ultbigboy-csrf-v1').digest('hex');
+}
+
+function sessionHeaders(token, role) {
+  const cookieName = role === 'customer' ? 'customer_session' : 'admin_session';
+  return {
+    Cookie: `${cookieName}=${token}`,
+    'X-CSRF-Token': csrfTokenForSession(token),
+    Connection: 'close'
+  };
+}
+
 function loadRouteRouters(database) {
   const databaseId = require.resolve('../database');
   const configId = require.resolve('../config');
@@ -254,7 +267,7 @@ function mountIntegrationApp(routeModules, database, config) {
   app.use(cors({
     credentials: true,
     methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'X-Request-ID'],
+    allowedHeaders: ['Content-Type', 'X-CSRF-Token', 'X-Request-ID'],
     exposedHeaders: ['X-Request-ID'],
     maxAge: 600,
     origin(origin, callback) {
@@ -327,17 +340,22 @@ async function seedSessions(pool) {
       ]
     );
     const token = crypto.randomBytes(32).toString('hex');
+    const csrfToken = csrfTokenForSession(token);
     await pool.execute(
       'INSERT INTO user_sessions (user_id, token_hash, csrf_token_hash, role, expires_at) VALUES (?, ?, ?, ?, ?)',
-      [result.insertId, crypto.createHash('sha256').update(token).digest('hex'), crypto.createHash('sha256').update(crypto.randomBytes(32)).digest('hex'), user.role, new Date(Date.now() + 60 * 60 * 1000)]
+      [result.insertId, crypto.createHash('sha256').update(token).digest('hex'), crypto.createHash('sha256').update(csrfToken).digest('hex'), user.role, new Date(Date.now() + 60 * 60 * 1000)]
     );
     sessions[user.role] = token;
+    sessions.csrfTokens ||= {};
+    sessions.csrfTokens[user.role] = csrfToken;
     const logoutToken = crypto.randomBytes(32).toString('hex');
+    const logoutCsrfToken = csrfTokenForSession(logoutToken);
     await pool.execute(
       'INSERT INTO user_sessions (user_id, token_hash, csrf_token_hash, role, expires_at) VALUES (?, ?, ?, ?, ?)',
-      [result.insertId, crypto.createHash('sha256').update(logoutToken).digest('hex'), crypto.createHash('sha256').update(crypto.randomBytes(32)).digest('hex'), user.role, new Date(Date.now() + 60 * 60 * 1000)]
+      [result.insertId, crypto.createHash('sha256').update(logoutToken).digest('hex'), crypto.createHash('sha256').update(logoutCsrfToken).digest('hex'), user.role, new Date(Date.now() + 60 * 60 * 1000)]
     );
     sessions.logoutTokens[user.role] = logoutToken;
+    sessions.csrfTokens[`logout:${user.role}`] = logoutCsrfToken;
   }
   return sessions;
 }
@@ -370,19 +388,19 @@ async function invokeRoute(baseUrl, route, sessions, routeFixtures) {
   const methodsWithBody = new Set(['post', 'put', 'patch']);
   const requestBody = methodsWithBody.has(route.method) ? '{}' : undefined;
   const url = `${baseUrl}${requestPath(route.path, route.method, routeFixtures)}`;
+  const logoutRole = route.path.startsWith('/admin/') ? 'super_admin' : 'customer';
   const candidates = route.path.endsWith('/logout')
-    ? [null, sessions.logoutTokens[route.path.startsWith('/admin/') ? 'super_admin' : 'customer']]
-    : [null, sessions.customer, sessions.super_admin];
+    ? [null, { token: sessions.logoutTokens[logoutRole], role: logoutRole }]
+    : [null, { token: sessions.customer, role: 'customer' }, { token: sessions.super_admin, role: 'super_admin' }];
   let response;
   let responseText;
 
-  for (const token of candidates) {
+  for (const candidate of candidates) {
     response = await fetch(url, {
       method: route.method.toUpperCase(),
       headers: {
         ...(requestBody === undefined ? {} : { 'Content-Type': 'application/json' }),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        Connection: 'close'
+        ...(candidate ? sessionHeaders(candidate.token, candidate.role) : { Connection: 'close' })
       },
       body: requestBody
     });
@@ -458,14 +476,14 @@ test('all registered API route methods execute against an isolated PostgreSQL te
     assert.equal(publicBeatDetails.previewFile, previewFile);
 
     const staffResponse = await fetch(`${baseUrl}/api/admin/staff`, {
-      headers: { Authorization: `Bearer ${sessions.super_admin}`, Connection: 'close' }
+      headers: sessionHeaders(sessions.super_admin, 'super_admin')
     });
     assert.equal(staffResponse.status, 200, 'Staff accounts can be listed by a super-admin.');
     const { staff } = await staffResponse.json();
     assert.equal(staff[0]?.role, 'super_admin', 'Super-admin accounts appear first in the staff list.');
 
     const profileResponse = await fetch(`${baseUrl}/api/auth/profile`, {
-      headers: { Authorization: 'Bearer ' + sessions.customer, Connection: 'close' }
+      headers: sessionHeaders(sessions.customer, 'customer')
     });
     assert.equal(profileResponse.status, 200, 'Verified customers retain access to their profile.');
 
@@ -475,9 +493,10 @@ test('all registered API route methods execute against an isolated PostgreSQL te
     ).then(([rows]) => rows);
     const downloadCustomerToken = crypto.randomBytes(32).toString('hex');
     const downloadCustomerTokenHash = crypto.createHash('sha256').update(downloadCustomerToken).digest('hex');
+    const downloadCustomerCsrfToken = csrfTokenForSession(downloadCustomerToken);
     await promisePool.execute(
       'INSERT INTO user_sessions (user_id, token_hash, csrf_token_hash, role, expires_at) VALUES (?, ?, ?, ?, ?)',
-      [customerId, downloadCustomerTokenHash, crypto.createHash('sha256').update(crypto.randomBytes(32)).digest('hex'), 'customer', new Date(Date.now() + 60 * 60 * 1000)]
+      [customerId, downloadCustomerTokenHash, crypto.createHash('sha256').update(downloadCustomerCsrfToken).digest('hex'), 'customer', new Date(Date.now() + 60 * 60 * 1000)]
     );
     const downloadFile = `integration-download-${crypto.randomBytes(6).toString('hex')}.mp3`;
     const downloadReferences = {
@@ -524,11 +543,11 @@ test('all registered API route methods execute against an isolated PostgreSQL te
       const otherCustomerToken = crypto.randomBytes(32).toString('hex');
       await promisePool.execute(
         'INSERT INTO user_sessions (user_id, token_hash, csrf_token_hash, role, expires_at) VALUES (?, ?, ?, ?, ?)',
-        [otherCustomerId, crypto.createHash('sha256').update(otherCustomerToken).digest('hex'), crypto.createHash('sha256').update(crypto.randomBytes(32)).digest('hex'), 'customer', new Date(Date.now() + 60 * 60 * 1000)]
+        [otherCustomerId, crypto.createHash('sha256').update(otherCustomerToken).digest('hex'), crypto.createHash('sha256').update(csrfTokenForSession(otherCustomerToken)).digest('hex'), 'customer', new Date(Date.now() + 60 * 60 * 1000)]
       );
 
       const customerLicensesResponse = await fetch(`${baseUrl}/api/customer/licenses`, {
-        headers: { Authorization: `Bearer ${downloadCustomerToken}`, Connection: 'close' }
+        headers: sessionHeaders(downloadCustomerToken, 'customer')
       });
       const customerLicensesBody = await customerLicensesResponse.json();
       assert.equal(customerLicensesResponse.status, 200, `A customer can view active and expired paid licenses: ${customerLicensesBody.error || ''}`);
@@ -545,9 +564,9 @@ test('all registered API route methods execute against an isolated PostgreSQL te
       assert.deepEqual(expiredLicense.downloads, [], 'Expired licenses do not receive download links.');
 
       const { createDownloadToken } = require('../services/downloads');
-      const requestDownload = (reference, token, bearer = downloadCustomerToken) => fetch(
+      const requestDownload = (reference, token, sessionToken = downloadCustomerToken) => fetch(
         `${baseUrl}/api/orders/${reference}/downloads/${downloadBeatId}?license=basic&format=mp3&token=${encodeURIComponent(token)}`,
-        { headers: { Authorization: `Bearer ${bearer}`, Connection: 'close' } }
+        { headers: sessionHeaders(sessionToken, 'customer') }
       );
       for (const key of ['pending', 'partial', 'expired']) {
         const token = createDownloadToken(downloadReferences[key], downloadBeatId, 'basic', 'mp3');
@@ -589,18 +608,18 @@ test('all registered API route methods execute against an isolated PostgreSQL te
       ['integration-admin@example.test', 'super_admin']
     );
     const streamReleaseAdminToken = crypto.randomBytes(32).toString('hex');
+    const streamReleaseAdminCsrfToken = csrfTokenForSession(streamReleaseAdminToken);
     await promisePool.execute(
       'INSERT INTO user_sessions (user_id, token_hash, csrf_token_hash, role, expires_at) VALUES (?, ?, ?, ?, ?)',
-      [adminUsers[0].id, crypto.createHash('sha256').update(streamReleaseAdminToken).digest('hex'), crypto.createHash('sha256').update(crypto.randomBytes(32)).digest('hex'), 'super_admin', new Date(Date.now() + 60 * 60 * 1000)]
+      [adminUsers[0].id, crypto.createHash('sha256').update(streamReleaseAdminToken).digest('hex'), crypto.createHash('sha256').update(streamReleaseAdminCsrfToken).digest('hex'), 'super_admin', new Date(Date.now() + 60 * 60 * 1000)]
     );
     const streamReleaseTitle = `Integration stream release ${crypto.randomUUID()}`;
     let streamReleaseId;
     const adminRequest = (route, method, body) => fetch(`${baseUrl}${route}`, {
       method,
       headers: {
-        Authorization: 'Bearer ' + streamReleaseAdminToken,
+        ...sessionHeaders(streamReleaseAdminToken, 'super_admin'),
         ...(body ? { 'Content-Type': 'application/json' } : {}),
-        Connection: 'close'
       },
       ...(body ? { body: JSON.stringify(body) } : {})
     });
@@ -703,9 +722,8 @@ test('all registered API route methods execute against an isolated PostgreSQL te
     const resolutionResponse = await fetch(`${baseUrl}/api/admin/orders/${reconciliationReference}/booking-resolution`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${sessions.super_admin}`,
+        ...sessionHeaders(sessions.super_admin, 'super_admin'),
         'Content-Type': 'application/json',
-        Connection: 'close'
       },
       body: JSON.stringify({ action: 'assign_slot', slots: [{ date: '2030-01-09', time: '11:00' }] })
     });

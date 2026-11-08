@@ -44,7 +44,7 @@ function loadSessionStore(session) {
   };
 }
 
-function authorize(store) {
+function authorize(store, cookie = 'admin_session=' + 'a'.repeat(64), authorization = '') {
   return new Promise(resolve => {
     const result = { headers: {} };
     const response = {
@@ -53,7 +53,11 @@ function authorize(store) {
       json(body) { result.body = body; resolve(result); }
     };
     const request = {
-      get(name) { return name.toLowerCase() === 'authorization' ? `Bearer ${'a'.repeat(64)}` : ''; }
+      get(name) {
+        if (name.toLowerCase() === 'cookie') return cookie;
+        if (name.toLowerCase() === 'authorization') return authorization;
+        return '';
+      }
     };
     store.requireAdmin(request, response, () => resolve({ next: true, request }));
   });
@@ -73,6 +77,23 @@ test('administrator sessions without MFA enrollment are rejected and their cooki
     assert.equal(result.status, 403);
     assert.equal(result.body.code, 'ADMIN_MFA_REQUIRED');
     assert.match(result.headers['Set-Cookie'], /Max-Age=0/);
+  } finally {
+    loaded.restore();
+  }
+});
+
+test('administrator bearer tokens are not accepted as sessions', async () => {
+  const loaded = loadSessionStore({
+    id: 8,
+    csrfTokenHash: 'b'.repeat(64),
+    name: 'Admin',
+    email: 'admin@example.test',
+    role: 'admin',
+    adminMfaEnabledAt: new Date()
+  });
+  try {
+    const result = await authorize(loaded.store, '', `Bearer ${'a'.repeat(64)}`);
+    assert.equal(result.status, 401);
   } finally {
     loaded.restore();
   }
