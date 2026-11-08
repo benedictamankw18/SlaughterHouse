@@ -57,6 +57,11 @@ async function collectReferences() {
     add('uploads', release.cover_url, `cover for stream release ${release.id} "${release.title}"`);
   }
 
+  const requests = await queryRows("SELECT id, sample_audio_file FROM customization_requests WHERE sample_audio_file IS NOT NULL AND sample_audio_file <> '' ORDER BY id");
+  for (const request of requests) {
+    add('uploads', request.sample_audio_file, `sample audio for customization request ${request.id}`);
+  }
+
   const certificates = await queryRows("SELECT id, pdf_storage_path FROM license_certificates WHERE pdf_storage_path IS NOT NULL AND pdf_storage_path <> ''");
   for (const certificate of certificates) {
     add('certificates', certificate.pdf_storage_path, `PDF for license certificate ${certificate.id}`);

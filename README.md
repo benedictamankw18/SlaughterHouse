@@ -60,6 +60,9 @@ local `backend\.env`; never commit credentials.
 | Variable | Purpose |
 | --- | --- |
 | `DATABASE_URL` | PostgreSQL connection string; use a pooled connection string for serverless deployments. |
+| `DATABASE_URL_UNPOOLED` | Direct PostgreSQL URL used by backup and restore scripts when the runtime URL is pooled. |
+| `DB_POOL_MAX` | PostgreSQL pool size per process; defaults to 3 on Vercel and 10 elsewhere. |
+| `BACKUP_DATABASE_URL`, `BACKUP_DIR` | Optional direct backup connection and persistent backup output directory. |
 | `NODE_ENV`, `PORT` | Runtime environment and local API port. |
 | `FRONTEND_ORIGIN`, `FRONTEND_ORIGINS` | Trusted browser origins. |
 | `API_PUBLIC_URL`, `PAYMENT_CALLBACK_URL`, `TRUST_PROXY` | Public API URL, payment return URL, and trusted proxy configuration. |
@@ -75,7 +78,8 @@ local `backend\.env`; never commit credentials.
 
 See [backend/.env.example](./backend/.env.example) and the
 [operations guide](./docs/operations.md) for all settings and production
-procedures.
+procedures. Step-by-step staging and production instructions are in the
+[deployment guide](./deployment.md).
 
 ## Testing
 

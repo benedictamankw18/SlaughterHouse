@@ -12,6 +12,7 @@
     "test:integration": "node --test test/routes.integration.test.js",
     "test:browser": "playwright test -c playwright.config.js",
     "migrate:postgres": "node migrate-to-postgres.js",
+    "admin:create": "node scripts/create-admin.js",
     "backup": "node scripts/backup.js",
     "restore": "node scripts/restore.js",
     "verify:backup": "node scripts/verify-backup.js",

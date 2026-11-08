@@ -14,7 +14,7 @@ async function hashFile(filePath) {
 async function backup() {
   const config = getDatabaseConfig();
   const connectionArgs = clientArgs(config);
-  const outputDirectory = path.resolve(process.argv[2] || path.join(__dirname, '..', 'data', 'backups'));
+  const outputDirectory = path.resolve(process.argv[2] || process.env.BACKUP_DIR || path.join(__dirname, '..', 'data', 'backups'));
   await fs.promises.mkdir(outputDirectory, { recursive: true });
 
   const timestamp = new Date().toISOString().replace(/[-:]/g, '');
