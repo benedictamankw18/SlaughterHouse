@@ -16,7 +16,8 @@ The backend is organized by responsibility:
 - `routes/payments.js` - storefront payment initialization and verification
 - `routes/downloads.js` - signed beat download routes
 - `services/security.js` - password hashing and password verification
-- `services/booking.js` - booking fees and slot validation
+- `services/booking.js` - booking fees, configurable rules, and availability computation
+- `services/booking-settings.js` - admin-configurable booking availability settings
 - `services/uploads.js` - validated image/audio persistence
 - `services/storage/` - private local file storage provider and streaming access
 - `services/downloads.js` - signed download token generation and verification
@@ -261,8 +262,12 @@ through the existing POST account endpoints. New accounts receive separate
 welcome and verification messages. Beat buyers receive a license-issued email
 in addition to their receipt after payment settlement. Receipt and booking-
 confirmation messages are queued with payment settlement; refund messages and
-manual-review alerts are queued with refund processing. Admin booking
-cancellations also queue a customer cancellation notice. Delivery is performed
+manual-review alerts are queued with refund processing. Custom and merchandise
+request submissions queue a customer acknowledgement and an administrator
+alert, and booking payment initialization queues a booking-request-received
+message before Paystack is contacted. Email failures are logged and never block
+the request or the payment redirect. Admin booking cancellations also queue a
+customer cancellation notice. Delivery is performed
 by the outbox worker after the business transaction commits. Administrators can
 review the latest delivery states and sanitized errors through
 `GET /api/admin/email-deliveries`.
@@ -405,6 +410,20 @@ with the previous and new status.
 Administrators can reserve or block public booking slots with
 `POST /api/admin/bookings/availability` and remove unreserved overrides with
 `DELETE /api/admin/bookings/availability`. Paid slots cannot be overwritten.
+Admin overrides are validated against the configured booking rules, and each
+session blocks a full session window (140 minutes), so overlapping slots are
+treated as unavailable.
+
+Booking availability is configurable. `GET /api/admin/bookings/settings`
+returns the current available weekdays, opening and closing times, slot
+interval, same-day notice, optional available-from/until dates, and the fixed
+session length; `PUT /api/admin/bookings/settings` (super-admin only) updates
+any subset with cross-field validation. Settings are stored in the `settings`
+table and migration 36 seeds the documented defaults. Public availability and
+booking validation use these rules server-side, and the custom calendar marks
+dates unavailable when the weekday is disabled, the date falls outside the
+configured range, or no session fits. Existing holds and bookings are not
+changed when settings are updated.
 
 Merchandise stock is nullable: `NULL` means unlimited stock. Public merchandise
 responses expose `stockQuantity`; administrators can update it with

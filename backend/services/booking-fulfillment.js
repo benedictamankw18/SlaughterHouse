@@ -4,6 +4,7 @@ const { normalizeBookingSlots } = require('./booking');
 const { confirmBookingSlots } = require('./booking-reservations');
 const { createNotificationSafely, notifyAdminsSafely } = require('./notifications');
 const { queueEmailSafely } = require('./email/outbox');
+const { queueAdminAlertEmailsSafely } = require('./admin-alerts');
 
 async function fulfillPaidBooking(db, order, bookingItem) {
   const booking = bookingItem.booking;
@@ -32,6 +33,12 @@ async function fulfillPaidBooking(db, order, bookingItem) {
     title: 'Booking payment received',
     message: `${serviceName} booking ${order.reference} from ${booking.name || order.customer_name} was paid.`,
     dedupeKey: `booking-paid:${order.reference}`
+  });
+  await queueAdminAlertEmailsSafely(db, {
+    title: 'Booking payment received',
+    message: `${serviceName} booking ${order.reference} from ${booking.name || order.customer_name} was paid. Confirm the session with the customer.`,
+    reference: order.reference,
+    idempotencyPrefix: `booking-admin:${order.reference}`
   });
   await queueEmailSafely(db, {
     to: booking.email || order.customer_email,

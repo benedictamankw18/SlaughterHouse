@@ -88,17 +88,26 @@
   <script>
     const customizeForm = document.getElementById('customize-request-form');
     const requestMessage = document.getElementById('request-form-message');
+    let customizeSubmissionId = createSubmissionId();
     customizeForm?.addEventListener('submit', async event => {
       event.preventDefault();
+      const submitButton = event.submitter || customizeForm.querySelector('button[type="submit"]');
+      if (submitButton?.dataset.busy === 'true') return;
+      const stopBusy = window.startActionBusy(submitButton, 'Sending…');
+      requestMessage.classList.remove('error');
       const form = new FormData(customizeForm);
       try {
-        const response = await fetch(`${window.ULTBIGBOY_API_URL}/api/requests`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestType: 'merchandise', name: form.get('name'), email: form.get('email'), productName: form.get('cap'), details: `${form.get('details')} Color: ${form.get('color')}. Name to print: ${form.get('printName') || 'None'}.` }) });
+        const response = await fetch(`${window.ULTBIGBOY_API_URL}/api/requests`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestType: 'merchandise', name: form.get('name'), email: form.get('email'), productName: form.get('cap'), details: `${form.get('details')} Color: ${form.get('color')}. Name to print: ${form.get('printName') || 'None'}.`, submissionId: customizeSubmissionId }) });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error);
         requestMessage.textContent = 'Request received. We will be in touch soon.';
         customizeForm.reset();
+        customizeSubmissionId = createSubmissionId();
       } catch (error) {
         requestMessage.textContent = error.message || 'Could not send request.';
+        requestMessage.classList.add('error');
+      } finally {
+        stopBusy?.();
       }
     });
   </script>

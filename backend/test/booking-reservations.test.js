@@ -8,12 +8,16 @@ const {
   expireBookingHolds
 } = require('../services/booking-reservations');
 
-function createDatabase(changesByCall = []) {
+function createDatabase(changesByCall = [], rows = []) {
   const calls = [];
   return {
     calls,
+    async all(query, parameters) {
+      return typeof rows === 'function' ? rows(query, parameters) : rows;
+    },
     async run(query, parameters) {
       calls.push({ query, parameters });
+      if (/pg_advisory_xact_lock/.test(query)) return { changes: 1 };
       return { changes: changesByCall.length ? changesByCall.shift() : 1 };
     }
   };
@@ -29,15 +33,16 @@ test('booking slot holds use a bounded database expiry and reserve every request
   await reserveBookingSlots(db, 'BOOKING-1', slots);
 
   assert.equal(HOLD_DURATION_MINUTES, 30);
-  assert.equal(db.calls.length, 2);
-  assert.deepEqual(db.calls.map(call => call.parameters[1]), ['2030-01-08', '2030-01-09']);
-  for (const [index, call] of db.calls.entries()) {
+  const inserts = db.calls.filter(call => /INSERT INTO booking_availability/.test(call.query));
+  assert.equal(inserts.length, 2);
+  assert.deepEqual(inserts.map(call => call.parameters[0]), ['2030-01-08', '2030-01-09']);
+  for (const call of inserts) {
     assert.match(call.query, /SET status = 'reserved'/);
-    assert.match(call.query, /hold_expires_at = CURRENT_TIMESTAMP \+ INTERVAL '30 minutes'/);
+    assert.match(call.query, /CURRENT_TIMESTAMP \+ INTERVAL '30 minutes'/);
     assert.match(call.query, /status = 'available'/);
     assert.match(call.query, /hold_expires_at <= CURRENT_TIMESTAMP/);
-    assert.match(call.query, /booking_order_reference = \?/);
-    assert.deepEqual(call.parameters, ['BOOKING-1', ['2030-01-08', '2030-01-09'][index], '11:00', 'BOOKING-1']);
+    assert.match(call.query, /booking_order_reference = EXCLUDED\.booking_order_reference/);
+    assert.deepEqual(call.parameters, [call.parameters[0], '11:00', 'BOOKING-1']);
   }
 });
 
@@ -57,7 +62,7 @@ test('expired booking holds support the callback-style database adapter', async 
 });
 
 test('booking slot reservation fails when any slot is already held', async () => {
-  const db = createDatabase([1, 0]);
+  const db = createDatabase([], () => [{ start_time: '11:00', status: 'booked' }]);
 
   await assert.rejects(
     reserveBookingSlots(db, 'BOOKING-2', [
@@ -66,7 +71,8 @@ test('booking slot reservation fails when any slot is already held', async () =>
     ]),
     { code: 'BOOKING_SLOT_UNAVAILABLE' }
   );
-  assert.equal(db.calls.length, 2);
+  assert.equal(db.calls.filter(call => /INSERT INTO booking_availability/.test(call.query)).length, 0);
+  assert.equal(db.calls.filter(call => /pg_advisory_xact_lock/.test(call.query)).length, 2);
 });
 
 test('paid booking confirmation consumes only its own active hold', async () => {

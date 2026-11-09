@@ -23,6 +23,16 @@ async function mockApi(page, options = {}) {
   let adminReviewStatus = 'pending';
   let adminStreamReleases = [];
   let nextStreamReleaseId = 70;
+  let bookingSettings = {
+    availableWeekdays: [0, 2, 3, 4],
+    openTime: '11:00',
+    closeTime: '21:00',
+    slotStepMinutes: 20,
+    sameDayLeadMinutes: 30,
+    availableFrom: null,
+    availableUntil: null,
+    sessionMinutes: 140
+  };
   const reconciliationOrders = [
     {
       id: 3,
@@ -101,6 +111,28 @@ async function mockApi(page, options = {}) {
       body = { prices: { basic: 100, premium: 200, unlimited: 300, exclusive: 400 } };
     } else if (path === '/api/bookings/fees') {
       body = { fees: { mixtape: 250, 'full-production': 1000, 'beat-production': 500, 'adverts-promos': 250 }, rules: { epAlbumDiscountPercent: 20 } };
+    } else if (path === '/api/bookings/availability/month') {
+      const month = url.searchParams.get('month') || '';
+      const [year, monthNumber] = month.split('-').map(Number);
+      const days = [];
+      if (Number.isInteger(year) && Number.isInteger(monthNumber)) {
+        const daysInMonth = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+        for (let day = 1; day <= daysInMonth; day += 1) {
+          const date = `${month}-${String(day).padStart(2, '0')}`;
+          const weekday = new Date(Date.UTC(year, monthNumber - 1, day)).getUTCDay();
+          if ([0, 2, 3, 4].includes(weekday)) {
+            days.push({ date, sessionDay: true, available: true, slotsAvailable: 4 });
+          }
+        }
+      }
+      body = { month, days, sessionMinutes: 140 };
+    } else if (path === '/api/bookings/availability') {
+      body = {
+        date: url.searchParams.get('date'),
+        validDay: true,
+        sessionMinutes: 140,
+        slots: ['11:00', '11:20', '11:40', '12:00'].map(time => ({ time, available: true, reason: null }))
+      };
     } else if (path === '/api/auth/signup') {
       body = { message: 'Account created. Verify your email.', verificationToken: 'test-verification-token' };
     } else if (path === '/api/auth/verify-email') {
@@ -196,6 +228,14 @@ async function mockApi(page, options = {}) {
       body = { deliveries: [], counts: {} };
     } else if (path === '/api/admin/license-definitions') {
       body = { definitions: [] };
+    } else if (path === '/api/admin/bookings/settings') {
+      if (method === 'PUT') {
+        bookingSettings = { ...bookingSettings, ...(data?.settings || {}), sessionMinutes: 140 };
+      }
+      body = {
+        settings: bookingSettings,
+        canEdit: (options.adminRole || 'admin') === 'super_admin'
+      };
     } else if (path === '/api/admin/settings') {
       body = {
         settings: options.adminPricing ? [
@@ -427,14 +467,34 @@ test('booking submits a valid slot and requested service to mocked payment', asy
 
   await page.locator('#booking-service').selectOption('mixtape');
   await page.locator('#booking-artist-count').selectOption('1');
-  const slot = page.locator('.booking-session-slot').first();
-  await slot.locator('[data-session-date]').fill(await page.evaluate(() => {
-    const date = new Date();
-    while (![0, 2, 3, 4].includes(date.getDay())) date.setDate(date.getDate() + 1);
+
+  const target = await page.evaluate(() => {
     const pad = value => String(value).padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-  }));
-  await slot.locator('[data-session-time]').fill('11:00');
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Africa/Accra',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).formatToParts(new Date());
+    const part = type => parts.find(candidate => candidate.type === type)?.value || '';
+    const today = `${part('year')}-${part('month')}-${part('day')}`;
+    const date = new Date(`${today}T12:00:00Z`);
+    while (![0, 2, 3, 4].includes(date.getUTCDay())) date.setUTCDate(date.getUTCDate() + 1);
+    return {
+      currentMonth: today.slice(0, 7),
+      date: date.toISOString().slice(0, 10)
+    };
+  });
+  if (target.date.slice(0, 7) !== target.currentMonth) {
+    await page.locator('[data-calendar-nav="next"]').click();
+  }
+  const dateButton = page.locator(`[data-calendar-date="${target.date}"]`);
+  await expect(dateButton).toBeEnabled();
+  await dateButton.click();
+  const timeButton = page.locator('[data-calendar-time="11:00"]');
+  await expect(timeButton).toBeEnabled();
+  await timeButton.click();
+
   await page.locator('#booking-details').fill('Browser test booking.');
   await expect(page.locator('#booking-submit')).toBeEnabled();
   await page.locator('#booking-submit').click();
@@ -445,7 +505,7 @@ test('booking submits a valid slot and requested service to mocked payment', asy
     service: 'mixtape',
     artistCount: '1',
     email: customer.email,
-    slots: [expect.objectContaining({ time: '11:00' })]
+    slots: [expect.objectContaining({ date: target.date, time: '11:00' })]
   });
 });
 
@@ -460,7 +520,11 @@ test('customer submits a rated review', async ({ page }) => {
 
   await expect(page.locator('#public-review-message')).toContainText('Review submitted for moderation.');
   const review = calls.find(call => call.path === '/api/reviews' && call.method === 'POST');
-  expect(review.data).toEqual({ rating: 5, review: 'Great production and sound.' });
+  expect(review.data).toEqual({
+    rating: 5,
+    review: 'Great production and sound.',
+    submissionId: expect.any(String)
+  });
 });
 
 test('admin signs in and approves a pending customer review', async ({ page }) => {
@@ -801,6 +865,47 @@ test('admin displays saved GHS purchase amounts and exchange-rate freshness', as
   await expect(page.locator('#business-settings-form input[name="booking_ep_album_discount_percent"]')).toHaveValue('20');
   await expect(page.locator('#business-settings-form input[name="beat_request_license_basic_ghs"]')).toHaveValue('500');
   await expect(page.locator('#business-settings-form input[name="beat_default_basic_usd"]')).toHaveValue('25');
+});
+
+test('admin views and updates booking availability settings', async ({ page }) => {
+  const calls = await mockApi(page, { adminLogin: true, adminRole: 'super_admin', adminPricing: true });
+  await seedAdminSession(page);
+  await page.goto('/admin/admin.html');
+  await expect(page.locator('#admin-dashboard')).toBeVisible();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+
+  const form = page.locator('#booking-settings-form');
+  await expect(form).toContainText('Each session lasts 140 minutes');
+  await expect(form.locator('input[name="openTime"]')).toHaveValue('11:00');
+  await expect(form.locator('input[name="closeTime"]')).toHaveValue('21:00');
+  await expect(form.locator('input[name="slotStepMinutes"]')).toHaveValue('20');
+  await expect(form.locator('input[name="sameDayLeadMinutes"]')).toHaveValue('30');
+  await expect(form.locator('input[name="availableWeekdays"][value="1"]')).not.toBeChecked();
+  await expect(form.locator('input[name="availableWeekdays"][value="0"]')).toBeChecked();
+
+  await form.locator('input[name="availableWeekdays"][value="1"]').check();
+  await form.locator('input[name="openTime"]').fill('09:00');
+  await form.locator('input[name="closeTime"]').fill('13:00');
+  await form.locator('input[name="slotStepMinutes"]').fill('30');
+  await form.locator('input[name="sameDayLeadMinutes"]').fill('45');
+  page.once('dialog', dialog => dialog.accept());
+  await form.getByRole('button', { name: 'Save booking availability' }).click();
+
+  await expect(form.locator('input[name="openTime"]')).toHaveValue('09:00');
+  const update = calls.find(call => call.path === '/api/admin/bookings/settings' && call.method === 'PUT');
+  expect(update.data).toEqual({
+    settings: {
+      availableWeekdays: [0, 1, 2, 3, 4],
+      openTime: '09:00',
+      closeTime: '13:00',
+      slotStepMinutes: 30,
+      sameDayLeadMinutes: 45,
+      availableFrom: '',
+      availableUntil: ''
+    }
+  });
+  await expect(form.locator('input[name="closeTime"]')).toHaveValue('13:00');
+  await expect(form.locator('input[name="availableWeekdays"][value="1"]')).toBeChecked();
 });
 
 test('key storefront and admin pages have no automated WCAG 2.1 A/AA violations', async ({ page }) => {

@@ -9,11 +9,17 @@ function loadBookingsRouter({ unavailableTime = null } = {}) {
   const calls = [];
   const rateLimitPolicies = [];
   const database = {
+    async all() {
+      return [];
+    },
     async transaction(callback) {
       return callback({
+        async all() {
+          return [];
+        },
         async run(query, parameters = []) {
           calls.push({ query, parameters, transaction: true });
-          if (/UPDATE booking_availability/.test(query) && parameters[2] === unavailableTime) return { changes: 0 };
+          if (/INSERT INTO booking_availability/.test(query) && parameters[1] === unavailableTime) return { changes: 0 };
           return { changes: 1, lastID: 1 };
         }
       });
@@ -35,7 +41,8 @@ function loadBookingsRouter({ unavailableTime = null } = {}) {
     '../config': {
       bookingServiceLabels: { mixtape: 'Mixtape' },
       paystackSecretKey: 'paystack-test-secret',
-      paymentCallbackUrl: new URL('https://store.example.test/payment-success.html')
+      paymentCallbackUrl: new URL('https://store.example.test/payment-success.html'),
+      frontendOrigin: new URL('https://store.example.test')
     },
     '../services/pricing': {
       getPricing: async () => ({
@@ -137,9 +144,10 @@ test('booking payment holds slots and creates its order before contacting Paysta
   try {
     const result = await postBooking(loaded.router);
     assert.equal(result.status, 200);
-    assert.equal(callsAtPaystack.length, 2);
-    assert.match(callsAtPaystack[0], /UPDATE booking_availability/);
-    assert.match(callsAtPaystack[1], /INSERT INTO orders/);
+    assert.equal(callsAtPaystack.length, 3);
+    assert.match(callsAtPaystack[0], /pg_advisory_xact_lock/);
+    assert.match(callsAtPaystack[1], /INSERT INTO booking_availability/);
+    assert.match(callsAtPaystack[2], /INSERT INTO orders/);
     assert.ok(loaded.calls.some(call => /INSERT INTO payments/.test(call.query)));
   } finally {
     global.fetch = originalFetch;

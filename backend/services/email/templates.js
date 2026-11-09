@@ -211,6 +211,77 @@ function renderBookingCancelled(data = {}) {
   };
 }
 
+function renderRequestReceived(data = {}) {
+  const isBeat = data.requestType === 'beat';
+  const heading = isBeat ? 'Your beat request is in' : 'Your custom order request is in';
+  const reference = data.reference ? String(data.reference) : '';
+  const details = data.details ? String(data.details) : '';
+  const rows = [];
+  if (data.productName) rows.push(['Request', data.productName]);
+  if (data.license) rows.push(['License', data.license]);
+  if (Number.isFinite(Number(data.licensePrice)) && Number(data.licensePrice) > 0) {
+    rows.push(['License price', formatMoney(data.licensePrice, data.currency)]);
+  }
+  if (reference) rows.push(['Reference', reference]);
+  const table = rows.length
+    ? `<table style="width:100%;border-collapse:collapse;margin:16px 0">${rows.map(([label, value]) =>
+      `<tr><td style="padding:6px 0;color:#6b7280">${escapeHtml(label)}</td><td style="padding:6px 0;text-align:right">${escapeHtml(value)}</td></tr>`
+    ).join('')}</table>`
+    : '';
+  const body = `<p>Hi ${escapeHtml(data.name || 'there')},</p>
+    <p>Thanks for sending your ${isBeat ? 'beat request' : 'custom order request'}. Our team will review it and reply to this email address.</p>
+    ${table}
+    ${details ? `<p style="color:#6b7280;margin:16px 0 4px">What you sent</p><p style="white-space:pre-wrap">${escapeHtml(details)}</p>` : ''}
+    <p>No payment is needed until we confirm the details with you.</p>`;
+  const textLines = [
+    `Hi ${data.name || 'there'},`,
+    '',
+    `Thanks for sending your ${isBeat ? 'beat request' : 'custom order request'}. Our team will review it and reply to this email address.`
+  ];
+  for (const [label, value] of rows) textLines.push(`${label}: ${value}`);
+  if (details) textLines.push('', 'What you sent:', details);
+  textLines.push('', 'No payment is needed until we confirm the details with you.');
+  if (data.accountUrl) textLines.push('', data.accountUrl);
+  return {
+    subject: `${isBeat ? 'Beat request' : 'Custom order request'} received${reference ? ` - ${reference}` : ''}`,
+    html: layout({
+      preheader: `We received your ${isBeat ? 'beat request' : 'custom order request'}.`,
+      heading,
+      bodyHtml: body,
+      cta: data.accountUrl ? { label: 'View your requests', url: data.accountUrl } : null
+    }),
+    text: textLines.join('\n')
+  };
+}
+
+function renderBookingRequestReceived(data = {}) {
+  const heading = 'We received your booking request';
+  const slots = Array.isArray(data.slots) ? data.slots : [];
+  const slotLines = slots.map(slot => `${slot.date}${slot.time ? ` at ${slot.time}` : ''}`).join(', ');
+  const holdMinutes = Number(data.holdMinutes);
+  const body = `<p>Hi ${escapeHtml(data.name || 'there')},</p>
+    <p>Your ${escapeHtml(data.service || 'studio')} booking request has been received. Complete payment to secure your session.</p>
+    <table style="width:100%;border-collapse:collapse;margin:16px 0">
+      <tr><td style="padding:6px 0;color:#6b7280">Reference</td><td style="padding:6px 0;text-align:right">${escapeHtml(data.reference)}</td></tr>
+      <tr><td style="padding:6px 0;color:#6b7280">Session</td><td style="padding:6px 0;text-align:right">${escapeHtml(slotLines || 'See your account')}</td></tr>
+      <tr><td style="padding:6px 0;color:#6b7280">Fee</td><td style="padding:6px 0;text-align:right">${escapeHtml(formatMoney(data.feeGhs, data.currency))}</td></tr>
+    </table>
+    <p>${Number.isFinite(holdMinutes) && holdMinutes > 0
+      ? `Your selected time is held for ${escapeHtml(holdMinutes)} minutes while payment is completed.`
+      : 'Your selected time is held while payment is completed.'}</p>
+    <p>If you do not finish payment, the hold is released automatically and the time can be booked by someone else.</p>`;
+  return {
+    subject: `Booking request received - ${data.reference}`,
+    html: layout({
+      preheader: `We received your ${data.service || 'studio'} booking request.`,
+      heading,
+      bodyHtml: body,
+      cta: data.accountUrl ? { label: 'View your bookings', url: data.accountUrl } : null
+    }),
+    text: `Hi ${data.name || 'there'},\n\nYour ${data.service || 'studio'} booking request has been received. Complete payment to secure your session.\n\nReference: ${data.reference}\nSession: ${slotLines || 'See your account'}\nFee: ${formatMoney(data.feeGhs, data.currency)}\n${Number.isFinite(holdMinutes) && holdMinutes > 0 ? `Your selected time is held for ${holdMinutes} minutes while payment is completed.\n` : ''}\nIf you do not finish payment, the hold is released automatically and the time can be booked by someone else.${data.accountUrl ? `\n\n${data.accountUrl}` : ''}`
+  };
+}
+
 function renderAdminAlert(data = {}) {
   const heading = data.title || 'Administrator alert';
   const body = `<p>${escapeHtml(data.message || '')}</p>
@@ -228,6 +299,8 @@ const TEMPLATES = {
   password_reset: renderPasswordReset,
   order_receipt: renderOrderReceipt,
   booking_confirmation: renderBookingConfirmation,
+  booking_request_received: renderBookingRequestReceived,
+  request_received: renderRequestReceived,
   license_issued: renderLicenseIssued,
   booking_cancelled: renderBookingCancelled,
   refund_processed: renderRefundProcessed,

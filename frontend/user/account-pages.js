@@ -202,7 +202,11 @@ if (accountPageRoot) {
         button.textContent = expanded ? 'View order details' : 'Hide order details';
         return;
       }
-      button.disabled = true;
+      const actionLabel = action === 'remove-wishlist' ? 'Removing…'
+        : action === 'certificate' ? 'Downloading…'
+          : 'Updating…';
+      const stopBusy = window.startActionBusy(button, actionLabel);
+      if (!stopBusy) return;
       try {
         if (action === 'remove-wishlist') {
           await request(`/api/wishlists/${button.dataset.id}`, { method: 'DELETE' });
@@ -229,12 +233,12 @@ if (accountPageRoot) {
           link.click();
           link.remove();
           window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-          button.disabled = false;
         }
       } catch (error) {
         status.textContent = error.message || 'The action could not be completed.';
         status.classList.add('is-error');
-        button.disabled = false;
+      } finally {
+        stopBusy();
       }
     });
 
@@ -243,7 +247,8 @@ if (accountPageRoot) {
       event.preventDefault();
       const form = event.target;
       const button = form.querySelector('button[type="submit"]');
-      button.disabled = true;
+      const stopBusy = window.startActionBusy(button, 'Saving…');
+      if (!stopBusy) return;
       status.textContent = '';
       status.classList.remove('is-error');
       try {
@@ -261,7 +266,7 @@ if (accountPageRoot) {
         status.textContent = error.message || 'Could not save your profile.';
         status.classList.add('is-error');
       } finally {
-        button.disabled = false;
+        stopBusy();
       }
     });
 

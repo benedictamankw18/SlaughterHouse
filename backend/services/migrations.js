@@ -669,6 +669,28 @@ const migrations = [
       `INSERT IGNORE INTO settings (setting_key, setting_value) VALUES
         ('booking_ep_album_discount_percent', '20')`
     ]
+  },
+  {
+    version: 35,
+    statements: [
+      { ensureColumn: { table: 'customization_requests', column: 'submission_id', definition: 'VARCHAR(64) NULL' } },
+      { ensureColumn: { table: 'customer_reviews', column: 'submission_id', definition: 'VARCHAR(64) NULL' } },
+      'CREATE UNIQUE INDEX IF NOT EXISTS uq_customization_requests_submission ON customization_requests (submission_id)',
+      'CREATE UNIQUE INDEX IF NOT EXISTS uq_customer_reviews_submission ON customer_reviews (submission_id)'
+    ]
+  },
+  {
+    version: 36,
+    statements: [
+      `INSERT IGNORE INTO settings (setting_key, setting_value) VALUES
+        ('booking_available_weekdays', '0,2,3,4'),
+        ('booking_open_time', '11:00'),
+        ('booking_close_time', '21:00'),
+        ('booking_slot_step_minutes', '20'),
+        ('booking_same_day_lead_minutes', '30'),
+        ('booking_available_from', ''),
+        ('booking_available_until', '')`
+    ]
   }
 ];
 

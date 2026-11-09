@@ -16,6 +16,39 @@ window.fetch = (input, options = {}) => {
   }
   return nativeFetch(input, { ...options, credentials: options.credentials || 'include' });
 };
+// Disables an action button and shows an inline spinner until the returned
+// function is called. Calling it twice is safe, which prevents duplicate
+// public form submissions from a double click or a repeated submit.
+window.startActionBusy = function startActionBusy(button, label = 'Working…') {
+  if (!button || button.dataset.busy === 'true') return null;
+  const idleHtml = button.innerHTML;
+  const wasDisabled = button.disabled;
+  button.dataset.busy = 'true';
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  button.classList.add('is-busy');
+  const spinner = document.createElement('span');
+  spinner.className = 'action-spinner';
+  spinner.setAttribute('aria-hidden', 'true');
+  const text = document.createElement('span');
+  text.className = 'action-busy-label';
+  text.textContent = label;
+  button.replaceChildren(spinner, text);
+  let stopped = false;
+  return function stopActionBusy() {
+    if (stopped) return;
+    stopped = true;
+    delete button.dataset.busy;
+    button.innerHTML = idleHtml;
+    button.disabled = wasDisabled;
+    button.classList.remove('is-busy');
+    button.removeAttribute('aria-busy');
+  };
+};
+function createSubmissionId() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
 const privatePageNames = new Set([
   'admin.html',
   'alerts.html',
@@ -380,7 +413,8 @@ if (loginButton) {
           event.preventDefault();
           const message = form.querySelector('[data-profile-message]');
           const button = form.querySelector('button');
-          button.disabled = true;
+          const stopBusy = window.startActionBusy(button, 'Saving…');
+          if (!stopBusy) return;
           try {
             const response = await fetch(`${API}/api/auth/profile`, {
               method: 'PATCH',
@@ -399,7 +433,7 @@ if (loginButton) {
             message.textContent = error.message;
             message.classList.add('error');
           } finally {
-            button.disabled = false;
+            stopBusy();
           }
         });
       }
@@ -430,7 +464,9 @@ if (loginButton) {
   document.addEventListener('click', async event => {
     const certificateButton = event.target.closest('[data-license-certificate]');
     if (certificateButton) {
-      certificateButton.disabled = true;
+      const stopBusy = window.startActionBusy(certificateButton, 'Downloading…');
+      if (!stopBusy) return;
+      let errorMessage = '';
       try {
         const response = await fetch(`${API}/api/customer/licenses/${certificateButton.dataset.licenseCertificate}/certificate`, { credentials: 'include' });
         if (!response.ok) {
@@ -444,26 +480,29 @@ if (loginButton) {
         link.click();
         URL.revokeObjectURL(link.href);
       } catch (error) {
-        certificateButton.textContent = error.message;
+        errorMessage = error.message;
       } finally {
-        certificateButton.disabled = false;
+        stopBusy();
+        if (errorMessage) certificateButton.textContent = errorMessage;
       }
       return;
     }
     const button = event.target.closest('[data-mark-notification-read]');
     if (!button) return;
     const card = button.closest('[data-notification-id]');
-    button.disabled = true;
+    const stopBusy = window.startActionBusy(button, 'Updating…');
+    if (!stopBusy) return;
     try {
       await fetch(`${API}/api/customer/notifications/${card.dataset.notificationId}/read`, {
         method: 'PATCH',
-        credentials: 'include',
         credentials: 'include'
       });
       card.classList.remove('account-notification-unread');
       button.remove();
     } catch {
-      button.disabled = false;
+      /* leave the unread state in place */
+    } finally {
+      stopBusy();
     }
   });
 
@@ -515,7 +554,9 @@ if (loginButton) {
   authPanel.querySelectorAll('[data-auth-switch]').forEach(button => button.addEventListener('click', () => setAuthView(button.dataset.authSwitch)));
   authPanel.querySelectorAll('.auth-role-button').forEach(button => button.addEventListener('click', () => setSignupRole(button.dataset.role)));
   authPanel.querySelector('#forgot-password-button').addEventListener('click', () => setAuthView('reset-request'));
-  authPanel.querySelector('#logout-button').addEventListener('click', async () => {
+  authPanel.querySelector('#logout-button').addEventListener('click', async event => {
+    const stopBusy = window.startActionBusy(event.currentTarget, 'Logging out…');
+    if (!stopBusy) return;
     const logoutMessage = document.getElementById('logout-message');
     try {
       const response = await fetch(`${API}/api/auth/logout`, { method: 'POST', credentials: 'include' });
@@ -534,6 +575,7 @@ if (loginButton) {
       refreshReviewAccess();
       refreshAuthPanel();
       setAuthView('login');
+      stopBusy();
     }
   });
 
@@ -543,6 +585,9 @@ if (loginButton) {
     const form = new FormData(signupForm);
     if (form.get('password') !== form.get('confirmPassword')) return setAuthMessage('signup-message', 'Passwords do not match.');
     const phone = `${document.getElementById('signup-country-code').value}${String(form.get('phone')).replace(/\D/g, '')}`;
+    const submitButton = event.submitter || signupForm.querySelector('button[type="submit"]');
+    const stopBusy = window.startActionBusy(submitButton, 'Creating account…');
+    if (!stopBusy) return;
     try {
       const result = await fetch(`${API}/api/auth/signup`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...Object.fromEntries(form), phone }) });
       const data = await result.json();
@@ -556,11 +601,16 @@ if (loginButton) {
       setAuthView('verify-email');
     } catch (error) {
       setAuthMessage('signup-message', error.message || 'Could not create the account.');
+    } finally {
+      stopBusy();
     }
   });
 
   authPanel.querySelector('#login-form').addEventListener('submit', async event => {
     event.preventDefault();
+    const submitButton = event.submitter || event.currentTarget.querySelector('button[type="submit"]');
+    const stopBusy = window.startActionBusy(submitButton, 'Signing in…');
+    if (!stopBusy) return;
     const resendVerificationButton = authPanel.querySelector('#resend-verification-button');
     try {
       const form = Object.fromEntries(new FormData(event.currentTarget));
@@ -590,12 +640,15 @@ if (loginButton) {
       refreshReviewAccess();
     } catch (error) {
       setAuthMessage('login-message', error.message || 'Could not log in.');
+    } finally {
+      stopBusy();
     }
   });
 
   authPanel.querySelector('#resend-verification-button').addEventListener('click', async event => {
     const button = event.currentTarget;
-    button.disabled = true;
+    const stopBusy = window.startActionBusy(button, 'Sending…');
+    if (!stopBusy) return;
     try {
       const identifier = authPanel.querySelector('#login-identifier').value.trim();
       const response = await fetch(`${API}/api/auth/resend-verification`, {
@@ -617,12 +670,15 @@ if (loginButton) {
     } catch (error) {
       setAuthMessage('login-message', error.message || 'Could not resend the verification email.');
     } finally {
-      button.disabled = false;
+      stopBusy();
     }
   });
 
   authPanel.querySelector('#reset-request-form').addEventListener('submit', async event => {
     event.preventDefault();
+    const submitButton = event.submitter || event.currentTarget.querySelector('button[type="submit"]');
+    const stopBusy = window.startActionBusy(submitButton, 'Sending…');
+    if (!stopBusy) return;
     try {
       const email = new FormData(event.currentTarget).get('email');
       const response = await fetch(`${API}/api/auth/request-password-reset`, {
@@ -645,6 +701,8 @@ if (loginButton) {
       setAuthMessage('reset-request-message', message, false);
     } catch (error) {
       setAuthMessage('reset-request-message', error.message || 'Could not request a password reset.');
+    } finally {
+      stopBusy();
     }
   });
 
@@ -652,6 +710,9 @@ if (loginButton) {
     event.preventDefault();
     const form = Object.fromEntries(new FormData(event.currentTarget));
     if (form.password !== form.confirmPassword) return setAuthMessage('reset-password-message', 'Passwords do not match.');
+    const submitButton = event.submitter || event.currentTarget.querySelector('button[type="submit"]');
+    const stopBusy = window.startActionBusy(submitButton, 'Updating…');
+    if (!stopBusy) return;
     try {
       const response = await fetch(`${API}/api/auth/reset-password`, {
         method: 'POST',
@@ -672,11 +733,17 @@ if (loginButton) {
       }, 1200);
     } catch (error) {
       setAuthMessage('reset-password-message', error.message || 'Could not update the password.');
+    } finally {
+      stopBusy();
     }
   });
 
   authPanel.querySelector('#verify-email-form').addEventListener('submit', async event => {
     event.preventDefault();
+    const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+    const stopBusy = window.startActionBusy(submitButton, 'Verifying…');
+    if (!stopBusy) return;
+    let verified = false;
     try {
       const token = new FormData(event.currentTarget).get('token');
       const response = await fetch(`${API}/api/auth/verify-email`, {
@@ -687,12 +754,14 @@ if (loginButton) {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
+      verified = true;
       setAuthMessage('verify-email-message', data.message, false);
       authPanel.querySelector('#verify-email-submit').disabled = true;
       setTimeout(() => window.location.assign(new URL('/index.html', window.location.origin).toString()), 1200);
     } catch (error) {
       setAuthMessage('verify-email-message', error.message || 'Could not verify the email address.');
     } finally {
+      if (!verified) stopBusy();
       const params = new URLSearchParams(location.search);
       params.delete('verifyToken');
       const query = params.toString();
@@ -1580,7 +1649,8 @@ function openCheckoutForm() {
     }
     message.classList.remove('error');
     message.textContent = 'Connecting to secure payment...';
-    submitButton.disabled = true;
+    const stopBusy = window.startActionBusy(submitButton, 'Starting payment…');
+    if (!stopBusy) return;
     try {
       const response = await fetch(`${API}/api/payments/initialize`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: customerUser?.name || 'Guest Customer', email: paymentEmail, items: currentSelectedItems, paymentMethod }) });
       const data = await response.json();
@@ -1597,7 +1667,8 @@ function openCheckoutForm() {
     } catch (error) {
       message.textContent = error.message;
       message.classList.add('error');
-      submitButton.disabled = false;
+    } finally {
+      stopBusy();
     }
   });
 }
@@ -1725,6 +1796,7 @@ const beatRequestForm = document.getElementById('beat-request-form');
 const beatRequestLicense = document.getElementById('beat-request-license');
 const beatRequestLicensePrice = document.getElementById('beat-request-license-price');
 let beatRequestLicensePrices = {};
+let beatRequestSubmissionId = createSubmissionId();
 
 function updateBeatRequestLicensePrice() {
   const price = beatRequestLicensePrices[beatRequestLicense?.value];
@@ -1755,7 +1827,11 @@ if (beatRequestLicense && beatRequestLicensePrice) {
 beatRequestForm?.addEventListener('submit', async event => {
   event.preventDefault();
   const form = event.currentTarget;
+  const submitButton = event.submitter || form.querySelector('button[type="submit"]');
+  if (submitButton?.dataset.busy === 'true') return;
+  const stopBusy = window.startActionBusy(submitButton, 'Sending…');
   const message = document.getElementById('beat-request-message');
+  message.classList.remove('error');
   try {
     const formData = new FormData(form);
     const audioFile = formData.get('sampleAudio');
@@ -1773,15 +1849,18 @@ beatRequestForm?.addEventListener('submit', async event => {
         reader.readAsDataURL(audioFile);
       });
     }
-    const response = await fetch(`${API}/api/requests`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...payload, requestType: 'beat' }) });
+    const response = await fetch(`${API}/api/requests`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...payload, requestType: 'beat', submissionId: beatRequestSubmissionId }) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error);
     message.textContent = 'Beat request received. We will be in touch soon.';
     form.reset();
     updateBeatRequestLicensePrice();
+    beatRequestSubmissionId = createSubmissionId();
   } catch (error) {
     message.textContent = error.message || 'Could not send beat request.';
     message.classList.add('error');
+  } finally {
+    stopBusy?.();
   }
 });
 
@@ -1799,6 +1878,7 @@ if (reviewsSection) {
   const reviewForm = document.getElementById('public-review-form');
   const reviewRating = document.getElementById('public-review-rating');
   const reviewMessage = document.getElementById('public-review-message');
+  let reviewSubmissionId = createSubmissionId();
   document.querySelectorAll('[data-review-rating]').forEach(button => button.addEventListener('click', () => {
     const selectedRating = Number(button.dataset.reviewRating);
     reviewRating.value = String(selectedRating);
@@ -1838,30 +1918,36 @@ if (reviewsSection) {
   loadPublicReviews();
   reviewForm.addEventListener('submit', async event => {
     event.preventDefault();
-    await customerSessionReady;
-    if (!customerUser?.name || !customerUser?.email) {
-      reviewMessage.textContent = 'Please log in before submitting a review.';
-      reviewMessage.classList.add('error');
-      return;
-    }
-    if (!reviewRating.value) {
-      reviewMessage.textContent = 'Choose a star rating first.';
-      reviewMessage.classList.add('error');
-      return;
-    }
-    reviewMessage.classList.remove('error');
+    const submitButton = event.submitter || document.getElementById('review-submit-button');
+    if (submitButton?.dataset.busy === 'true') return;
+    const stopBusy = window.startActionBusy(submitButton, 'Submitting…');
     try {
-      const response = await fetch(`${API}/api/reviews`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rating: Number(reviewRating.value), review: document.getElementById('public-review-text').value }) });
+      await customerSessionReady;
+      if (!customerUser?.name || !customerUser?.email) {
+        reviewMessage.textContent = 'Please log in before submitting a review.';
+        reviewMessage.classList.add('error');
+        return;
+      }
+      if (!reviewRating.value) {
+        reviewMessage.textContent = 'Choose a star rating first.';
+        reviewMessage.classList.add('error');
+        return;
+      }
+      reviewMessage.classList.remove('error');
+      const response = await fetch(`${API}/api/reviews`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rating: Number(reviewRating.value), review: document.getElementById('public-review-text').value, submissionId: reviewSubmissionId }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not submit review.');
       reviewMessage.textContent = data.message;
       reviewForm.reset();
       reviewRating.value = '';
       document.querySelectorAll('[data-review-rating]').forEach(star => { star.classList.remove('selected'); star.setAttribute('aria-pressed', 'false'); });
-      refreshReviewAccess();
+      reviewSubmissionId = createSubmissionId();
     } catch (error) {
       reviewMessage.textContent = error.message || 'Could not submit review.';
       reviewMessage.classList.add('error');
+    } finally {
+      stopBusy?.();
+      refreshReviewAccess();
     }
   });
 }
