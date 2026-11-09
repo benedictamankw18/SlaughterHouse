@@ -492,8 +492,13 @@ async function streamReleasePayloadWithCover(form) {
 }
 
 function streamReleaseCoverSource(coverUrl) {
-  const value = String(coverUrl || '');
-  return value.startsWith('/api/uploads/') ? `${API}${value}` : value;
+  const value = String(coverUrl || '').trim();
+  if (!value) return '';
+  if (value.startsWith('/api/uploads/')) return `${API}${value}`;
+  if (/^https?:\/\//i.test(value) || value.startsWith('data:') || value.startsWith('blob:')) {
+    return value;
+  }
+  return `/${value.replace(/^\/+/, '')}`;
 }
 
 function clearStreamReleaseCoverPreview(form) {
