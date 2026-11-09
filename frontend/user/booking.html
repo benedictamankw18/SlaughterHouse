@@ -82,12 +82,58 @@
     const bookingSongCountField = document.getElementById('booking-song-count-field');
     const bookingSongCount = document.getElementById('booking-song-count');
     const bookingSlots = document.getElementById('booking-slots');
-    const availableBookingDays = new Set([0, 2, 3, 4]);
+    const bookingMessage = document.getElementById('booking-message');
+    const bookingTimezone = 'Africa/Accra';
     let bookingFees = {};
     let epAlbumDiscountPercent = null;
     let bookingFeesLoaded = false;
     let bookingFeesLoading = false;
     let bookingFeesError = '';
+    let currentBookingFee = null;
+    let calendarMonth = '';
+    let calendarToday = '';
+    let sessionSelections = [];
+    let activeSessionIndex = 0;
+    const monthAvailability = new Map();
+    const monthLoading = new Set();
+    const monthErrors = new Map();
+    const dayAvailability = new Map();
+    const dayLoading = new Set();
+    const dayErrors = new Map();
+    const padBookingNumber = value => String(value).padStart(2, '0');
+
+    function accraParts(date = new Date()) {
+      const parts = new Intl.DateTimeFormat('en-CA', { timeZone: bookingTimezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
+      const part = type => parts.find(candidate => candidate.type === type)?.value || '';
+      return { date: `${part('year')}-${part('month')}-${part('day')}`, month: `${part('year')}-${part('month')}` };
+    }
+    function currentAccraDate() { return accraParts().date; }
+    function currentAccraMonth() { return accraParts().month; }
+    function horizonMonth() {
+      const [year, month] = currentAccraMonth().split('-').map(Number);
+      const horizon = new Date(Date.UTC(year, month - 1 + 12, 1));
+      return `${horizon.getUTCFullYear()}-${padBookingNumber(horizon.getUTCMonth() + 1)}`;
+    }
+    function monthLabel() {
+      if (!calendarMonth) return '';
+      const [year, month] = calendarMonth.split('-').map(Number);
+      return new Date(Date.UTC(year, month - 1, 1)).toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' });
+    }
+    function formatDateLabel(value) {
+      const [year, month, day] = value.split('-').map(Number);
+      return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+    }
+    function formatBookingTime(value) {
+      const [hour, minute] = String(value).split(':').map(Number);
+      return new Date(Date.UTC(2000, 0, 1, hour, minute)).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
+    }
+    function escapeBookingHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+    }
+    function ensureCalendarDefaults() {
+      if (!calendarToday) calendarToday = currentAccraDate();
+      if (!calendarMonth) calendarMonth = calendarToday.slice(0, 7);
+    }
 
     function renderBookingFeesUnavailable(message) {
       bookingPrice.classList.add('error');
@@ -138,7 +184,7 @@
         bookingPrice.classList.remove('error');
         bookingPrice.textContent = service ? 'Booking fees are unavailable right now. Please try again later.' : 'Choose a service to see the booking fee.';
       }
-      bookingSubmit.disabled = !bookingFeesLoaded || !Number.isFinite(fee) || fee <= 0;
+      currentBookingFee = bookingFeesLoaded && Number.isFinite(Number(fee)) && Number(fee) > 0 ? Number(fee) : null;
       renderBookingSlots();
     }
 
@@ -168,19 +214,10 @@
         bookingFeesLoaded = false;
         bookingFeesLoading = false;
         bookingFeesError = message;
-        bookingSubmit.disabled = true;
         updateBookingPrice();
       }
     }
     loadBookingFees();
-
-    function isAvailableBookingSlot(dateValue, timeValue) {
-      const selectedDate = new Date(`${dateValue}T12:00:00`);
-      const timeParts = /^(\d{2}):(\d{2})$/.exec(timeValue);
-      if (Number.isNaN(selectedDate.getTime()) || !timeParts || !availableBookingDays.has(selectedDate.getDay())) return false;
-      const minutes = Number(timeParts[1]) * 60 + Number(timeParts[2]);
-      return minutes >= 11 * 60 && minutes + 140 <= 21 * 60;
-    }
 
     function getBookingSlotCount() {
       if (!bookingService.value) return 0;
@@ -189,72 +226,338 @@
       return Number.isInteger(songCount) && songCount > 0 && songCount <= 12 ? Math.ceil(songCount / 2) : 0;
     }
 
-    function renderBookingSlots() {
-      const slotCount = getBookingSlotCount();
-      const previousSlots = [...bookingSlots.querySelectorAll('.booking-session-slot')].map(slot => ({
-        date: slot.querySelector('[data-session-date]').value,
-        time: slot.querySelector('[data-session-time]').value
-      }));
-      bookingSlots.innerHTML = Array.from({ length: slotCount }, (_, index) => {
-        const slotNumber = index + 1;
-        const firstSong = index * 2 + 1;
-        const lastSong = Math.min(slotNumber * 2, Number(bookingSongCount.value));
-        const songRange = firstSong === lastSong ? `song ${firstSong}` : `songs ${firstSong}-${lastSong}`;
-        const title = bookingService.value === 'ep-album'
-          ? `Session ${slotNumber}: ${songRange}`
-          : 'Session 1';
-        return `<section class="booking-session-slot"><h3>${title}</h3><div class="booking-field-row"><div><label for="booking-date-${slotNumber}">Preferred date</label><input id="booking-date-${slotNumber}" name="sessionDate-${slotNumber}" data-session-date type="date" required><small class="booking-availability">Available: Tuesday, Wednesday, Thursday, Sunday.</small></div><div><label for="booking-time-${slotNumber}">Preferred time</label><input id="booking-time-${slotNumber}" name="sessionTime-${slotNumber}" data-session-time type="time" min="11:00" max="18:40" required><small class="booking-availability">11:00 AM - 9:00 PM. Each session lasts 2h 20m.</small></div></div></section>`;
-      }).join('');
-      bookingSlots.querySelectorAll('.booking-session-slot').forEach((slot, index) => {
-        if (previousSlots[index]) {
-          slot.querySelector('[data-session-date]').value = previousSlots[index].date;
-          slot.querySelector('[data-session-time]').value = previousSlots[index].time;
+    function sessionLabel(index) {
+      if (bookingService.value !== 'ep-album') return 'Session 1';
+      const firstSong = index * 2 + 1;
+      const lastSong = Math.min((index + 1) * 2, Number(bookingSongCount.value));
+      return firstSong === lastSong ? `Session ${index + 1}: song ${firstSong}` : `Session ${index + 1}: songs ${firstSong}-${lastSong}`;
+    }
+
+    function timeToMinutes(value) {
+      const match = /^(\d{2}):(\d{2})$/.exec(String(value || ''));
+      return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+    }
+
+    function slotsOverlap(left, right) {
+      if (!left?.date || !right?.date || left.date !== right.date) return false;
+      const leftStart = timeToMinutes(left.time);
+      const rightStart = timeToMinutes(right.time);
+      if (leftStart === null || rightStart === null) return false;
+      return leftStart < rightStart + 140 && rightStart < leftStart + 140;
+    }
+
+    function dateSelectedElsewhere(date, activeIndex) {
+      return sessionSelections.some((selection, index) => index !== activeIndex && selection?.date === date);
+    }
+
+    function timeSelectedElsewhere(date, time, activeIndex) {
+      return sessionSelections.some((selection, index) => index !== activeIndex && slotsOverlap(selection, { date, time }));
+    }
+
+    function ensureSessionSelections() {
+      const count = getBookingSlotCount();
+      const next = sessionSelections.slice(0, count).map(selection => selection || { date: '', time: '' });
+      while (next.length < count) next.push({ date: '', time: '' });
+      sessionSelections = next;
+      if (activeSessionIndex >= count) activeSessionIndex = Math.max(0, count - 1);
+    }
+
+    function sessionsComplete() {
+      const count = getBookingSlotCount();
+      return count > 0
+        && sessionSelections.length === count
+        && sessionSelections.every(selection => selection?.date && selection?.time);
+    }
+
+    function syncBookingSubmitState() {
+      if (!bookingSubmit) return;
+      if (bookingSubmit.dataset.busy === 'true') {
+        bookingSubmit.disabled = true;
+        return;
+      }
+      bookingSubmit.disabled = !bookingFeesLoaded || !currentBookingFee || !sessionsComplete();
+    }
+
+    function renderBookingTimePanel(selection) {
+      if (!selection?.date) {
+        return '<div class="booking-time-panel"><p class="booking-availability">Choose an available date above to see session times.</p></div>';
+      }
+      const date = selection.date;
+      const availability = dayAvailability.get(date);
+      const error = dayErrors.get(date);
+      const loading = dayLoading.has(date);
+      let content = '';
+      if (loading) {
+        content = '<p class="booking-calendar-status">Loading session times…</p>';
+      } else if (error) {
+        content = `<p class="booking-calendar-status error">${escapeBookingHtml(error)} <button type="button" class="inline-retry-button" data-day-retry="${date}">Try again</button></p>`;
+      } else if (!availability) {
+        content = '<p class="booking-calendar-status">Loading session times…</p>';
+      } else {
+        const slots = (Array.isArray(availability.slots) ? availability.slots : [])
+          .filter(slot => slot.available || slot.time === selection.time);
+        if (!slots.length) {
+          content = `<p class="booking-calendar-status error">No times are available on this date. Choose another date.</p>`;
+        } else {
+          content = `<div class="booking-time-grid">${slots.map(slot => {
+            const usedElsewhere = timeSelectedElsewhere(date, slot.time, activeSessionIndex);
+            const isSelected = slot.time === selection.time;
+            const disabled = (!slot.available && !isSelected) || usedElsewhere;
+            const reason = slot.reason === 'past' ? 'already started'
+              : slot.reason === 'blocked' ? 'unavailable'
+                : slot.reason === 'reserved' ? 'already reserved'
+                  : usedElsewhere ? 'overlaps another session' : '';
+            const label = `${formatDateLabel(date)} at ${formatBookingTime(slot.time)}${reason ? `, ${reason}` : ''}`;
+            return `<button type="button" class="booking-time-option${isSelected ? ' is-selected' : ''}" data-calendar-time="${slot.time}" ${disabled ? 'disabled' : ''} aria-pressed="${isSelected}" aria-label="${escapeBookingHtml(label)}">${escapeBookingHtml(formatBookingTime(slot.time))}</button>`;
+          }).join('')}</div>`;
         }
+      }
+      return `<div class="booking-time-panel"><p class="booking-time-heading">Choose a start time for ${escapeBookingHtml(sessionLabel(activeSessionIndex))} on ${escapeBookingHtml(formatDateLabel(date))}</p>${content}</div>`;
+    }
+
+    function renderBookingSlots() {
+      ensureSessionSelections();
+      if (!calendarToday) ensureCalendarDefaults();
+      const count = getBookingSlotCount();
+      if (!count) {
+        bookingSlots.innerHTML = '<p class="booking-availability">Choose a service to select your session date and time.</p>';
+        syncBookingSubmitState();
+        return;
+      }
+
+      const sessionCards = sessionSelections.map((selection, index) => {
+        const isActive = index === activeSessionIndex;
+        const summary = selection?.date
+          ? `${formatDateLabel(selection.date)}${selection.time ? ` at ${formatBookingTime(selection.time)}` : ' — choose a time'}`
+          : 'No date chosen yet';
+        return `<div class="booking-session-card${isActive ? ' is-active' : ''}">
+          <div><p class="booking-session-title">${escapeBookingHtml(sessionLabel(index))}</p><p class="booking-session-summary">${escapeBookingHtml(summary)}</p></div>
+          <button type="button" class="booking-session-edit" data-session-edit="${index}">${selection?.date ? 'Change' : 'Choose'}</button>
+        </div>`;
+      }).join('');
+
+      const month = calendarMonth;
+      const monthData = monthAvailability.get(month);
+      const monthError = monthErrors.get(month);
+      const days = monthData?.days || [];
+      const dayByDate = new Map(days.map(day => [day.date, day]));
+      const [year, monthNumber] = month.split('-').map(Number);
+      const firstWeekday = new Date(Date.UTC(year, monthNumber - 1, 1)).getUTCDay();
+      const daysInMonth = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+      const activeSelection = sessionSelections[activeSessionIndex] || { date: '', time: '' };
+      const canGoPrevious = month > currentAccraMonth();
+      const canGoNext = month < horizonMonth();
+
+      let cells = '';
+      for (let blank = 0; blank < firstWeekday; blank += 1) {
+        cells += '<span class="booking-calendar-blank" aria-hidden="true"></span>';
+      }
+      for (let day = 1; day <= daysInMonth; day += 1) {
+        const date = `${month}-${padBookingNumber(day)}`;
+        const info = dayByDate.get(date);
+        const weekday = new Date(Date.UTC(year, monthNumber - 1, day)).getUTCDay();
+        const isPast = date < calendarToday;
+        const isSessionDay = info ? info.sessionDay : [0, 2, 3, 4].includes(weekday);
+        const hasAvailability = Boolean(info?.available);
+        const usedElsewhere = dateSelectedElsewhere(date, activeSessionIndex);
+        const isSelected = activeSelection.date === date;
+        const disabled = isPast || !isSessionDay || !hasAvailability || usedElsewhere;
+        const reasons = [formatDateLabel(date)];
+        if (isPast) reasons.push('past date');
+        else if (!isSessionDay) reasons.push('no sessions this day');
+        else if (!hasAvailability) reasons.push('fully booked');
+        else if (usedElsewhere) reasons.push('already selected in another session');
+        cells += `<button type="button" class="booking-calendar-day${isSelected ? ' is-selected' : ''}" data-calendar-date="${date}" ${disabled ? 'disabled' : ''} aria-pressed="${isSelected}" aria-label="${escapeBookingHtml(reasons.join(', '))}">${day}</button>`;
+      }
+
+      const calendarStatus = monthError
+        ? `<p class="booking-calendar-status error">${escapeBookingHtml(monthError)} <button type="button" class="inline-retry-button" data-month-retry="${month}">Try again</button></p>`
+        : monthLoading.has(month)
+          ? '<p class="booking-calendar-status">Loading available dates…</p>'
+          : '';
+
+      bookingSlots.innerHTML = `
+        <div class="booking-session-list">${sessionCards}</div>
+        <div class="booking-calendar-panel">
+          <div class="booking-calendar-header">
+            <button type="button" class="booking-calendar-nav" data-calendar-nav="prev" ${canGoPrevious ? '' : 'disabled'} aria-label="Previous month">&#8249;</button>
+            <p class="booking-calendar-month" aria-live="polite">${escapeBookingHtml(monthLabel())}</p>
+            <button type="button" class="booking-calendar-nav" data-calendar-nav="next" ${canGoNext ? '' : 'disabled'} aria-label="Next month">&#8250;</button>
+          </div>
+          <div class="booking-calendar-weekdays" aria-hidden="true">${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => `<span>${day}</span>`).join('')}</div>
+          <div class="booking-calendar-grid">${cells}</div>
+          ${calendarStatus}
+        </div>
+        ${renderBookingTimePanel(activeSelection)}
+      `;
+      wireBookingSlots();
+      syncBookingSubmitState();
+
+      if (!monthAvailability.has(month) && !monthLoading.has(month) && !monthErrors.has(month)) loadMonth(month);
+      const activeDate = activeSelection.date;
+      if (activeDate && !dayAvailability.has(activeDate) && !dayLoading.has(activeDate) && !dayErrors.has(activeDate)) loadDay(activeDate);
+    }
+
+    function wireBookingSlots() {
+      bookingSlots.querySelectorAll('[data-session-edit]').forEach(button => {
+        button.addEventListener('click', () => {
+          activeSessionIndex = Number(button.dataset.sessionEdit) || 0;
+          const date = sessionSelections[activeSessionIndex]?.date;
+          if (date && !dayAvailability.has(date) && !dayLoading.has(date) && !dayErrors.has(date)) loadDay(date);
+          renderBookingSlots();
+        });
+      });
+      bookingSlots.querySelectorAll('[data-calendar-nav]').forEach(button => {
+        button.addEventListener('click', () => {
+          const [year, monthNumber] = calendarMonth.split('-').map(Number);
+          const next = new Date(Date.UTC(year, monthNumber - 1 + (button.dataset.calendarNav === 'next' ? 1 : -1), 1));
+          calendarMonth = `${next.getUTCFullYear()}-${padBookingNumber(next.getUTCMonth() + 1)}`;
+          renderBookingSlots();
+        });
+      });
+      bookingSlots.querySelectorAll('[data-calendar-date]').forEach(button => {
+        button.addEventListener('click', () => {
+          const date = button.dataset.calendarDate;
+          if (!date) return;
+          ensureSessionSelections();
+          const current = sessionSelections[activeSessionIndex] || { date: '', time: '' };
+          sessionSelections[activeSessionIndex] = { date, time: current.date === date ? current.time : '' };
+          if (!dayAvailability.has(date) && !dayLoading.has(date) && !dayErrors.has(date)) loadDay(date);
+          renderBookingSlots();
+        });
+      });
+      bookingSlots.querySelectorAll('[data-calendar-time]').forEach(button => {
+        button.addEventListener('click', () => {
+          const time = button.dataset.calendarTime;
+          const current = sessionSelections[activeSessionIndex];
+          if (!current?.date || !time) return;
+          sessionSelections[activeSessionIndex] = { date: current.date, time };
+          renderBookingSlots();
+        });
+      });
+      bookingSlots.querySelectorAll('[data-month-retry]').forEach(button => {
+        button.addEventListener('click', () => loadMonth(button.dataset.monthRetry));
+      });
+      bookingSlots.querySelectorAll('[data-day-retry]').forEach(button => {
+        button.addEventListener('click', () => loadDay(button.dataset.dayRetry));
       });
     }
 
+    async function loadMonth(month) {
+      if (!month || monthLoading.has(month)) return;
+      monthLoading.add(month);
+      monthErrors.delete(month);
+      if (month === calendarMonth) renderBookingSlots();
+      try {
+        const response = await fetch(`${bookingApiBaseUrl}/api/bookings/availability/month?month=${encodeURIComponent(month)}`);
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || 'Could not load available dates.');
+        monthAvailability.set(month, data);
+      } catch (error) {
+        const message = error?.message && !/failed to fetch|networkerror|load failed/i.test(error.message)
+          ? error.message
+          : 'Could not load available dates. Try again.';
+        monthErrors.set(month, message);
+      } finally {
+        monthLoading.delete(month);
+        if (month === calendarMonth) renderBookingSlots();
+      }
+    }
+
+    async function loadDay(date) {
+      if (!date || dayLoading.has(date)) return;
+      dayLoading.add(date);
+      dayErrors.delete(date);
+      if (sessionSelections[activeSessionIndex]?.date === date) renderBookingSlots();
+      try {
+        const response = await fetch(`${bookingApiBaseUrl}/api/bookings/availability?date=${encodeURIComponent(date)}`);
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || 'Could not load session times.');
+        dayAvailability.set(date, data);
+      } catch (error) {
+        const message = error?.message && !/failed to fetch|networkerror|load failed/i.test(error.message)
+          ? error.message
+          : 'Could not load session times. Try again.';
+        dayErrors.set(date, message);
+      } finally {
+        dayLoading.delete(date);
+        if (sessionSelections[activeSessionIndex]?.date === date) renderBookingSlots();
+      }
+    }
+
     function areBookingSlotsValid(slots) {
-      if (slots.length !== getBookingSlotCount() || !slots.every(slot => isAvailableBookingSlot(slot.date, slot.time))) return false;
-      return slots.every((slot, index) => slots.slice(index + 1).every(otherSlot => {
-        if (slot.date !== otherSlot.date) return true;
-        const start = value => Number(value.slice(0, 2)) * 60 + Number(value.slice(3, 5));
-        return start(slot.time) + 140 <= start(otherSlot.time) || start(otherSlot.time) + 140 <= start(slot.time);
-      }));
+      const count = getBookingSlotCount();
+      if (!count || slots.length !== count) return false;
+      if (!slots.every(slot => slot?.date && slot?.time)) return false;
+      return !slots.some((slot, index) => slots.slice(index + 1).some(otherSlot => slotsOverlap(slot, otherSlot)));
+    }
+
+    async function handleBookingConflict(unavailableSlots, message) {
+      const conflicts = Array.isArray(unavailableSlots) ? unavailableSlots : [];
+      const affectedDates = new Set();
+      let cleared = 0;
+      sessionSelections.forEach((selection, index) => {
+        if (!selection?.date) return;
+        const conflict = conflicts.some(slot => slot?.date === selection.date && (!slot?.time || slot.time === selection.time));
+        if (!conflict) return;
+        cleared += 1;
+        affectedDates.add(selection.date);
+        sessionSelections[index] = { date: selection.date, time: '' };
+      });
+      for (const date of affectedDates) {
+        dayAvailability.delete(date);
+        monthAvailability.delete(date.slice(0, 7));
+      }
+      for (const date of affectedDates) await loadDay(date);
+      renderBookingSlots();
+      message.textContent = cleared
+        ? 'Some selected times were just booked by someone else. Choose a different time for the highlighted session.'
+        : 'One or more selected booking slots are no longer available. Refresh availability and choose different times.';
+      message.classList.add('error');
     }
 
     bookingForm.addEventListener('submit', async event => {
       event.preventDefault();
-      await window.ultbigboyCustomerSessionReady;
-      const form = event.currentTarget;
-      const message = document.getElementById('booking-message');
-      const slots = [...bookingSlots.querySelectorAll('.booking-session-slot')].map(slot => ({
-        date: slot.querySelector('[data-session-date]').value,
-        time: slot.querySelector('[data-session-time]').value
-      }));
-      if (!areBookingSlotsValid(slots)) {
-        message.textContent = 'Choose an available Tuesday, Wednesday, Thursday, or Sunday slot for every session. Sessions run 2h 20m and cannot overlap.';
-        message.classList.add('error');
-        return;
-      }
-      if (!customerUser?.name || !customerUser?.email) {
-        message.textContent = 'Please log in before requesting a booking.';
-        message.classList.add('error');
-        return;
-      }
+      const submitButton = event.submitter || bookingSubmit;
+      if (submitButton?.dataset.busy === 'true') return;
+      const message = bookingMessage;
       message.classList.remove('error');
+      const stopBusy = typeof window.startActionBusy === 'function' ? window.startActionBusy(submitButton, 'Starting payment…') : null;
       try {
+        await window.ultbigboyCustomerSessionReady;
+        const form = event.currentTarget;
+        ensureSessionSelections();
+        const slots = sessionSelections.map(selection => ({ date: selection?.date || '', time: selection?.time || '' }));
+        if (!areBookingSlotsValid(slots)) {
+          message.textContent = 'Choose an available date and time for every session. Sessions run 2h 20m and cannot overlap.';
+          message.classList.add('error');
+          return;
+        }
+        if (!customerUser?.name || !customerUser?.email) {
+          message.textContent = 'Please log in before requesting a booking.';
+          message.classList.add('error');
+          return;
+        }
         message.textContent = 'Connecting to secure payment...';
         const bookingFields = Object.fromEntries(new FormData(form));
         Object.keys(bookingFields).filter(key => key.startsWith('sessionDate-') || key.startsWith('sessionTime-')).forEach(key => delete bookingFields[key]);
         const booking = { ...bookingFields, slots, timezone: 'Africa/Accra', durationMinutes: 140, name: customerUser.name, email: customerUser.email, phone: customerUser.phone || '' };
         const response = await fetch(`${bookingApiBaseUrl}/api/bookings/initialize-payment`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(booking) });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error);
+        const data = await response.json().catch(() => ({}));
+        if (response.status === 409 || data?.conflict === 'booking_slot_unavailable') {
+          await handleBookingConflict(data?.unavailableSlots || [], message);
+          return;
+        }
+        if (!response.ok) throw new Error(data.error || 'Could not start booking payment.');
         if (!data.authorizationUrl) throw new Error('Could not start secure payment.');
+        message.textContent = 'Redirecting to secure payment...';
         window.location.href = data.authorizationUrl;
       } catch (error) {
         message.textContent = error.message || 'Could not start booking payment.';
         message.classList.add('error');
+      } finally {
+        stopBusy?.();
+        syncBookingSubmitState();
       }
     });
   </script>

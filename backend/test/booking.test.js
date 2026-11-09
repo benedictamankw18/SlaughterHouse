@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { calculateBookingFee, isAvailableBookingSlot, areAvailableBookingSlots, normalizeBookingSlots } = require('../services/booking');
+const { calculateBookingFee, isAvailableBookingSlot, areAvailableBookingSlots, normalizeBookingSlots, isBookingDate, bookingGridTimes, computeDateAvailability, isFutureBookingSlot } = require('../services/booking');
 
 const fees = {
   mixtape: 700,
@@ -66,4 +66,53 @@ test('calculateBookingFee rejects unknown services and missing fee data without 
   assert.equal(calculateBookingFee('mixtape', null, null), null);
   assert.equal(calculateBookingFee('unknown', 2, { 'full-production': 1000 }), null);
   assert.equal(calculateBookingFee('ep-album', '3', { 'full-production': 1000 }, 20), 2400);
+});
+
+test('configurable booking rules override weekdays, hours, and date range', () => {
+  const rules = { availableWeekdays: [1, 5], openTime: '09:00', closeTime: '12:00', slotStepMinutes: 30, sessionMinutes: 140 };
+  assert.equal(isBookingDate('2026-11-02', rules), true, 'Monday is enabled');
+  assert.equal(isBookingDate('2026-11-03', rules), false, 'Tuesday is disabled');
+  assert.equal(isAvailableBookingSlot('2026-11-02', '09:00', rules), true);
+  assert.equal(isAvailableBookingSlot('2026-11-02', '10:00', rules), false, 'session would end after closing');
+  assert.deepEqual(bookingGridTimes(rules), ['09:00', '09:30']);
+
+  const ranged = { availableWeekdays: [1], openTime: '09:00', closeTime: '12:00', availableFrom: '2026-11-02', availableUntil: '2026-11-09' };
+  assert.equal(isBookingDate('2026-10-26', ranged), false, 'before the available range');
+  assert.equal(isBookingDate('2026-11-02', ranged), true, 'inside the available range');
+  assert.equal(isBookingDate('2026-11-16', ranged), false, 'after the available range');
+});
+
+test('same-day notice uses the configured lead time', () => {
+  const rules = { availableWeekdays: [1], openTime: '09:00', closeTime: '13:00', sessionMinutes: 140, sameDayLeadMinutes: 60 };
+  const now = new Date('2026-11-02T09:30:00Z');
+  assert.equal(isFutureBookingSlot('2026-11-02', '10:00', now, rules), false, 'less than the configured notice');
+  assert.equal(isFutureBookingSlot('2026-11-02', '10:30', now, rules), true, 'exactly the configured notice');
+});
+
+test('computeDateAvailability applies configured grids and blocks overlapping slots', () => {
+  const rules = { availableWeekdays: [1], openTime: '09:00', closeTime: '18:00', slotStepMinutes: 20, sessionMinutes: 140 };
+  const now = new Date('2026-11-01T12:00:00Z');
+  const blocked = computeDateAvailability('2026-11-02', [
+    { start_time: '13:20', status: 'blocked' }
+  ], { now, rules });
+  assert.equal(blocked.validDay, true);
+  assert.equal(blocked.sessionMinutes, 140);
+  assert.equal(blocked.slots.length, 21);
+  const blockedSlots = Object.fromEntries(blocked.slots.map(slot => [slot.time, slot]));
+  assert.equal(blockedSlots['09:00'].available, true);
+  assert.equal(blockedSlots['09:00'].reason, null);
+  assert.equal(blockedSlots['11:20'].reason, 'blocked');
+  assert.equal(blockedSlots['13:20'].reason, 'blocked');
+
+  const booked = computeDateAvailability('2026-11-02', [
+    { start_time: '13:20', status: 'booked' }
+  ], { now, rules });
+  const bookedSlots = Object.fromEntries(booked.slots.map(slot => [slot.time, slot]));
+  assert.equal(bookedSlots['09:00'].available, true);
+  assert.equal(bookedSlots['11:20'].reason, 'reserved');
+  assert.equal(bookedSlots['13:20'].reason, 'reserved');
+
+  const closed = computeDateAvailability('2026-11-03', [], { now, rules });
+  assert.equal(closed.validDay, false);
+  assert.deepEqual(closed.slots, []);
 });

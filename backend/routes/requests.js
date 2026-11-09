@@ -6,6 +6,9 @@ const { getPricing } = require('../services/pricing');
 const { saveUpload, deleteUploads } = require('../services/uploads');
 const { databaseError } = require('../services/error-messages');
 const validators = require('../services/input-validation');
+const { queueEmailSafely } = require('../services/email/outbox');
+const { queueAdminAlertEmailsSafely } = require('../services/admin-alerts');
+const { notifyAdminsSafely } = require('../services/notifications');
 const sessions = require('../session-store');
 
 const router = express.Router();
@@ -13,6 +16,46 @@ const queryOne = (query, parameters = []) => new Promise((resolve, reject) => da
 const runQuery = (query, parameters = []) => new Promise((resolve, reject) => database.run(query, parameters, function (error) {
   error ? reject(error) : resolve({ lastID: this.lastID, changes: this.changes });
 }));
+
+function normalizeSubmissionId(value) {
+  if (value === undefined || value === null || value === '') return { id: null };
+  const candidate = typeof value === 'string' ? value.trim() : '';
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(candidate)) return { error: 'The submission identifier is invalid.' };
+  return { id: candidate };
+}
+
+async function sendRequestAcknowledgements({ requestId, requestType, name, email, productName, details, licenseLabel, licensePrice, accountUrl }) {
+  const isBeat = requestType === 'beat';
+  const label = isBeat ? 'beat request' : 'custom order request';
+  await queueEmailSafely(database, {
+    to: email,
+    template: 'request_received',
+    idempotencyKey: `request-received:${requestId}`,
+    data: {
+      name,
+      requestType,
+      productName: productName || null,
+      license: licenseLabel,
+      licensePrice,
+      currency: 'GHS',
+      details,
+      reference: `#${requestId}`,
+      accountUrl
+    }
+  });
+  await queueAdminAlertEmailsSafely(database, {
+    title: isBeat ? 'New beat request' : 'New custom order request',
+    message: `${name} (${email}) sent a ${label}${productName ? ` for ${productName}` : ''}${licenseLabel ? ` with the ${licenseLabel} license` : ''}.`,
+    reference: `request:${requestId}`,
+    idempotencyPrefix: `request-alert:${requestId}`
+  });
+  await notifyAdminsSafely(database, {
+    type: 'request_submitted',
+    title: isBeat ? 'New beat request' : 'New custom order request',
+    message: `${name} sent a ${label}${productName ? ` for ${productName}` : ''}.`,
+    dedupeKey: `request-submitted:${requestId}`
+  });
+}
 
 router.get('/requests/beat-license-prices', (request, response) => {
   getPricing(database).then(({ beatRequestLicensePrices: prices }) => {
@@ -24,7 +67,9 @@ router.get('/requests/beat-license-prices', (request, response) => {
 router.post('/requests', async (request, response) => {
   let pricing;
   try { pricing = await getPricing(database); } catch (error) { return response.status(500).json({ error: databaseError('Loading current pricing failed.', error) }); }
-  const { requestType = 'merchandise', name, email, productName, details, sampleAudio, sampleUrl, license } = request.body;
+  const { requestType = 'merchandise', name, email, productName, details, sampleAudio, sampleUrl, license, submissionId } = request.body;
+  const submission = normalizeSubmissionId(submissionId);
+  if (submission.error) return response.status(400).json({ error: submission.error });
   const requestError = validators.text(name, 'Name', { required: true, max: 255 })
     || validators.email(email)
     || validators.text(details, 'Request details', { required: true, max: 5000 });
@@ -66,10 +111,32 @@ router.post('/requests', async (request, response) => {
   }
   try {
     const result = await runQuery(
-      'INSERT INTO customization_requests (user_id, request_type, customer_name, customer_email, product_name, details, sample_audio_file, sample_link, requested_license, license_price_gsh) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [user?.id || null, normalizedRequestType, name.trim(), email.trim().toLowerCase(), productName || null, details.trim(), sampleAudioFile, sampleLink, requestedLicense, licensePrice]
+      `INSERT INTO customization_requests (user_id, request_type, customer_name, customer_email, product_name, details, sample_audio_file, sample_link, requested_license, license_price_gsh, submission_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (submission_id) DO NOTHING`,
+      [user?.id || null, normalizedRequestType, name.trim(), email.trim().toLowerCase(), productName || null, details.trim(), sampleAudioFile, sampleLink, requestedLicense, licensePrice, submission.id]
     );
-    response.status(201).json({ id: result.lastID });
+    if (!result.changes) {
+      await deleteUploads([sampleAudioFile]);
+      const existing = submission.id
+        ? await queryOne('SELECT id FROM customization_requests WHERE submission_id = ?', [submission.id])
+        : null;
+      return response.status(200).json({ id: existing?.id ?? null, duplicate: true });
+    }
+    const requestId = result.lastID;
+    const licenseLabel = requestedLicense ? (config.beatRequestLicenseLabels[requestedLicense] || requestedLicense) : null;
+    await sendRequestAcknowledgements({
+      requestId,
+      requestType: normalizedRequestType,
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
+      productName,
+      details: details.trim(),
+      licenseLabel,
+      licensePrice: Number.isFinite(licensePrice) && licensePrice > 0 ? licensePrice : null,
+      accountUrl: user?.id ? new URL('/user/requests.html', config.frontendOrigin).toString() : null
+    });
+    response.status(201).json({ id: requestId });
   } catch (error) {
     await deleteUploads([sampleAudioFile]);
     response.status(500).json({ error: databaseError('Saving the customization request failed.', error) });

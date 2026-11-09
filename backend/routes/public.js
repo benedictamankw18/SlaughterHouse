@@ -402,21 +402,38 @@ router.post('/reviews', requireCustomer, rateLimit({ windowMs: 60 * 60 * 1000, m
   const email = request.customer.email;
   const review = String(request.body.review || '').trim();
   const rating = Number(request.body.rating);
+  const rawSubmissionId = request.body.submissionId;
+  let submissionId = null;
+  if (rawSubmissionId !== undefined && rawSubmissionId !== null && rawSubmissionId !== '') {
+    if (typeof rawSubmissionId !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(rawSubmissionId.trim())) {
+      return response.status(400).json({ error: 'The submission identifier is invalid.' });
+    }
+    submissionId = rawSubmissionId.trim();
+  }
   const validationError = validators.text(name, 'Name', { required: true, max: 120 })
     || validators.email(email)
     || (review.length < 3 || review.length > 2000 ? 'Review must be between 3 and 2,000 characters.' : null)
     || validators.integer(rating, 'Rating', { min: 1, max: 5 });
   if (validationError) return response.status(400).json({ error: validationError });
-  database.run('INSERT INTO customer_reviews (user_id, customer_name, customer_email, rating, review_text) VALUES (?, ?, ?, ?, ?)', [request.customer.id, name, email, rating, review], function (error) {
-    if (error) return response.status(500).json({ error: databaseError('Submitting your review failed.', error) });
-    notifyAdminsSafely(database, {
-      type: 'review_submitted',
-      title: 'Review awaiting moderation',
-      message: `${name} submitted a ${rating}-star review awaiting approval.`,
-      dedupeKey: `review-submitted:${this.lastID}`
-    });
-    response.status(201).json({ id: this.lastID, message: 'Thanks. Your review is waiting for approval.' });
-  });
+  database.run(
+    `INSERT INTO customer_reviews (user_id, customer_name, customer_email, rating, review_text, submission_id)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (submission_id) DO NOTHING`,
+    [request.customer.id, name, email, rating, review, submissionId],
+    function (error) {
+      if (error) return response.status(500).json({ error: databaseError('Submitting your review failed.', error) });
+      if (!this.changes) {
+        return response.status(200).json({ message: 'Your review was already submitted and is awaiting approval.' });
+      }
+      notifyAdminsSafely(database, {
+        type: 'review_submitted',
+        title: 'Review awaiting moderation',
+        message: `${name} submitted a ${rating}-star review awaiting approval.`,
+        dedupeKey: `review-submitted:${this.lastID}`
+      });
+      response.status(201).json({ id: this.lastID, message: 'Thanks. Your review is waiting for approval.' });
+    }
+  );
 });
 
 router.get('/users/count', (request, response) => {

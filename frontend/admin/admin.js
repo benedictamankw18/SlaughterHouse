@@ -361,6 +361,57 @@ function renderBusinessSettings(settings, canEdit) {
   }).join('')}${canEdit ? '<button class="auth-primary-button" type="submit">Save business settings</button>' : '<p>Only a super-admin can edit business settings.</p>'}`;
 }
 
+function renderBookingSettings(settings, canEdit) {
+  const form = $('#booking-settings-form');
+  if (!form) return;
+  const weekdays = [
+    ['Sunday', 0], ['Monday', 1], ['Tuesday', 2], ['Wednesday', 3],
+    ['Thursday', 4], ['Friday', 5], ['Saturday', 6]
+  ];
+  const selected = new Set((settings.availableWeekdays || []).map(Number));
+  const disabled = canEdit ? '' : 'disabled';
+  const sessionMinutes = Number(settings.sessionMinutes) || 140;
+  form.innerHTML = `
+    <fieldset class="admin-weekdays" ${disabled}>
+      <legend>Available weekdays</legend>
+      <div class="admin-weekdays-grid">
+        ${weekdays.map(([label, value]) => `<label><input type="checkbox" name="availableWeekdays" value="${value}" ${selected.has(value) ? 'checked' : ''} ${disabled}>${label}</label>`).join('')}
+      </div>
+    </fieldset>
+    <div class="admin-settings-grid">
+      <label>Open time<input name="openTime" type="time" value="${escapeHtml(settings.openTime || '')}" required ${disabled}></label>
+      <label>Close time<input name="closeTime" type="time" value="${escapeHtml(settings.closeTime || '')}" required ${disabled}></label>
+      <label>Slot interval (minutes)<input name="slotStepMinutes" type="number" min="5" max="240" step="5" value="${Number(settings.slotStepMinutes) || 20}" required ${disabled}></label>
+      <label>Same-day notice (minutes)<input name="sameDayLeadMinutes" type="number" min="0" max="1440" step="5" value="${Number(settings.sameDayLeadMinutes) || 0}" required ${disabled}></label>
+      <label>Available from (optional)<input name="availableFrom" type="date" value="${escapeHtml(settings.availableFrom || '')}" ${disabled}></label>
+      <label>Available until (optional)<input name="availableUntil" type="date" value="${escapeHtml(settings.availableUntil || '')}" ${disabled}></label>
+    </div>
+    <p class="admin-form-hint">Each session lasts ${sessionMinutes} minutes and must finish by the close time. Leave the date range blank to allow bookings indefinitely.</p>
+    ${canEdit ? '<button class="auth-primary-button" type="submit">Save booking availability</button>' : '<p>Only a super-admin can edit booking availability.</p>'}`;
+
+  const slotForm = $('#booking-availability-form');
+  if (slotForm) {
+    const closeMinutes = timeToMinutes(settings.closeTime);
+    const lastStart = closeMinutes === null ? null : closeMinutes - sessionMinutes;
+    slotForm.elements.time.min = settings.openTime || '';
+    slotForm.elements.time.max = lastStart !== null && lastStart >= 0 ? minutesToTime(lastStart) : '';
+    slotForm.elements.time.step = Math.max(60, (Number(settings.slotStepMinutes) || 20) * 60);
+  }
+}
+
+function timeToMinutes(value) {
+  const [hour, minute] = String(value || '').split(':').map(Number);
+  return Number.isInteger(hour) && Number.isInteger(minute) && hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59
+    ? hour * 60 + minute
+    : null;
+}
+
+function minutesToTime(totalMinutes) {
+  const value = Number(totalMinutes);
+  if (!Number.isInteger(value) || value < 0 || value >= 24 * 60) return '';
+  return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
+}
+
 function renderStaff(staff) {
   const container = $('#staff-list');
   container.innerHTML = staff.length ? staff.map(user => `<form class="admin-list-item admin-staff-form" data-staff-id="${Number(user.id)}"><strong>${escapeHtml(user.name)} · ${escapeHtml(user.email)}</strong><p>Current role: ${escapeHtml(user.role)} · added ${escapeHtml(user.created_at || '')}</p><label>New role<select name="role"><option value="customer" ${user.role === 'customer' ? 'selected' : ''}>Customer</option><option value="artist" ${user.role === 'artist' ? 'selected' : ''}>Artist (legacy customer role)</option><option value="non_artist" ${user.role === 'non_artist' ? 'selected' : ''}>Non-artist customer (legacy role)</option><option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Admin</option><option value="super_admin" ${user.role === 'super_admin' ? 'selected' : ''}>Super-admin</option></select></label><button type="submit">Update role</button><p class="admin-message" data-staff-message></p></form>`).join('') : staffRecords.length ? '<p>No staff accounts match these filters.</p>' : '<p>No user accounts found.</p>';
@@ -698,6 +749,16 @@ async function loadBusinessSettings() {
   }
 }
 
+async function loadBookingSettings() {
+  try {
+    const data = await api('/api/admin/bookings/settings');
+    renderBookingSettings(data.settings || {}, Boolean(data.canEdit));
+    $('#booking-settings-message').textContent = '';
+  } catch (error) {
+    message('booking-settings-message', error.message || 'Could not load booking availability settings.', true);
+  }
+}
+
 async function loadStaff() {
   if (dashboardData.role !== 'super_admin') return;
   try {
@@ -765,6 +826,7 @@ async function loadDashboard() {
   loadAdminAlerts();
   loadLicenseRights();
   loadBusinessSettings();
+  loadBookingSettings();
   loadStaff();
   loadCertificates();
   if (!$('#report-filter').elements.from.value || !$('#report-filter').elements.to.value) {
@@ -968,6 +1030,37 @@ $('#business-settings-form').addEventListener('submit', async event => {
     await loadBusinessSettings();
   } catch (error) {
     message('business-settings-message', error.message || 'Could not save business settings.', true);
+  } finally {
+    stopBusy();
+  }
+});
+
+$('#booking-settings-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const availableWeekdays = [...form.querySelectorAll('input[name="availableWeekdays"]:checked')].map(input => Number(input.value));
+  if (!availableWeekdays.length) {
+    message('booking-settings-message', 'Choose at least one available weekday.', true);
+    return;
+  }
+  const settings = {
+    availableWeekdays,
+    openTime: form.elements.openTime.value,
+    closeTime: form.elements.closeTime.value,
+    slotStepMinutes: Number(form.elements.slotStepMinutes.value),
+    sameDayLeadMinutes: Number(form.elements.sameDayLeadMinutes.value),
+    availableFrom: form.elements.availableFrom.value || '',
+    availableUntil: form.elements.availableUntil.value || ''
+  };
+  if (!window.confirm('Save these booking availability settings? Changes apply to future bookings.')) return;
+  const stopBusy = startButtonBusy(form.querySelector('button[type="submit"]'), 'Saving…');
+  if (!stopBusy) return;
+  try {
+    await api('/api/admin/bookings/settings', { method: 'PUT', body: JSON.stringify({ settings }) });
+    message('booking-settings-message', 'Booking availability saved.');
+    await loadBookingSettings();
+  } catch (error) {
+    message('booking-settings-message', error.message || 'Could not save booking availability.', true);
   } finally {
     stopBusy();
   }

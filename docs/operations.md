@@ -157,6 +157,18 @@ replacement sessions or request a full Paystack refund. Refund requests stay
 pending until Paystack confirms them; the confirmed full refund clears the
 reconciliation flag. Both resolution paths are audited and notify the customer.
 
+Booking availability is managed by a super-admin in Admin > Settings. The form
+sets the available weekdays, opening and closing times, the slot interval,
+same-day notice, and optional available-from/until dates. The database stores
+these rules and the public calendar and server-side validation both honor them,
+so changing settings immediately affects new availability and checkouts. A
+booking session is a fixed 140-minute window: the closing time must leave a
+full session after opening, and each booked or blocked slot makes overlapping
+slots unavailable. Leaving the date range blank means availability is open
+ended. Updating settings does not modify existing holds, confirmed bookings, or
+orders awaiting manual reconciliation; resolve those through Admin > Orders as
+before.
+
 Beat checkout uses the USD-to-GHS rate maintained by a super-admin in
 Admin > Settings. Update the rate at least once every 24 hours; beat checkout
 is blocked if the rate is missing, invalid, or stale. Each order records the

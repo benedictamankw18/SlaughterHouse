@@ -2,18 +2,38 @@ const express = require('express');
 const crypto = require('node:crypto');
 const database = require('../database');
 const config = require('../config');
-const { calculateBookingFee, areAvailableBookingSlots } = require('../services/booking');
+const {
+  calculateBookingFee,
+  areAvailableBookingSlots,
+  isAvailableBookingSlot,
+  isBookingDate,
+  isFutureBookingSlot,
+  computeDateAvailability,
+  accraDateKey,
+  BOOKING_TIMEZONE
+} = require('../services/booking');
+const { getBookingSettings } = require('../services/booking-settings');
 const { getPricing } = require('../services/pricing');
 const { databaseError } = require('../services/error-messages');
 const validators = require('../services/input-validation');
-const { HOLD_DURATION_MINUTES, reserveBookingSlots, releaseBookingHold, expireBookingHolds } = require('../services/booking-reservations');
+const {
+  HOLD_DURATION_MINUTES,
+  reserveBookingSlots,
+  releaseBookingHold,
+  expireBookingHolds,
+  expireBookingHoldsInRange
+} = require('../services/booking-reservations');
+const { queueEmailSafely } = require('../services/email/outbox');
 const { rateLimit } = require('../services/rate-limit');
 
 const router = express.Router();
-const { bookingServiceLabels, paystackSecretKey, paymentCallbackUrl } = config;
+const { bookingServiceLabels, paystackSecretKey, paymentCallbackUrl, frontendOrigin } = config;
 const bookingPaymentRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, message: 'Too many booking payment requests. Try again later.' });
 const queryRows = (query, parameters = []) => new Promise((resolve, reject) => database.all(query, parameters, (error, rows) => error ? reject(error) : resolve(rows || [])));
 const run = (query, parameters = []) => new Promise((resolve, reject) => database.run(query, parameters, function (error) { error ? reject(error) : resolve(this); }));
+const pad2 = value => String(value).padStart(2, '0');
+
+const AVAILABILITY_COLUMNS = 'slot_date::text AS slot_date, start_time, status, hold_expires_at, booking_order_reference';
 
 router.get('/bookings/fees', (request, response) => {
   getPricing(database).then(({ bookingFees: fees, bookingRules }) => {
@@ -27,13 +47,87 @@ router.get('/bookings/fees', (request, response) => {
   }).catch(error => response.status(500).json({ error: databaseError('Loading booking fees failed.', error) }));
 });
 
+router.get('/bookings/availability/month', async (request, response) => {
+  const month = String(request.query.month || '').trim();
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!match) return response.status(400).json({ error: 'Provide a month in YYYY-MM format to load booking availability.' });
+  const year = Number(match[1]);
+  const monthNumber = Number(match[2]);
+  if (!Number.isInteger(year) || monthNumber < 1 || monthNumber > 12) {
+    return response.status(400).json({ error: 'Provide a valid month in YYYY-MM format.' });
+  }
+  const today = accraDateKey();
+  const currentMonth = today.slice(0, 7);
+  const [todayYear, todayMonth] = today.split('-').map(Number);
+  const horizon = new Date(Date.UTC(todayYear, todayMonth - 1 + 12, 1));
+  const horizonMonth = `${horizon.getUTCFullYear()}-${pad2(horizon.getUTCMonth() + 1)}`;
+  if (month < currentMonth) return response.status(400).json({ error: 'Booking availability is only shown for the current month onward.' });
+  if (month > horizonMonth) return response.status(400).json({ error: 'Booking availability is only shown up to 12 months ahead.' });
+
+  const daysInMonth = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  const firstDate = `${month}-01`;
+  const lastDate = `${month}-${pad2(daysInMonth)}`;
+  try {
+    const settings = await getBookingSettings(database);
+    await expireBookingHoldsInRange(database, firstDate, lastDate);
+    const rows = await queryRows(
+      `SELECT ${AVAILABILITY_COLUMNS} FROM booking_availability WHERE slot_date BETWEEN ? AND ? ORDER BY slot_date, start_time`,
+      [firstDate, lastDate]
+    );
+    const rowsByDate = new Map();
+    for (const row of rows) {
+      const key = String(row.slot_date).slice(0, 10);
+      if (!rowsByDate.has(key)) rowsByDate.set(key, []);
+      rowsByDate.get(key).push(row);
+    }
+    const days = [];
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      const date = `${month}-${pad2(day)}`;
+      const availability = computeDateAvailability(date, rowsByDate.get(date) || [], { rules: settings.rules });
+      const slotsAvailable = availability.slots.filter(slot => slot.available).length;
+      days.push({
+        date,
+        sessionDay: availability.validDay,
+        available: slotsAvailable > 0,
+        slotsAvailable
+      });
+    }
+    response.json({
+      month,
+      timezone: BOOKING_TIMEZONE,
+      today,
+      sessionMinutes: settings.sessionMinutes,
+      availableWeekdays: settings.availableWeekdays,
+      openTime: settings.openTime,
+      closeTime: settings.closeTime,
+      days
+    });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Loading monthly booking availability failed.', error) });
+  }
+});
+
 router.get('/bookings/availability', async (request, response) => {
   const date = String(request.query.date || '').trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return response.status(400).json({ error: 'Provide a date in YYYY-MM-DD format to load booking availability.' });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return response.status(400).json({ error: 'Provide a valid booking date in YYYY-MM-DD format.' });
+  }
   try {
+    const settings = await getBookingSettings(database);
+    if (!isBookingDate(date, settings.rules)) {
+      return response.status(400).json({ error: 'Bookings are not open on this date. Choose an available day.' });
+    }
     await expireBookingHolds(database, date);
-    const rows = await queryRows('SELECT start_time, end_time, status FROM booking_availability WHERE slot_date = ? ORDER BY start_time', [date]);
-    response.json({ date, slots: rows.map(row => ({ time: String(row.start_time).slice(0, 5), endTime: String(row.end_time).slice(0, 5), available: row.status === 'available' })) });
+    const rows = await queryRows(
+      `SELECT ${AVAILABILITY_COLUMNS} FROM booking_availability WHERE slot_date = ? ORDER BY start_time`,
+      [date]
+    );
+    response.json({
+      ...computeDateAvailability(date, rows, { rules: settings.rules }),
+      today: accraDateKey(),
+      openTime: settings.openTime,
+      closeTime: settings.closeTime
+    });
   } catch (error) {
     response.status(500).json({ error: databaseError('Loading booking availability failed.', error) });
   }
@@ -64,6 +158,9 @@ router.post('/bookings/initialize-payment', bookingPaymentRateLimit, async (requ
   let fees;
   let bookingRules;
   try { ({ bookingFees: fees, bookingRules } = await getPricing(database)); } catch (error) { return response.status(500).json({ error: databaseError('Loading booking fees failed.', error) }); }
+  let bookingSettings;
+  try { bookingSettings = await getBookingSettings(database); } catch (error) { return response.status(500).json({ error: databaseError('Loading booking availability settings failed.', error) }); }
+  const availabilityRules = bookingSettings.rules;
   const needsSongCount = service === 'ep-album';
   if (needsSongCount && (!Number.isInteger(normalizedSongCount) || normalizedSongCount < 1 || normalizedSongCount > 12)) return response.status(400).json({ error: 'Choose between 1 and 12 songs for EP / Album.' });
   const expectedSlotCount = needsSongCount ? Math.ceil(normalizedSongCount / 2) : 1;
@@ -75,7 +172,13 @@ router.post('/bookings/initialize-payment', bookingPaymentRateLimit, async (requ
   }
   const feeGhs = calculateBookingFee(service, normalizedSongCount, fees, bookingRules.epAlbumDiscountPercent);
   if (!Number.isFinite(feeGhs) || feeGhs <= 0) return response.status(400).json({ error: `No valid price is configured for the "${service}" booking service.` });
-  if (!areAvailableBookingSlots(slots, expectedSlotCount)) return response.status(400).json({ error: 'Choose a valid, non-overlapping Tuesday, Wednesday, Thursday, or Sunday slot for each 2h20 session. Slots must end by 9:00 PM.' });
+  if (!areAvailableBookingSlots(slots, expectedSlotCount, availabilityRules)) {
+    return response.status(400).json({ error: `Choose a valid, non-overlapping slot between ${bookingSettings.openTime} and ${bookingSettings.closeTime} for each session.` });
+  }
+  const now = new Date();
+  if (slots.some(slot => !isFutureBookingSlot(slot.date, slot.time, now, availabilityRules))) {
+    return response.status(400).json({ error: `Choose a future booking date. Same-day sessions need at least ${bookingSettings.sameDayLeadMinutes} minutes notice.` });
+  }
   if (!paystackSecretKey) return response.status(503).json({ error: 'Booking payments are unavailable because PAYSTACK_SECRET_KEY is missing or still set to the example placeholder. Add a valid Paystack secret key to backend/.env and restart the server.' });
   let reference;
   let holdAcquired = false;
@@ -107,9 +210,30 @@ router.post('/bookings/initialize-payment', bookingPaymentRateLimit, async (requ
          amount = EXCLUDED.amount, currency = EXCLUDED.currency, provider_payload = EXCLUDED.provider_payload`,
       ['paystack', payment.data.reference, 'pending', feeGhs, 'GHS', JSON.stringify(payment.data), reference]
     );
+    await queueEmailSafely(database, {
+      to: normalizedEmail,
+      template: 'booking_request_received',
+      idempotencyKey: `booking-request-received:${reference}`,
+      data: {
+        name: bookingItem.booking.name,
+        reference,
+        service: bookingItem.name,
+        feeGhs,
+        currency: 'GHS',
+        slots: bookingItem.booking.sessionSlots,
+        holdMinutes: HOLD_DURATION_MINUTES,
+        accountUrl: new URL('/user/bookings.html', frontendOrigin).toString()
+      }
+    });
     response.json({ authorizationUrl: payment.data.authorization_url, reference, amount: feeGhs, currency: 'GHS' });
   } catch (error) {
-    if (error.code === 'BOOKING_SLOT_UNAVAILABLE') return response.status(409).json({ error: error.message });
+    if (error.code === 'BOOKING_SLOT_UNAVAILABLE') {
+      return response.status(409).json({
+        error: error.message,
+        conflict: 'booking_slot_unavailable',
+        unavailableSlots: error.unavailableSlots || []
+      });
+    }
     if (holdAcquired) return response.status(502).json({ error: `Payment initialization could not be confirmed. The selected slot will be released automatically after ${HOLD_DURATION_MINUTES} minutes.` });
     response.status(500).json({ error: databaseError('Reserving booking slots failed.', error) });
   }

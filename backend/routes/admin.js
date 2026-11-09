@@ -12,6 +12,7 @@ const { recordAuditSafely } = require('../services/audit');
 const { createNotificationSafely, notifyAdminsSafely } = require('../services/notifications');
 const { queueEmailSafely } = require('../services/email/outbox');
 const { isAvailableBookingSlot, areAvailableBookingSlots } = require('../services/booking');
+const { getBookingSettings, validateBookingSettingUpdates } = require('../services/booking-settings');
 const { fulfillPaidBooking } = require('../services/booking-fulfillment');
 const { reserveBookingSlots } = require('../services/booking-reservations');
 const { LICENSE_TYPES, loadLicenseRights, loadLicenseDefinitions, saveLicenseRights } = require('../services/license-rights');
@@ -319,6 +320,77 @@ router.put('/admin/settings', sessions.requirePermission('admin:manage_settings'
     response.json({ settings: validation.value.map(([key, value]) => ({ key, value })) });
   } catch (error) {
     response.status(500).json({ error: databaseError('Updating business settings failed.', error) });
+  }
+});
+
+router.get('/admin/bookings/settings', sessions.requireAdmin, async (request, response) => {
+  try {
+    const settings = await getBookingSettings(database);
+    response.json({
+      settings: {
+        availableWeekdays: settings.availableWeekdays,
+        openTime: settings.openTime,
+        closeTime: settings.closeTime,
+        slotStepMinutes: settings.slotStepMinutes,
+        sameDayLeadMinutes: settings.sameDayLeadMinutes,
+        availableFrom: settings.availableFrom,
+        availableUntil: settings.availableUntil,
+        sessionMinutes: settings.sessionMinutes
+      },
+      canEdit: request.role === 'super_admin'
+    });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Loading booking availability settings failed.', error) });
+  }
+});
+
+router.put('/admin/bookings/settings', sessions.requirePermission('admin:manage_settings'), async (request, response) => {
+  const updates = request.body?.settings;
+  const supplied = validateBookingSettingUpdates(updates);
+  if (supplied.error) return response.status(400).json({ error: supplied.error });
+  try {
+    const current = await getBookingSettings(database);
+    const validation = validateBookingSettingUpdates({
+      availableWeekdays: current.availableWeekdays,
+      openTime: current.openTime,
+      closeTime: current.closeTime,
+      slotStepMinutes: current.slotStepMinutes,
+      sameDayLeadMinutes: current.sameDayLeadMinutes,
+      availableFrom: current.availableFrom,
+      availableUntil: current.availableUntil,
+      ...updates
+    });
+    if (validation.error) return response.status(400).json({ error: validation.error });
+    await database.transaction(async tx => {
+      for (const [key, value] of validation.value) {
+        await tx.run(
+          'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = CURRENT_TIMESTAMP',
+          [key, value]
+        );
+      }
+    });
+    recordAuditSafely(database, {
+      userId: request.admin.id,
+      action: 'booking_settings_updated',
+      entityType: 'settings',
+      details: Object.fromEntries(validation.value),
+      ipAddress: request.ip
+    });
+    const settings = await getBookingSettings(database);
+    response.json({
+      settings: {
+        availableWeekdays: settings.availableWeekdays,
+        openTime: settings.openTime,
+        closeTime: settings.closeTime,
+        slotStepMinutes: settings.slotStepMinutes,
+        sameDayLeadMinutes: settings.sameDayLeadMinutes,
+        availableFrom: settings.availableFrom,
+        availableUntil: settings.availableUntil,
+        sessionMinutes: settings.sessionMinutes
+      }
+    });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Updating booking availability settings failed.', error) });
   }
 });
 
@@ -1032,6 +1104,12 @@ router.post('/admin/orders/:reference/booking-resolution', sessions.requireAdmin
     if (!Array.isArray(slots) || slots.some(slot => !slot || typeof slot.date !== 'string' || typeof slot.time !== 'string')) {
       return response.status(400).json({ error: 'Provide each replacement session as a date and time.' });
     }
+    let bookingSettings;
+    try {
+      bookingSettings = await getBookingSettings(database);
+    } catch (error) {
+      return response.status(500).json({ error: databaseError('Loading booking availability settings failed.', error) });
+    }
     try {
       const result = await database.transaction(async transaction => {
         const order = await transaction.get('SELECT * FROM orders WHERE reference = ? FOR UPDATE', [reference]);
@@ -1042,7 +1120,7 @@ router.post('/admin/orders/:reference/booking-resolution', sessions.requireAdmin
         if (!items) return { status: 500, error: 'Order details could not be read.' };
         const bookingItem = items.find(item => item.type === 'booking');
         const oldSlots = bookingItem?.booking?.sessionSlots;
-        if (!bookingItem || !Array.isArray(oldSlots) || !areAvailableBookingSlots(slots, oldSlots.length)) {
+        if (!bookingItem || !Array.isArray(oldSlots) || !areAvailableBookingSlots(slots, oldSlots.length, bookingSettings.rules)) {
           return { status: 400, error: 'Provide the same number of valid, non-overlapping replacement sessions as the original booking.' };
         }
         const updatedBooking = {
@@ -1050,7 +1128,7 @@ router.post('/admin/orders/:reference/booking-resolution', sessions.requireAdmin
           sessionSlots: slots.map(slot => ({ date: slot.date, time: slot.time }))
         };
         const updatedItems = items.map(item => item === bookingItem ? { ...item, booking: updatedBooking } : item);
-        await reserveBookingSlots(transaction, reference, updatedBooking.sessionSlots);
+        await reserveBookingSlots(transaction, reference, updatedBooking.sessionSlots, { sessionMinutes: bookingSettings.sessionMinutes });
         await fulfillPaidBooking(transaction, order, { ...bookingItem, booking: updatedBooking });
         await transaction.run(
           `UPDATE orders
@@ -1178,15 +1256,21 @@ router.patch('/admin/requests/:id/status', sessions.requireAdmin, (request, resp
   });
 });
 
-router.post('/admin/bookings/availability', sessions.requireAdmin, (request, response) => {
+router.post('/admin/bookings/availability', sessions.requireAdmin, async (request, response) => {
   const date = String(request.body.date || '').trim();
   const time = String(request.body.time || '').trim();
   const status = String(request.body.status || 'blocked').toLowerCase();
-  if (!isAvailableBookingSlot(date, time)) return response.status(400).json({ error: 'Choose a valid Tuesday, Wednesday, Thursday, or Sunday slot between 11:00 and 18:40.' });
+  let settings;
+  try {
+    settings = await getBookingSettings(database);
+  } catch (error) {
+    return response.status(500).json({ error: databaseError('Loading booking availability settings failed.', error) });
+  }
+  if (!isAvailableBookingSlot(date, time, settings.rules)) return response.status(400).json({ error: `Choose a valid slot on an available booking day between ${settings.openTime} and ${settings.closeTime}.` });
   if (!['available', 'blocked'].includes(status)) return response.status(400).json({ error: 'Availability status must be available or blocked.' });
   database.run(
      `INSERT INTO booking_availability (slot_date, start_time, end_time, status)
-      VALUES (?, ?, ?::time + INTERVAL '2 hours 20 minutes', ?)
+      VALUES (?, ?, ?::time + INTERVAL '${settings.sessionMinutes} minutes', ?)
       ON CONFLICT (slot_date, start_time) DO UPDATE
      SET status = CASE
            WHEN booking_availability.status = 'booked'
@@ -1219,10 +1303,16 @@ router.post('/admin/bookings/availability', sessions.requireAdmin, (request, res
   );
 });
 
-router.delete('/admin/bookings/availability', sessions.requireAdmin, (request, response) => {
+router.delete('/admin/bookings/availability', sessions.requireAdmin, async (request, response) => {
   const date = String(request.query.date || '').trim();
   const time = String(request.query.time || '').trim();
-  if (!isAvailableBookingSlot(date, time)) return response.status(400).json({ error: 'Provide a valid booking date and time.' });
+  let settings;
+  try {
+    settings = await getBookingSettings(database);
+  } catch (error) {
+    return response.status(500).json({ error: databaseError('Loading booking availability settings failed.', error) });
+  }
+  if (!isAvailableBookingSlot(date, time, settings.rules)) return response.status(400).json({ error: 'Provide a valid booking date and time.' });
   database.run(
     `DELETE FROM booking_availability
      WHERE slot_date = ? AND start_time = ?

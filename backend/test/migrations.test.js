@@ -278,6 +278,35 @@ test('migration 18 adds customer-readable order fulfillment history', () => {
   assert.match(sql, /idx_order_fulfillment_history_order_created \(order_id, created_at\)/);
 });
 
+test('migration 35 adds idempotent request and review submission keys', () => {
+  const migration = migrations.find(candidate => candidate.version === 35);
+  assert.ok(migration, 'migration 35 must exist');
+  assert.deepEqual(migration.statements.slice(0, 2).map(statement => statement.ensureColumn), [
+    { table: 'customization_requests', column: 'submission_id', definition: 'VARCHAR(64) NULL' },
+    { table: 'customer_reviews', column: 'submission_id', definition: 'VARCHAR(64) NULL' }
+  ]);
+  assert.match(migration.statements[2], /uq_customization_requests_submission/);
+  assert.match(migration.statements[3], /uq_customer_reviews_submission/);
+});
+
+test('migration 36 seeds configurable booking availability defaults', () => {
+  const migration = migrations.find(candidate => candidate.version === 36);
+  assert.ok(migration, 'migration 36 must exist');
+  const sql = migration.statements.join('\n');
+  assert.match(sql, /INSERT IGNORE INTO settings/);
+  for (const [key, value] of [
+    ['booking_available_weekdays', '0,2,3,4'],
+    ['booking_open_time', '11:00'],
+    ['booking_close_time', '21:00'],
+    ['booking_slot_step_minutes', '20'],
+    ['booking_same_day_lead_minutes', '30'],
+    ['booking_available_from', ''],
+    ['booking_available_until', '']
+  ]) {
+    assert.match(sql, new RegExp(`\\('${key}', '${value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'\\)`));
+  }
+});
+
 test('applyMigrations runs every statement once and records each version', async () => {
   const pool = fakePool();
   await applyMigrations(pool);
