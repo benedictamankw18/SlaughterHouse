@@ -61,7 +61,7 @@
     {
       "source": "/booking.html",
       "headers": [
-        { "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-qW1kcphB4bbfOwf858T9pHUH2a37UP4v7xGNdJjJDh0='" }
+        { "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-T232B9kMF3/Sq0w2JNE6t/TkMW10PAIh+VT7dW1amnw='" }
       ]
     },
     {
@@ -162,7 +162,7 @@
     },
     {
       "source": "/user/booking.html",
-      "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-qW1kcphB4bbfOwf858T9pHUH2a37UP4v7xGNdJjJDh0='" }]
+      "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-T232B9kMF3/Sq0w2JNE6t/TkMW10PAIh+VT7dW1amnw='" }]
     },
     {
       "source": "/user/merchandise.html",
