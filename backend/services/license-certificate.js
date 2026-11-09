@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const PDFDocument = require('pdfkit');
+const sharp = require('sharp');
 const QRCode = require('qrcode');
 
 
@@ -49,6 +50,18 @@ function drawLabelValue(doc, label, value, x, y, width, options = {}) {
 function createLicenseCertificatePdf({ license, certificate, verificationUrl }) {
   return new Promise(async (resolve, reject) => {
     try {
+      let coverImage = license.cover_image;
+
+      // PDFKit does not support WebP. Convert WebP covers to PNG in memory.
+      if (coverImage) {
+        const cover = sharp(coverImage);
+        const metadata = await cover.metadata();
+
+        if (metadata.format === 'webp') {
+          coverImage = await cover.png().toBuffer();
+        }
+      }
+
       const qr = await QRCode.toBuffer(verificationUrl, { type: 'png', width: 240, margin: 1, errorCorrectionLevel: 'M' });
       const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 0, info: {
         Title: `UltBigBoy Beat License Certificate ${certificate.certificate_id}`,
@@ -90,7 +103,7 @@ function createLicenseCertificatePdf({ license, certificate, verificationUrl }) 
       drawLabelValue(doc, 'Beat ID', license.beat_id, 620, 250, 70, { valueSize: 8, height: 24 });
       const meta = [license.genre, license.bpm ? `${license.bpm} BPM` : null, license.musical_key].filter(Boolean).join('  |  ') || 'Genre, BPM, or musical key not recorded';
       doc.font('Helvetica').fontSize(8).fillColor(COLORS.muted).text(meta, 455, 276, { width: 330, height: 20, ellipsis: true });
-      if (license.cover_image) doc.image(license.cover_image, 740, 214, { fit: [48, 48] });
+      if (coverImage) doc.image(coverImage, 740, 214, { fit: [48, 48] });
 
       doc.moveTo(48, 301).lineTo(793, 301).lineWidth(1).stroke(COLORS.gold);
       doc.font('Helvetica-Bold').fontSize(9).fillColor(COLORS.green).text('LICENSE PERMISSIONS & RESTRICTIONS', 48, 312);

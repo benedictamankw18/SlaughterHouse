@@ -1,4 +1,4 @@
-process.env.DOWNLOAD_SIGNING_SECRET = 'test-download-signing-secret';
+process.env.DOWNLOAD_SIGNING_SECRET = 'test-download-signing-secret-at-least-32-bytes';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
