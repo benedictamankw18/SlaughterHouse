@@ -138,6 +138,12 @@
 @media (max-width: 720px) { .admin-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 420px) { .admin-metrics { grid-template-columns: 1fr; } .analytics-axis-text { font-size: 12px; } }
 .admin-certificate-card { display: grid; gap: 12px; }
+
+/* Artist grid cards */
+.admin-artist-card { display: grid; grid-template-columns: 64px 1fr; gap: 16px; align-items: start; min-width: 0; padding: 16px; }
+.admin-artist-avatar { width: 64px; height: 64px; border-radius: 50%; background: #22c55e; color: #07130a; display: grid; place-items: center; font-weight: 700; font-size: 1.5rem; flex: 0 0 auto; }
+.admin-artist-card-content { display: grid; gap: 8px; min-width: 0; }
+.admin-artist-actions { flex-wrap: wrap; margin-top: 0; }
 .admin-certificate-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
 .admin-certificate-heading > div { min-width: 0; }
 .admin-certificate-heading p { overflow-wrap: anywhere; }

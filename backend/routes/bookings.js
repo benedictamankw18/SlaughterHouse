@@ -14,6 +14,8 @@ const {
 } = require('../services/booking');
 const { getBookingSettings } = require('../services/booking-settings');
 const { getPricing } = require('../services/pricing');
+const { getChargeQuote, isSupportedCurrency, BOOKING_QUOTE_TTL_MS } = require('../services/fx');
+const { createCheckout: createFlutterwaveCheckout, isConfigured: isFlutterwaveConfigured } = require('../services/flutterwave');
 const { databaseError } = require('../services/error-messages');
 const validators = require('../services/input-validation');
 const {
@@ -32,6 +34,30 @@ const bookingPaymentRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, m
 const queryRows = (query, parameters = []) => new Promise((resolve, reject) => database.all(query, parameters, (error, rows) => error ? reject(error) : resolve(rows || [])));
 const run = (query, parameters = []) => new Promise((resolve, reject) => database.run(query, parameters, function (error) { error ? reject(error) : resolve(this); }));
 const pad2 = value => String(value).padStart(2, '0');
+
+const BOOKING_PAYMENT_HTTP_STATUS = Object.freeze({
+  FX_CURRENCY_UNSUPPORTED: 400,
+  FX_AMOUNT_INVALID: 400,
+  FX_CHARGING_DISABLED: 409,
+  FX_RATE_STALE: 503,
+  FX_RATE_INVALID: 503,
+  FX_MARKUP_INVALID: 503,
+  FLW_NOT_CONFIGURED: 503,
+  FLW_UNAVAILABLE: 503,
+  FLW_REJECTED: 502,
+  FLW_AMOUNT_INVALID: 400
+});
+
+function bookingPaymentErrorStatus(code) {
+  return BOOKING_PAYMENT_HTTP_STATUS[code] || null;
+}
+
+function normalizeSubmissionId(value) {
+  if (value === undefined || value === null || value === '') return { id: null };
+  const candidate = typeof value === 'string' ? value.trim() : '';
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(candidate)) return { error: 'The submission identifier is invalid.' };
+  return { id: candidate };
+}
 
 const AVAILABILITY_COLUMNS = 'slot_date::text AS slot_date, start_time, status, hold_expires_at, booking_order_reference';
 
@@ -136,10 +162,11 @@ router.get('/bookings/availability', async (request, response) => {
 router.post('/bookings', (request, response) => response.status(402).json({ error: 'Payment is required before a booking can be submitted.' }));
 
 router.post('/bookings/initialize-payment', bookingPaymentRateLimit, async (request, response) => {
-  const { name, email, phone, service, artistCount, songCount, slots, details, paymentMethod, timezone, durationMinutes } = request.body;
+  const { name, email, phone, service, artistCount, songCount, slots, details, paymentMethod, timezone, durationMinutes, currency, submissionId } = request.body;
   const normalizedEmail = String(email || '').trim().toLowerCase();
   const normalizedArtistCount = Number(artistCount);
   const normalizedSongCount = Number(songCount);
+  const requestedCurrency = String(currency || 'GHS').trim().toUpperCase();
   const basicError = validators.text(name, 'Name', { required: true, max: 255 })
     || validators.email(email)
     || validators.integer(artistCount, 'Artist count', { min: 1, max: 10 })
@@ -153,8 +180,23 @@ router.post('/bookings/initialize-payment', bookingPaymentRateLimit, async (requ
   if (!['card', 'mobile_money'].includes(paymentMethod)) {
     return response.status(400).json({ error: `Invalid payment method "${paymentMethod}". Choose "card" or "mobile_money".` });
   }
+  if (!isSupportedCurrency(requestedCurrency)) {
+    return response.status(400).json({ error: `Unsupported currency "${requestedCurrency}". Choose one of: GHS, USD, NGN, GBP, EUR.` });
+  }
   if (timezone !== 'Africa/Accra') return response.status(400).json({ error: 'Booking timezone must be Africa/Accra.' });
   if (Number(durationMinutes) !== 140) return response.status(400).json({ error: 'Each booking session must have a duration of exactly 140 minutes.' });
+  const submission = normalizeSubmissionId(submissionId);
+  if (submission.error) return response.status(400).json({ error: submission.error });
+  if (submission.id) {
+    const existingRows = await queryRows('SELECT reference, checkout_url, amount, currency FROM orders WHERE submission_id = ? AND lower(customer_email) = lower(?)', [submission.id, normalizedEmail]);
+    const existing = existingRows[0];
+    if (existing) {
+      if (existing.checkout_url) {
+        return response.json({ authorizationUrl: existing.checkout_url, reference: existing.reference, amount: existing.amount, currency: existing.currency, replay: true });
+      }
+      return response.status(409).json({ error: 'This booking payment is already being prepared. Please wait a moment and try again.' });
+    }
+  }
   let fees;
   let bookingRules;
   try { ({ bookingFees: fees, bookingRules } = await getPricing(database)); } catch (error) { return response.status(500).json({ error: databaseError('Loading booking fees failed.', error) }); }
@@ -179,11 +221,19 @@ router.post('/bookings/initialize-payment', bookingPaymentRateLimit, async (requ
   if (slots.some(slot => !isFutureBookingSlot(slot.date, slot.time, now, availabilityRules))) {
     return response.status(400).json({ error: `Choose a future booking date. Same-day sessions need at least ${bookingSettings.sameDayLeadMinutes} minutes notice.` });
   }
-  if (!paystackSecretKey) return response.status(503).json({ error: 'Booking payments are unavailable because PAYSTACK_SECRET_KEY is missing or still set to the example placeholder. Add a valid Paystack secret key to backend/.env and restart the server.' });
+  let quote;
+  try {
+    quote = await getChargeQuote(database, feeGhs, requestedCurrency, { ttlMs: BOOKING_QUOTE_TTL_MS });
+  } catch (error) {
+    return response.status(bookingPaymentErrorStatus(error.code) || 400).json({ error: error.message, code: error.code });
+  }
+  if (quote.provider === 'paystack' && !paystackSecretKey) return response.status(503).json({ error: 'Booking payments are unavailable because PAYSTACK_SECRET_KEY is missing or still set to the example placeholder. Add a valid Paystack secret key to backend/.env and restart the server.' });
+  if (quote.provider === 'flutterwave' && !isFlutterwaveConfigured()) return response.status(503).json({ error: 'Booking payments in this currency are unavailable because FLUTTERWAVE_SECRET_KEY is not configured. Choose GHS to continue.' });
   let reference;
   let holdAcquired = false;
   try {
     reference = `UBB-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+    const foreign = quote.provider === 'flutterwave';
     const bookingItem = {
       type: 'booking', name: `${bookingServiceLabels[service]}${needsSongCount ? ` (${normalizedSongCount} songs)` : ''}`, service,
       songCount: needsSongCount ? normalizedSongCount : null, feeGhs,
@@ -191,25 +241,77 @@ router.post('/bookings/initialize-payment', bookingPaymentRateLimit, async (requ
     };
     await database.transaction(async transaction => {
       await reserveBookingSlots(transaction, reference, slots);
-      await transaction.run('INSERT INTO orders (reference, customer_name, customer_email, amount, currency, items_json) VALUES (?, ?, ?, ?, ?, ?)', [reference, bookingItem.booking.name, normalizedEmail, feeGhs, 'GHS', JSON.stringify([bookingItem])]);
+      const insertResult = await transaction.run(
+        `INSERT INTO orders (reference, customer_name, customer_email, amount, currency, items_json, amount_ghs, fx_rate, fx_markup_percent, fx_source, fx_quoted_at, provider, submission_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (submission_id) DO NOTHING`,
+        [
+          reference,
+          bookingItem.booking.name,
+          normalizedEmail,
+          quote.amount,
+          quote.currency,
+          JSON.stringify([bookingItem]),
+          quote.amountGhs,
+          foreign ? quote.midRate : null,
+          foreign ? quote.markupPercent : null,
+          foreign ? quote.source : null,
+          foreign ? new Date() : null,
+          quote.provider,
+          submission.id
+        ]
+      );
+      if (submission.id && insertResult.changes === 0) {
+        throw Object.assign(new Error('This booking payment was already started.'), { code: 'BOOKING_DUPLICATE_SUBMISSION' });
+      }
     });
     holdAcquired = true;
-    const paystackResponse = await fetch('https://api.paystack.co/transaction/initialize', { method: 'POST', headers: { Authorization: `Bearer ${paystackSecretKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ email: normalizedEmail, amount: Math.round(feeGhs * 100), currency: 'GHS', reference, channels: [paymentMethod], callback_url: paymentCallbackUrl.toString() }) });
-    const payment = await paystackResponse.json();
-    if (!paystackResponse.ok || !payment.status) {
-      await database.transaction(async transaction => {
-        await transaction.run('UPDATE orders SET status = ? WHERE reference = ? AND status = ?', ['failed', reference, 'pending']);
-        await releaseBookingHold(transaction, reference);
-      });
-      return response.status(502).json({ error: payment.message || 'Paystack rejected the booking payment initialization request.' });
+    let checkout;
+    try {
+      if (foreign) {
+        checkout = await createFlutterwaveCheckout({
+          reference,
+          amount: quote.amount,
+          currency: quote.currency,
+          customer: { email: normalizedEmail, name: bookingItem.booking.name },
+          redirectUrl: paymentCallbackUrl.toString(),
+          meta: { order_reference: reference, booking: true }
+        });
+      } else {
+        const paystackResponse = await fetch('https://api.paystack.co/transaction/initialize', { method: 'POST', headers: { Authorization: `Bearer ${paystackSecretKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ email: normalizedEmail, amount: Math.round(quote.amount * 100), currency: quote.currency, reference, channels: [paymentMethod], callback_url: paymentCallbackUrl.toString() }) });
+        const payment = await paystackResponse.json();
+        if (!paystackResponse.ok || !payment.status) {
+          await database.transaction(async transaction => {
+            await transaction.run('UPDATE orders SET status = ? WHERE reference = ? AND status = ?', ['failed', reference, 'pending']);
+            await releaseBookingHold(transaction, reference);
+          });
+          return response.status(502).json({ error: payment.message || 'Paystack rejected the booking payment initialization request.' });
+        }
+        checkout = {
+          authorizationUrl: payment.data.authorization_url,
+          providerReference: payment.data.reference,
+          payload: payment.data
+        };
+      }
+    } catch (error) {
+      if (error.code === 'FLW_REJECTED' || error.code === 'FLW_AMOUNT_INVALID') {
+        await database.transaction(async transaction => {
+          await transaction.run('UPDATE orders SET status = ? WHERE reference = ? AND status = ?', ['failed', reference, 'pending']);
+          await releaseBookingHold(transaction, reference);
+        });
+        return response.status(502).json({ error: error.message, code: error.code });
+      }
+      throw error;
     }
     await run(
-      `INSERT INTO payments (order_id, provider, provider_reference, status, amount, currency, provider_payload)
-       SELECT id, ?, ?, ?, ?, ?, ? FROM orders WHERE reference = ?
+      `INSERT INTO payments (order_id, provider, provider_reference, status, amount, currency, amount_ghs, provider_payload)
+       SELECT id, ?, ?, ?, ?, ?, ?, ? FROM orders WHERE reference = ?
        ON CONFLICT (provider_reference) DO UPDATE SET order_id = EXCLUDED.order_id, status = EXCLUDED.status,
-         amount = EXCLUDED.amount, currency = EXCLUDED.currency, provider_payload = EXCLUDED.provider_payload`,
-      ['paystack', payment.data.reference, 'pending', feeGhs, 'GHS', JSON.stringify(payment.data), reference]
+         amount = EXCLUDED.amount, currency = EXCLUDED.currency, amount_ghs = EXCLUDED.amount_ghs,
+         provider_payload = EXCLUDED.provider_payload`,
+      [quote.provider, checkout.providerReference, 'pending', quote.amount, quote.currency, quote.amountGhs, JSON.stringify(checkout.payload), reference]
     );
+    await run('UPDATE orders SET checkout_url = ? WHERE reference = ?', [checkout.authorizationUrl, reference]).catch(() => {});
     await queueEmailSafely(database, {
       to: normalizedEmail,
       template: 'booking_request_received',
@@ -218,15 +320,24 @@ router.post('/bookings/initialize-payment', bookingPaymentRateLimit, async (requ
         name: bookingItem.booking.name,
         reference,
         service: bookingItem.name,
+        amount: quote.amount,
         feeGhs,
-        currency: 'GHS',
+        currency: quote.currency,
         slots: bookingItem.booking.sessionSlots,
         holdMinutes: HOLD_DURATION_MINUTES,
         accountUrl: new URL('/user/bookings.html', frontendOrigin).toString()
       }
     });
-    response.json({ authorizationUrl: payment.data.authorization_url, reference, amount: feeGhs, currency: 'GHS' });
+    response.json({ authorizationUrl: checkout.authorizationUrl, reference, amount: quote.amount, currency: quote.currency });
   } catch (error) {
+    if (error.code === 'BOOKING_DUPLICATE_SUBMISSION') {
+      const existingRows = await queryRows('SELECT reference, checkout_url, amount, currency FROM orders WHERE submission_id = ? AND lower(customer_email) = lower(?)', [submission.id, normalizedEmail]);
+      const existing = existingRows[0];
+      if (existing?.checkout_url) {
+        return response.json({ authorizationUrl: existing.checkout_url, reference: existing.reference, amount: existing.amount, currency: existing.currency, replay: true });
+      }
+      return response.status(409).json({ error: 'This booking payment is already being prepared. Please wait a moment and try again.' });
+    }
     if (error.code === 'BOOKING_SLOT_UNAVAILABLE') {
       return response.status(409).json({
         error: error.message,

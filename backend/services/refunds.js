@@ -26,6 +26,24 @@ function refundEventKey(event) {
   return identifier === undefined || identifier === null || identifier === '' ? '' : `refund:${identifier}`;
 }
 
+// Flutterwave refund webhooks are sent as a flat object with no `event` field.
+// They identify the payment by the provider transaction id, not our reference.
+function flutterwaveRefundDetails(event) {
+  const rawAmount = Number(event?.AmountRefunded ?? event?.amount);
+  return {
+    transactionId: event?.TransactionId ?? null,
+    amount: Number.isFinite(rawAmount) && rawAmount > 0 ? rawAmount : null,
+    status: String(event?.status || '').toLowerCase(),
+    reason: event?.comments || null,
+    eventId: event?.id ?? null
+  };
+}
+
+function flutterwaveRefundKey(event) {
+  const identifier = event?.id ?? event?.TransactionId;
+  return identifier === undefined || identifier === null || identifier === '' ? '' : `refund:${identifier}`;
+}
+
 async function notifyAdmins(db, { type, title, message }) {
   const admins = await db.all("SELECT id FROM users WHERE role IN ('admin', 'super_admin')");
   for (const admin of admins || []) {
@@ -71,18 +89,22 @@ async function applyRefund(db, order, { amountGhs, reference, reason = null }) {
   if (!['paid', 'partially_refunded'].includes(status)) return { ignored: true, reason: `order_${status || 'unknown'}` };
 
   const total = Number(order.amount);
+  const totalGhs = Number(order.amount_ghs ?? order.amount);
   if (!Number.isFinite(amountGhs) || amountGhs <= 0 || !Number.isFinite(total) || total <= 0) {
     throw Object.assign(new Error('Refund amount could not be validated.'), { code: 'INVALID_REFUND_AMOUNT' });
   }
   const alreadyRefunded = Number(order.refunded_amount || 0);
   const refundedAmount = Math.min(total, Number((alreadyRefunded + amountGhs).toFixed(2)));
   const full = refundedAmount >= total - FULL_REFUND_TOLERANCE;
+  const refundedAmountGhs = Number.isFinite(totalGhs) && totalGhs > 0
+    ? Number((refundedAmount * totalGhs / total).toFixed(2))
+    : refundedAmount;
   const nextStatus = full ? 'refunded' : 'partially_refunded';
   const actions = [];
 
   await db.run(
-    'UPDATE orders SET status = ?, refunded_amount = ?, refunded_at = CURRENT_TIMESTAMP WHERE id = ?',
-    [nextStatus, refundedAmount, order.id]
+    'UPDATE orders SET status = ?, refunded_amount = ?, refunded_amount_ghs = ?, refunded_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [nextStatus, refundedAmount, refundedAmountGhs, order.id]
   );
   if (full) {
     await db.run(
@@ -164,28 +186,45 @@ async function applyRefund(db, order, { amountGhs, reference, reason = null }) {
   };
 }
 
-async function applyPaymentReversal(db, order, { reference, paymentData }) {
-  const amountGhs = Number.isFinite(Number(paymentData?.amount)) && Number(paymentData.amount) > 0
-    ? Number(paymentData.amount) / 100
-    : Number(order.amount);
+async function applyPaymentReversal(db, order, { reference, paymentData, payment }) {
+  const provider = payment?.provider || 'paystack';
+  const paymentAmount = Number(payment?.amount);
+  const legacyAmount = Number(paymentData?.amount);
+  const amount = Number.isFinite(paymentAmount) && paymentAmount > 0
+    ? paymentAmount
+    : Number.isFinite(legacyAmount) && legacyAmount > 0
+      ? (provider === 'paystack' ? legacyAmount / 100 : legacyAmount)
+      : Number(order.amount);
+  const amountGhs = Number(order.amount_ghs ?? amount);
   await db.run(
-    `INSERT INTO payments (order_id, provider, provider_reference, status, amount, currency, provider_payload, verified_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `INSERT INTO payments (order_id, provider, provider_reference, provider_transaction_id, status, amount, currency, amount_ghs, provider_payload, verified_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
      ON CONFLICT (provider_reference) DO UPDATE SET order_id = EXCLUDED.order_id, status = EXCLUDED.status,
-       amount = EXCLUDED.amount, currency = EXCLUDED.currency, provider_payload = EXCLUDED.provider_payload,
-       verified_at = EXCLUDED.verified_at`,
-    [order.id, 'paystack', reference, 'reversed', amountGhs, paymentData?.currency || order.currency, JSON.stringify(paymentData || {})]
+       amount = EXCLUDED.amount, currency = EXCLUDED.currency, amount_ghs = EXCLUDED.amount_ghs,
+       provider_transaction_id = EXCLUDED.provider_transaction_id,
+       provider_payload = EXCLUDED.provider_payload, verified_at = EXCLUDED.verified_at`,
+    [
+      order.id,
+      provider,
+      reference,
+      payment?.transactionId ?? null,
+      'reversed',
+      amount,
+      payment?.currency || paymentData?.currency || order.currency,
+      Number.isFinite(amountGhs) && amountGhs > 0 ? amountGhs : amount,
+      JSON.stringify(payment?.raw ?? paymentData ?? {})
+    ]
   );
   if (['paid', 'partially_refunded'].includes(String(order.status || ''))) {
     return applyRefund(db, order, {
-      amountGhs,
+      amountGhs: amount,
       reference,
       reason: 'Payment reversed by provider'
     });
   }
   if (['pending', 'failed', 'abandoned'].includes(String(order.status || ''))) {
     await db.run(
-      'UPDATE orders SET status = ?, refunded_amount = amount, refunded_at = CURRENT_TIMESTAMP WHERE id = ?',
+      'UPDATE orders SET status = ?, refunded_amount = amount, refunded_amount_ghs = COALESCE(amount_ghs, amount), refunded_at = CURRENT_TIMESTAMP WHERE id = ?',
       ['refunded', order.id]
     );
     await releaseBookingHold(db, reference);
@@ -205,4 +244,12 @@ async function applyPaymentReversal(db, order, { reference, paymentData }) {
   return { ignored: true, reason: `order_${order.status || 'unknown'}` };
 }
 
-module.exports = { FULL_REFUND_TOLERANCE, refundEventDetails, refundEventKey, applyRefund, applyPaymentReversal };
+module.exports = {
+  FULL_REFUND_TOLERANCE,
+  refundEventDetails,
+  refundEventKey,
+  flutterwaveRefundDetails,
+  flutterwaveRefundKey,
+  applyRefund,
+  applyPaymentReversal
+};

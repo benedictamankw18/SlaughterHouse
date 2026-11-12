@@ -15,6 +15,7 @@ const { ensureCertificateForLicense, certificateToken } = require('../services/l
 const { checkReadiness } = require('../services/health');
 const { getDownloadItems } = require('../services/downloads');
 const { getUsdGhsRate } = require('../services/pricing');
+const { getSoldExclusiveBeatIds } = require('../services/order-pricing');
 
 const router = express.Router();
 const queryRows = (query, parameters = []) => new Promise((resolve, reject) => database.all(query, parameters, (error, rows) => error ? reject(error) : resolve(rows || [])));
@@ -35,7 +36,7 @@ async function getActiveLicenseTypes() {
   return rows.filter(row => Boolean(Number(row.is_active))).map(row => String(row.license_type).toLowerCase());
 }
 
-function mapBeat(beat, defaults, activeLicenseTypes) {
+function mapBeat(beat, defaults, activeLicenseTypes, soldExclusiveIds = new Set()) {
   const prices = {
     basic: Number(beat.basic_price) > 0 ? Number(beat.basic_price) : defaults.basic,
     premium: Number(beat.premium_price) > 0 ? Number(beat.premium_price) : defaults.premium,
@@ -44,6 +45,7 @@ function mapBeat(beat, defaults, activeLicenseTypes) {
   };
   return {
     ...beat,
+    exclusiveSold: soldExclusiveIds.has(Number(beat.id)),
     coverUrl: storage.publicUrl(beat.coverArt),
     previewUrl: storage.publicUrl(beat.previewFile),
     previewDurationSeconds: beat.previewDurationSeconds === null ? null : Number(beat.previewDurationSeconds),
@@ -104,13 +106,14 @@ router.get('/beats', sessions.allowVisitor, async (request, response) => {
   if (maxBpm !== null) { conditions.push('bpm <= ?'); parameters.push(maxBpm); }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   try {
-    const [rows, countRow, defaults, activeLicenseTypes] = await Promise.all([
+    const [rows, countRow, defaults, activeLicenseTypes, soldExclusiveIds] = await Promise.all([
       queryRows(`SELECT id, title, bpm, musical_key AS "musicalKey", genre, mood, cover_art AS "coverArt", preview_file AS "previewFile", preview_duration_seconds AS "previewDurationSeconds", basic_price, premium_price, unlimited_price, exclusive_price, created_at AS "createdAt" FROM beats ${where} ORDER BY ${sort} LIMIT ? OFFSET ?`, [...parameters, pageSize, (page - 1) * pageSize]),
       queryOne(`SELECT COUNT(*) AS count FROM beats ${where}`, parameters),
       getBeatDefaults(),
-      getActiveLicenseTypes()
+      getActiveLicenseTypes(),
+      getSoldExclusiveBeatIds(database)
     ]);
-    response.json({ beats: rows.map(beat => mapBeat(beat, defaults, activeLicenseTypes)), pagination: { page, pageSize, total: Number(countRow?.count || 0), pages: Math.max(1, Math.ceil(Number(countRow?.count || 0) / pageSize)) } });
+    response.json({ beats: rows.map(beat => mapBeat(beat, defaults, activeLicenseTypes, soldExclusiveIds)), pagination: { page, pageSize, total: Number(countRow?.count || 0), pages: Math.max(1, Math.ceil(Number(countRow?.count || 0) / pageSize)) } });
   } catch (error) {
     response.status(500).json({ error: databaseError('Loading beats failed.', error) });
   }
@@ -119,13 +122,14 @@ router.get('/beats', sessions.allowVisitor, async (request, response) => {
 router.get('/beats/:id', sessions.allowVisitor, async (request, response) => {
   if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) return response.status(400).json({ error: 'Beat ID must be a positive whole number.' });
   try {
-    const [beat, defaults, activeLicenseTypes] = await Promise.all([
+    const [beat, defaults, activeLicenseTypes, soldExclusiveIds] = await Promise.all([
       queryOne('SELECT id, title, bpm, musical_key AS "musicalKey", genre, mood, cover_art AS "coverArt", preview_file AS "previewFile", preview_duration_seconds AS "previewDurationSeconds", mp3_file AS "mp3File", wav_file AS "wavFile", stems_file AS "stemsFile", basic_price, premium_price, unlimited_price, exclusive_price, created_at AS "createdAt" FROM beats WHERE id = ? AND catalog_status = ?', [Number(request.params.id), 'published']),
       getBeatDefaults(),
-      getActiveLicenseTypes()
+      getActiveLicenseTypes(),
+      getSoldExclusiveBeatIds(database)
     ]);
     if (!beat) return response.status(404).json({ error: `Beat ${request.params.id} was not found.` });
-    response.json({ beat: mapBeat(beat, defaults, activeLicenseTypes) });
+    response.json({ beat: mapBeat(beat, defaults, activeLicenseTypes, soldExclusiveIds) });
   } catch (error) {
     response.status(500).json({ error: databaseError('Loading the beat details failed.', error) });
   }

@@ -25,7 +25,7 @@
       "areaServed": "Ghana"
     }
   </script>
-  <link rel="icon" type="image/png" href="/Images/Logo 2.png">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='%2322c55e'%3e%3cpath d='M16 2c-3.3 0-6 2.7-6 6v2h-2V8c0-3.3 2.7-6 6-6s6 2.7 6 6v2h-2V8c0-3.3-2.7-6-6-6zM4 26h24v2H4z'/%3e%3c/svg%3e">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body id="top">
@@ -68,8 +68,8 @@
       <p id="booking-message" class="request-form-message" role="status" aria-live="polite"></p>
     </form>
     <section class="booking-location" aria-labelledby="booking-location-title">
-      <div><p class="section-kicker">LOCATION</p><h2 id="booking-location-title">Khendibeats Slaughter House</h2><p>Afful Nkwanta, Amakom, Kumasi, Ghana</p></div>
-      <a href="https://www.google.com/maps/search/?api=1&amp;query=Khendibeats%20Slaughter%20House%2C%20Afful%20Nkwanta%2C%20Amakom%2C%20Kumasi%2C%20Ghana" target="_blank" rel="noopener noreferrer">View Location</a>
+      <div><p class="section-kicker">LOCATION</p><h2 id="booking-location-title">UltBigBoy Studio</h2><p>Afful Nkwanta, Amakom, Kumasi, Ghana</p></div>
+      <a href="https://www.google.com/maps/search/?api=1&amp;query=Afful%20Nkwanta%2C%20Amakom%2C%20Kumasi%2C%20Ghana" target="_blank" rel="noopener noreferrer">View Location</a>
     </section>
   </main>
   <footer class="site-footer"><div class="site-footer-inner"><div class="site-footer-brand"><a href="/index.html"><img src="/Images/Logo 2.png" alt="UltBigBoy home"><span>UltBigBoy</span></a><p>Explore original beats and licenses, shop merchandise, stream music, book studio sessions, send custom requests, and share reviews.</p></div><div class="site-footer-content"><section class="site-footer-services"><h2>Services</h2><nav class="site-footer-links" aria-label="Footer navigation"><a href="/index.html">Home</a><a href="/beats.html">Beats</a><a href="/merchandise.html">Merchandise</a><a href="/booking.html">Book Section</a><a href="/produced.html">Stream</a></nav></section><section class="site-footer-store"><h2>BEATS STORE</h2><nav class="site-footer-genres" aria-label="Shop beats by genre"><a href="/beats.html#beat-listing">All</a><a href="/beats.html?genre=amapiano#beat-listing">Amapiano</a><a href="/beats.html?genre=trap#beat-listing">Trap</a><a href="/beats.html?genre=rap#beat-listing">Rap</a><a href="/beats.html?genre=afrobeat#beat-listing">Afrobeat</a></nav></section><address class="site-footer-contact"><h2>Contact</h2><a href="mailto:derryakyene99@gmail.com"><svg class="site-footer-contact-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg><span>derryakyene99@gmail.com</span></a><a href="mailto:sallywaves28@gmail.com"><svg class="site-footer-contact-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg><span>sallywaves28@gmail.com</span></a><a href="tel:+233244531198"><svg class="site-footer-contact-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h3l2 5-2 1.5a13 13 0 0 0 6.5 6.5L16 14l5 2v3c0 1-1 2-2 2C10 21 3 14 3 5c0-1 1-2 2-2z"/></svg><span>+233 24 453 1198</span></a><span class="site-footer-location"><svg class="site-footer-contact-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg><span>Ghana</span></span></address></div></div><div class="site-footer-bottom"><span>&copy; UltBigBoy</span><a href="#top">Back to top</a></div></footer>
@@ -94,6 +94,7 @@
     let calendarToday = '';
     let sessionSelections = [];
     let activeSessionIndex = 0;
+    let bookingSubmissionId = null;
     const monthAvailability = new Map();
     const monthLoading = new Set();
     const monthErrors = new Map();
@@ -317,6 +318,7 @@
 
     function renderBookingSlots() {
       ensureSessionSelections();
+      bookingSubmissionId = null;
       if (!calendarToday) ensureCalendarDefaults();
       const count = getBookingSlotCount();
       if (!count) {
@@ -516,6 +518,34 @@
       message.classList.add('error');
     }
 
+    async function revalidateSelectedSlots(slots) {
+      const dates = [...new Set(slots.map(slot => slot.date).filter(Boolean))];
+      const unavailable = [];
+      let networkError = null;
+      for (const date of dates) {
+        let response;
+        let data;
+        try {
+          response = await fetch(`${bookingApiBaseUrl}/api/bookings/availability?date=${encodeURIComponent(date)}`);
+          data = await response.json().catch(() => ({}));
+        } catch (error) {
+          networkError = error;
+          break;
+        }
+        const dateSlots = slots.filter(slot => slot.date === date);
+        if (!response.ok) {
+          dateSlots.forEach(slot => unavailable.push({ date, time: slot.time }));
+          continue;
+        }
+        dayAvailability.set(date, data);
+        const availableTimes = new Set((Array.isArray(data.slots) ? data.slots : []).filter(slot => slot.available).map(slot => slot.time));
+        dateSlots.forEach(slot => {
+          if (!availableTimes.has(slot.time)) unavailable.push({ date, time: slot.time });
+        });
+      }
+      return { unavailable, networkError };
+    }
+
     bookingForm.addEventListener('submit', async event => {
       event.preventDefault();
       const submitButton = event.submitter || bookingSubmit;
@@ -538,10 +568,26 @@
           message.classList.add('error');
           return;
         }
+        message.textContent = 'Checking slot availability...';
+        const revalidation = await revalidateSelectedSlots(slots);
+        if (revalidation.networkError) {
+          message.textContent = 'Could not verify availability right now. Please try again.';
+          message.classList.add('error');
+          return;
+        }
+        if (revalidation.unavailable.length) {
+          await handleBookingConflict(revalidation.unavailable, message);
+          return;
+        }
         message.textContent = 'Connecting to secure payment...';
         const bookingFields = Object.fromEntries(new FormData(form));
         Object.keys(bookingFields).filter(key => key.startsWith('sessionDate-') || key.startsWith('sessionTime-')).forEach(key => delete bookingFields[key]);
-        const booking = { ...bookingFields, slots, timezone: 'Africa/Accra', durationMinutes: 140, name: customerUser.name, email: customerUser.email, phone: customerUser.phone || '' };
+        if (!bookingSubmissionId) {
+          bookingSubmissionId = typeof createSubmissionId === 'function'
+            ? createSubmissionId()
+            : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+        }
+        const booking = { ...bookingFields, slots, timezone: 'Africa/Accra', durationMinutes: 140, name: customerUser.name, email: customerUser.email, phone: customerUser.phone || '', submissionId: bookingSubmissionId };
         const response = await fetch(`${bookingApiBaseUrl}/api/bookings/initialize-payment`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(booking) });
         const data = await response.json().catch(() => ({}));
         if (response.status === 409 || data?.conflict === 'booking_slot_unavailable') {

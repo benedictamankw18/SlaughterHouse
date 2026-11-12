@@ -23,6 +23,7 @@ async function mockApi(page, options = {}) {
   let adminReviewStatus = 'pending';
   let adminStreamReleases = [];
   let nextStreamReleaseId = 70;
+  let bookingAvailabilityCalls = 0;
   let bookingSettings = {
     availableWeekdays: [0, 2, 3, 4],
     openTime: '11:00',
@@ -102,7 +103,8 @@ async function mockApi(page, options = {}) {
     } else if (path === '/api/exchange-rate') {
       body = { usdToGhsRate: 12.5, updatedAt: new Date().toISOString() };
     } else if (path === '/api/beats') {
-      body = { beats: [beat], pagination: { page: 1, pages: 1, total: 1 } };
+      const beats = options.beats || [beat];
+      body = { beats, pagination: { page: 1, pages: 1, total: beats.length } };
     } else if (path === '/api/reviews') {
       body = method === 'POST'
         ? { message: 'Review submitted for moderation.' }
@@ -127,11 +129,20 @@ async function mockApi(page, options = {}) {
       }
       body = { month, days, sessionMinutes: 140 };
     } else if (path === '/api/bookings/availability') {
+      bookingAvailabilityCalls += 1;
+      // The first availability fetch happens when the date is opened. The
+      // pre-payment revalidation is a later fetch, so simulating a lost slot
+      // from the second call onward exercises the conflict path.
+      const lostSlot = options.bookingSlotTakenOnRevalidate && bookingAvailabilityCalls > 1;
       body = {
         date: url.searchParams.get('date'),
         validDay: true,
         sessionMinutes: 140,
-        slots: ['11:00', '11:20', '11:40', '12:00'].map(time => ({ time, available: true, reason: null }))
+        slots: ['11:00', '11:20', '11:40', '12:00'].map(time => ({
+          time,
+          available: !(lostSlot && time === '11:00'),
+          reason: lostSlot && time === '11:00' ? 'reserved' : null
+        }))
       };
     } else if (path === '/api/auth/signup') {
       body = { message: 'Account created. Verify your email.', verificationToken: 'test-verification-token' };
@@ -481,6 +492,35 @@ test('checkout sends selected cart items and stays on the mocked payment origin'
   });
 });
 
+async function selectFirstBookableSlot(page) {
+  const target = await page.evaluate(() => {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Africa/Accra',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).formatToParts(new Date());
+    const part = type => parts.find(candidate => candidate.type === type)?.value || '';
+    const today = `${part('year')}-${part('month')}-${part('day')}`;
+    const date = new Date(`${today}T12:00:00Z`);
+    while (![0, 2, 3, 4].includes(date.getUTCDay())) date.setUTCDate(date.getUTCDate() + 1);
+    return {
+      currentMonth: today.slice(0, 7),
+      date: date.toISOString().slice(0, 10)
+    };
+  });
+  if (target.date.slice(0, 7) !== target.currentMonth) {
+    await page.locator('[data-calendar-nav="next"]').click();
+  }
+  const dateButton = page.locator(`[data-calendar-date="${target.date}"]`);
+  await expect(dateButton).toBeEnabled();
+  await dateButton.click();
+  const timeButton = page.locator('[data-calendar-time="11:00"]');
+  await expect(timeButton).toBeEnabled();
+  await timeButton.click();
+  return target;
+}
+
 test('booking submits a valid slot and requested service to mocked payment', async ({ page }) => {
   const calls = await mockApi(page);
   await seedCustomerSession(page);
@@ -528,6 +568,46 @@ test('booking submits a valid slot and requested service to mocked payment', asy
     email: customer.email,
     slots: [expect.objectContaining({ date: target.date, time: '11:00' })]
   });
+});
+
+test('buy exclusive link preselects the exclusive license and shows its price', async ({ page }) => {
+  await mockApi(page);
+  await page.goto('/beats.html?license=exclusive');
+
+  const card = page.locator('#beat-list .beat-card').filter({ hasText: beat.title });
+  await expect(card.locator('.license-select')).toHaveValue('exclusive');
+  // 400 USD exclusive at the mocked 12.5 rate.
+  await expect(card.locator('.beat-price')).toHaveText('₵5000.00 GHS');
+});
+
+test('sold exclusive licenses are marked and cannot be selected', async ({ page }) => {
+  await mockApi(page, { beats: [{ ...beat, exclusiveSold: true }] });
+  await page.goto('/beats.html?license=exclusive');
+
+  const card = page.locator('#beat-list .beat-card').filter({ hasText: beat.title });
+  await expect(card.locator('.beat-sold-badge')).toHaveText('Exclusive sold');
+  const license = card.locator('.license-select');
+  await expect(license).toHaveValue('basic');
+  await expect(license.locator('option[value="exclusive"]')).toBeDisabled();
+  await expect(license.locator('option[value="exclusive"]')).toHaveText('Exclusive — sold');
+});
+
+test('booking revalidates availability before payment and stops on a lost slot', async ({ page }) => {
+  const calls = await mockApi(page, { bookingSlotTakenOnRevalidate: true });
+  await seedCustomerSession(page);
+  await page.goto('/booking.html');
+
+  await page.locator('#booking-service').selectOption('mixtape');
+  await page.locator('#booking-artist-count').selectOption('1');
+  await selectFirstBookableSlot(page);
+
+  await page.locator('#booking-details').fill('Browser test booking.');
+  await expect(page.locator('#booking-submit')).toBeEnabled();
+  await page.locator('#booking-submit').click();
+
+  await expect(page.locator('#booking-message')).toContainText('Choose a different time');
+  expect(calls.some(call => call.path === '/api/bookings/initialize-payment')).toBe(false);
+  await expect(page).not.toHaveURL(/mock-paystack/);
 });
 
 test('customer submits a rated review', async ({ page }) => {

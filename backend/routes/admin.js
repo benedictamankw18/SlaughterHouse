@@ -19,12 +19,27 @@ const { LICENSE_TYPES, loadLicenseRights, loadLicenseDefinitions, saveLicenseRig
 const { FULFILLMENT_STATUSES, updateFulfillmentStatus } = require('../services/fulfillment');
 const { BUSINESS_SETTINGS, REPORT_GRANULARITIES, validateDateRange, validateSettingUpdates, validateReportGranularity, buildReportPeriods } = require('../services/admin-controls');
 const { isUsdGhsRateFresh } = require('../services/pricing');
+const {
+  SUPPORTED_CURRENCIES,
+  FOREIGN_CURRENCIES,
+  FX_MARKUP_SETTING_KEY,
+  FX_CHARGE_ENABLED_SETTING_KEY,
+  getFxSettings,
+  listFxRates,
+  validateApprovedRate,
+  validateMarkupPercent,
+  fetchSuggestedRates
+} = require('../services/fx');
 const logger = require('../services/logger');
 const monitoring = require('../services/monitoring');
 const { checkReadiness } = require('../services/health');
 const storage = require('../services/storage');
 const { sendStoredFile } = require('../services/storage/response');
 const { parseOrderItems } = require('../services/order-items');
+const {
+  isConfigured: isFlutterwaveConfigured,
+  refundTransaction: refundFlutterwaveTransaction
+} = require('../services/flutterwave');
 
 const router = express.Router();
 router.use(rateLimit({ windowMs: 60 * 1000, max: 60, message: 'Too many administrator requests. Try again shortly.' }));
@@ -142,14 +157,15 @@ router.get('/admin/data', sessions.requireAdmin, (request, response) => {
       ...artist,
       purchases: purchases.filter(purchase => purchase.customer_email.toLowerCase() === artist.email.toLowerCase())
     }));
+    const netRevenueGhs = order => Number(order.amount_ghs ?? order.amount ?? 0) - Number(order.refunded_amount_ghs ?? order.refunded_amount ?? 0);
     const monthlySales = paidOrders.reduce((months, order) => {
       const date = new Date(order.created_at);
       const month = Number.isNaN(date.getTime()) ? 'Unknown' : date.toISOString().slice(0, 7);
-      months[month] = (months[month] || 0) + Number(order.amount || 0) - Number(order.refunded_amount || 0);
+      months[month] = (months[month] || 0) + netRevenueGhs(order);
       return months;
     }, {});
     const analytics = {
-      revenue: paidOrders.reduce((sum, order) => sum + Number(order.amount || 0) - Number(order.refunded_amount || 0), 0),
+      revenue: paidOrders.reduce((sum, order) => sum + netRevenueGhs(order), 0),
       paidOrders: paidOrders.length,
       pendingOrders: orders.filter(order => order.status === 'pending').length,
       beatLicenses: purchases.length,
@@ -309,6 +325,19 @@ router.put('/admin/settings', sessions.requirePermission('admin:manage_settings'
           [key, value]
         );
       }
+      const usdRate = validation.value.find(([key]) => key === 'usd_to_ghs_rate');
+      if (usdRate) {
+        await tx.run(
+          `INSERT INTO fx_rates (currency, ghs_per_unit, approved_by, approved_at, updated_at)
+           VALUES ('USD', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+           ON CONFLICT (currency) DO UPDATE SET
+             ghs_per_unit = EXCLUDED.ghs_per_unit,
+             approved_by = EXCLUDED.approved_by,
+             approved_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP`,
+          [usdRate[1], request.admin.id]
+        );
+      }
     });
     recordAuditSafely(database, {
       userId: request.admin.id,
@@ -320,6 +349,106 @@ router.put('/admin/settings', sessions.requirePermission('admin:manage_settings'
     response.json({ settings: validation.value.map(([key, value]) => ({ key, value })) });
   } catch (error) {
     response.status(500).json({ error: databaseError('Updating business settings failed.', error) });
+  }
+});
+
+router.get('/admin/fx-rates', sessions.requireAdmin, async (request, response) => {
+  try {
+    const [settings, rates] = await Promise.all([getFxSettings(database), listFxRates(database)]);
+    response.json({
+      settings,
+      rates,
+      supportedCurrencies: SUPPORTED_CURRENCIES,
+      editableCurrencies: FOREIGN_CURRENCIES,
+      canEdit: request.role === 'super_admin'
+    });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Loading exchange rates failed.', error) });
+  }
+});
+
+router.get('/admin/fx-rates/suggestions', sessions.requireAdmin, async (request, response) => {
+  try {
+    const suggestion = await fetchSuggestedRates({ force: String(request.query.force || '') === '1' });
+    await database.transaction(async transaction => {
+      for (const [currency, rate] of Object.entries(suggestion.rates)) {
+        await transaction.run(
+          'UPDATE fx_rates SET suggested_ghs_per_unit = ?, suggested_source = ?, suggested_at = CURRENT_TIMESTAMP WHERE currency = ?',
+          [rate, suggestion.source, currency]
+        );
+      }
+    });
+    response.json(suggestion);
+  } catch (error) {
+    response.status(503).json({ error: databaseError('Loading suggested exchange rates failed.', error) });
+  }
+});
+
+router.put('/admin/fx-rates', sessions.requirePermission('admin:manage_settings'), async (request, response) => {
+  const body = request.body || {};
+  const settingsUpdates = [];
+  const rateUpdates = [];
+  const markup = body.settings?.markupPercent;
+  if (markup !== undefined) {
+    const validation = validateMarkupPercent(markup);
+    if (validation.error) return response.status(400).json({ error: validation.error });
+    settingsUpdates.push([FX_MARKUP_SETTING_KEY, validation.value]);
+  }
+  const chargeEnabled = body.settings?.chargeEnabled;
+  if (chargeEnabled !== undefined) {
+    if (typeof chargeEnabled !== 'boolean') return response.status(400).json({ error: 'chargeEnabled must be true or false.' });
+    settingsUpdates.push([FX_CHARGE_ENABLED_SETTING_KEY, chargeEnabled ? '1' : '0']);
+  }
+  if (body.rates !== undefined) {
+    if (!body.rates || typeof body.rates !== 'object' || Array.isArray(body.rates)) {
+      return response.status(400).json({ error: 'rates must be an object keyed by currency.' });
+    }
+    for (const [currency, value] of Object.entries(body.rates)) {
+      const validation = validateApprovedRate(currency, value);
+      if (validation.error) return response.status(400).json({ error: validation.error });
+      rateUpdates.push([String(currency).toUpperCase(), validation.value]);
+    }
+  }
+  const approvedUsd = rateUpdates.find(([currency]) => currency === 'USD');
+  if (approvedUsd) settingsUpdates.push(['usd_to_ghs_rate', Number(approvedUsd[1]).toFixed(6)]);
+  if (!settingsUpdates.length && !rateUpdates.length) {
+    return response.status(400).json({ error: 'Provide at least one exchange rate or FX setting to update.' });
+  }
+  try {
+    await database.transaction(async transaction => {
+      for (const [key, value] of settingsUpdates) {
+        await transaction.run(
+          'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = CURRENT_TIMESTAMP',
+          [key, value]
+        );
+      }
+      for (const [currency, value] of rateUpdates) {
+        await transaction.run(
+          `INSERT INTO fx_rates (currency, ghs_per_unit, approved_by, approved_at, updated_at)
+           VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+           ON CONFLICT (currency) DO UPDATE SET
+             ghs_per_unit = EXCLUDED.ghs_per_unit,
+             approved_by = EXCLUDED.approved_by,
+             approved_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP`,
+          [currency, value, request.admin.id]
+        );
+      }
+    });
+    recordAuditSafely(database, {
+      userId: request.admin.id,
+      action: 'fx_rates_updated',
+      entityType: 'settings',
+      details: {
+        settings: Object.fromEntries(settingsUpdates),
+        rates: Object.fromEntries(rateUpdates)
+      },
+      ipAddress: request.ip
+    });
+    const [settings, rates] = await Promise.all([getFxSettings(database), listFxRates(database)]);
+    response.json({ settings, rates });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Updating exchange rates failed.', error) });
   }
 });
 
@@ -660,14 +789,14 @@ router.get('/admin/reports', sessions.requireAdmin, async (request, response) =>
   try {
     const [orders, revenueRows, withdrawalRows, bookings, summaryRows, withdrawalSummaryRows, firstRows] = await Promise.all([
       queryRows(
-        `SELECT reference, customer_name, customer_email, status, amount, currency, refunded_amount, created_at
+        `SELECT reference, customer_name, customer_email, status, amount, currency, amount_ghs, refunded_amount, refunded_amount_ghs, created_at
          FROM orders ${where} ORDER BY created_at DESC LIMIT 5000`,
         parameters
       ),
       queryRows(
         `SELECT TO_CHAR(DATE_TRUNC('${sqlUnit}', created_at), '${format}') AS period,
                 COUNT(*) AS order_count,
-                SUM(amount - COALESCE(refunded_amount, 0)) AS revenue
+                SUM(COALESCE(amount_ghs, amount) - COALESCE(refunded_amount_ghs, refunded_amount, 0)) AS revenue
          FROM orders ${orderWhere}
          GROUP BY 1 ORDER BY 1`,
         parameters
@@ -686,7 +815,9 @@ router.get('/admin/reports', sessions.requireAdmin, async (request, response) =>
       queryRows(
         `SELECT COUNT(*) AS order_count,
                 COUNT(*) FILTER (WHERE status IN ('paid', 'partially_refunded')) AS paid_order_count,
-                SUM(CASE WHEN status IN ('paid', 'partially_refunded') THEN amount - COALESCE(refunded_amount, 0) ELSE 0 END) AS net_revenue
+                SUM(CASE WHEN status IN ('paid', 'partially_refunded')
+                         THEN COALESCE(amount_ghs, amount) - COALESCE(refunded_amount_ghs, refunded_amount, 0)
+                         ELSE 0 END) AS net_revenue
          FROM orders ${where}`,
         parameters
       ),
@@ -755,14 +886,14 @@ router.get('/admin/reports.csv', sessions.requireAdmin, async (request, response
   }
   try {
     const orders = await queryRows(
-      `SELECT reference, customer_name, customer_email, status, amount, currency, refunded_amount, created_at
+      `SELECT reference, customer_name, customer_email, status, amount, currency, amount_ghs, refunded_amount, refunded_amount_ghs, created_at
        FROM orders ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
        ORDER BY created_at DESC LIMIT 5000`,
       parameters
     );
     const rows = [
-      ['Reference', 'Customer', 'Email', 'Status', 'Amount', 'Refunded amount', 'Currency', 'Created at'],
-      ...orders.map(order => [order.reference, order.customer_name, order.customer_email, order.status, order.amount, order.refunded_amount, order.currency, order.created_at])
+      ['Reference', 'Customer', 'Email', 'Status', 'Amount', 'Currency', 'Amount (GHS)', 'Refunded amount', 'Refunded amount (GHS)', 'Created at'],
+      ...orders.map(order => [order.reference, order.customer_name, order.customer_email, order.status, order.amount, order.currency, order.amount_ghs, order.refunded_amount, order.refunded_amount_ghs, order.created_at])
     ];
     response.setHeader('Content-Type', 'text/csv; charset=utf-8');
     response.setHeader('Content-Disposition', 'attachment; filename="ultbigboy-report.csv"');
@@ -774,12 +905,12 @@ router.get('/admin/reports.csv', sessions.requireAdmin, async (request, response
 
 router.get('/admin/orders.csv', sessions.requireAdmin, (request, response) => {
   queryRows(
-    `SELECT reference, customer_name, customer_email, status, amount, currency, created_at
+    `SELECT reference, customer_name, customer_email, status, amount, currency, amount_ghs, created_at
      FROM orders ORDER BY created_at DESC LIMIT 5000`
   ).then(orders => {
     const rows = [
-      ['Reference', 'Customer', 'Email', 'Status', 'Amount', 'Currency', 'Created at'],
-      ...orders.map(order => [order.reference, order.customer_name, order.customer_email, order.status, order.amount, order.currency, order.created_at])
+      ['Reference', 'Customer', 'Email', 'Status', 'Amount', 'Currency', 'Amount (GHS)', 'Created at'],
+      ...orders.map(order => [order.reference, order.customer_name, order.customer_email, order.status, order.amount, order.currency, order.amount_ghs, order.created_at])
     ];
     response.setHeader('Content-Type', 'text/csv; charset=utf-8');
     response.setHeader('Content-Disposition', 'attachment; filename="ultbigboy-orders.csv"');
@@ -1102,18 +1233,27 @@ router.patch('/admin/bookings/:id/status', sessions.requireAdmin, (request, resp
       database.get('SELECT name, email, service, booking_slots_json, payment_reference FROM bookings WHERE id = ?', [Number(request.params.id)], async (emailError, updatedBooking) => {
         if (emailError) return response.status(500).json({ error: databaseError('Loading the booking customer failed.', emailError) });
         try {
-          if (status === 'cancelled' && booking.status !== 'cancelled') {
-            let slots = [];
-            try {
-              const parsedSlots = JSON.parse(updatedBooking.booking_slots_json || '[]');
-              if (Array.isArray(parsedSlots)) slots = parsedSlots;
-            } catch (error) {
-              logger.error('booking_cancellation_slot_data_invalid', { bookingId: Number(request.params.id) });
-            }
+          let slots = [];
+          try {
+            const parsedSlots = JSON.parse(updatedBooking.booking_slots_json || '[]');
+            if (Array.isArray(parsedSlots)) slots = parsedSlots;
+          } catch (error) {
+            logger.error('booking_slot_data_invalid', { bookingId: Number(request.params.id) });
+          }
+
+          const statusTemplateMap = {
+            cancelled: 'booking_cancelled',
+            confirmed: 'booking_confirmed',
+            completed: 'booking_completed',
+            paid: 'booking_paid',
+            rescheduled: 'booking_rescheduled'
+          };
+          const template = statusTemplateMap[status];
+          if (template && status !== booking.status) {
             await queueEmailSafely(database, {
               to: updatedBooking.email,
-              template: 'booking_cancelled',
-              idempotencyKey: `booking-cancelled:${Number(request.params.id)}`,
+              template,
+              idempotencyKey: `booking-${status}:${Number(request.params.id)}`,
               data: {
                 name: updatedBooking.name,
                 service: updatedBooking.service,
@@ -1123,6 +1263,7 @@ router.patch('/admin/bookings/:id/status', sessions.requireAdmin, (request, resp
               }
             });
           }
+
           const customer = await new Promise((resolve, reject) => database.get("SELECT id FROM users WHERE lower(email) = lower(?) AND role NOT IN ('admin', 'super_admin')", [updatedBooking.email], (lookupError, user) => lookupError ? reject(lookupError) : resolve(user)));
           if (customer) await createNotificationSafely(database, {
             userId: customer.id,
@@ -1204,7 +1345,6 @@ router.post('/admin/orders/:reference/booking-resolution', sessions.requireAdmin
     }
   }
 
-  if (!config.paystackSecretKey) return response.status(503).json({ error: 'Refund processing is unavailable because PAYSTACK_SECRET_KEY is not configured.' });
   let refundDetails;
   try {
     refundDetails = await database.transaction(async transaction => {
@@ -1213,14 +1353,27 @@ router.post('/admin/orders/:reference/booking-resolution', sessions.requireAdmin
       if (!order.fulfillment_review_required || order.status !== 'paid') return { status: 409, error: 'This paid order is not awaiting booking reconciliation.' };
       if (order.fulfillment_review_reason === 'refund_pending') return { status: 200, alreadyPending: true, orderId: order.id };
       const payment = await transaction.get(
-        `SELECT provider_reference FROM payments
-         WHERE order_id = ? AND provider = ? AND status = ?
+        `SELECT provider, provider_reference, provider_transaction_id FROM payments
+         WHERE order_id = ? AND status = ?
          ORDER BY verified_at DESC NULLS LAST, created_at DESC LIMIT 1`,
-        [order.id, 'paystack', 'paid']
+        [order.id, 'paid']
       );
-      if (!payment?.provider_reference) return { status: 409, error: 'A confirmed Paystack transaction could not be found for this order.' };
+      if (!payment?.provider_reference) return { status: 409, error: 'A confirmed payment transaction could not be found for this order.' };
+      const provider = String(payment.provider || order.provider || 'paystack').toLowerCase() === 'flutterwave' ? 'flutterwave' : 'paystack';
+      if (provider === 'paystack' && !config.paystackSecretKey) return { status: 503, error: 'Refund processing is unavailable because PAYSTACK_SECRET_KEY is not configured.' };
+      if (provider === 'flutterwave' && !isFlutterwaveConfigured()) return { status: 503, error: 'Refund processing is unavailable because FLUTTERWAVE_SECRET_KEY is not configured.' };
+      if (provider === 'flutterwave' && !payment.provider_transaction_id) return { status: 409, error: 'A confirmed Flutterwave transaction id could not be found for this order.' };
       await transaction.run('UPDATE orders SET fulfillment_review_reason = ? WHERE id = ?', ['refund_pending', order.id]);
-      return { status: 200, orderId: order.id, amount: Number(order.amount) - Number(order.refunded_amount || 0), providerReference: payment.provider_reference, email: order.customer_email };
+      return {
+        status: 200,
+        orderId: order.id,
+        amount: Number(order.amount) - Number(order.refunded_amount || 0),
+        currency: order.currency,
+        provider,
+        providerReference: payment.provider_reference,
+        providerTransactionId: payment.provider_transaction_id,
+        email: order.customer_email
+      };
     });
   } catch (error) {
     return response.status(500).json({ error: databaseError('Preparing the booking refund failed.', error) });
@@ -1228,26 +1381,41 @@ router.post('/admin/orders/:reference/booking-resolution', sessions.requireAdmin
   if (refundDetails.status !== 200) return response.status(refundDetails.status).json({ error: refundDetails.error });
   if (refundDetails.alreadyPending) return response.json({ reference, resolution: 'refund_pending' });
   try {
-    const providerResponse = await fetch('https://api.paystack.co/refund', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${config.paystackSecretKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        transaction: refundDetails.providerReference,
-        amount: Math.round(refundDetails.amount * 100)
-      })
-    });
-    const providerResult = await providerResponse.json();
-    if (!providerResponse.ok || !providerResult.status) {
+    if (refundDetails.provider === 'flutterwave') {
+      await refundFlutterwaveTransaction({
+        transactionId: refundDetails.providerTransactionId,
+        amount: refundDetails.amount
+      });
+    } else {
+      const providerResponse = await fetch('https://api.paystack.co/refund', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${config.paystackSecretKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transaction: refundDetails.providerReference,
+          amount: Math.round(refundDetails.amount * 100)
+        })
+      });
+      const providerResult = await providerResponse.json();
+      if (!providerResponse.ok || !providerResult.status) {
+        await runQuery(
+          `UPDATE orders SET fulfillment_review_reason = ?
+           WHERE reference = ? AND fulfillment_review_required = TRUE AND fulfillment_review_reason = ?`,
+          ['booking_slot_unavailable', reference, 'refund_pending']
+        );
+        return response.status(502).json({ error: providerResult.message || 'Paystack did not accept the refund request.' });
+      }
+    }
+  } catch (error) {
+    if (error.code === 'FLW_REFUND_FAILED' || error.code === 'FLW_REFUND_INVALID') {
       await runQuery(
         `UPDATE orders SET fulfillment_review_reason = ?
          WHERE reference = ? AND fulfillment_review_required = TRUE AND fulfillment_review_reason = ?`,
         ['booking_slot_unavailable', reference, 'refund_pending']
       );
-      return response.status(502).json({ error: providerResult.message || 'Paystack did not accept the refund request.' });
+      return response.status(502).json({ error: error.message || 'Flutterwave did not accept the refund request.' });
     }
-  } catch (error) {
     logger.error('booking_refund_request_uncertain', { reference, code: error.code });
-    return response.status(502).json({ error: 'The refund request could not be confirmed. Check Paystack before retrying; the order is marked refund pending to prevent duplicate requests.' });
+    return response.status(502).json({ error: 'The refund request could not be confirmed. Check the payment provider before retrying; the order is marked refund pending to prevent duplicate requests.' });
   }
   await recordAuditSafely(database, {
     userId: request.admin.id,
@@ -1266,12 +1434,12 @@ router.post('/admin/orders/:reference/booking-resolution', sessions.requireAdmin
     userId: customer.id,
     type: 'booking_refund_pending',
     title: 'Booking refund requested',
-    message: 'A refund has been requested for your booking payment. We will notify you when Paystack confirms it.'
+    message: 'A refund has been requested for your booking payment. We will notify you when the payment provider confirms it.'
   });
   response.json({ reference, resolution: 'refund_pending' });
 });
 
-router.patch('/admin/requests/:id/status', sessions.requireAdmin, (request, response) => {
+router.patch('/admin/requests/:id/status', sessions.requireAdmin, async (request, response) => {
   if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) return response.status(400).json({ error: 'Request ID must be a positive whole number.' });
   const status = String(request.body.status || '').toLowerCase();
   const quote = request.body.quoteGhs === '' || request.body.quoteGhs === null || request.body.quoteGhs === undefined ? null : Number(request.body.quoteGhs);
@@ -1280,27 +1448,81 @@ router.patch('/admin/requests/:id/status', sessions.requireAdmin, (request, resp
   if (!statuses.includes(status)) return response.status(400).json({ error: `Request status must be one of: ${statuses.join(', ')}.` });
   if (quote !== null && (!Number.isFinite(quote) || quote < 0)) return response.status(400).json({ error: 'Quote must be a non-negative amount or blank.' });
   if (notes !== null && notes.length > 5000) return response.status(400).json({ error: 'Request notes must be 5000 characters or fewer.' });
-  database.get('SELECT user_id, product_name, request_type, status AS previous_status FROM customization_requests WHERE id = ?', [Number(request.params.id)], (lookupError, requestRecord) => {
-    if (lookupError) return response.status(500).json({ error: databaseError('Loading the request failed.', lookupError) });
-    if (!requestRecord) return response.status(404).json({ error: 'Request was not found.' });
-    database.run('UPDATE customization_requests SET status = ?, quote_gsh = ?, admin_notes = COALESCE(?, admin_notes) WHERE id = ?', [status, quote, notes, Number(request.params.id)], async function (error) {
-    if (error) return response.status(500).json({ error: databaseError('Updating the request failed.', error) });
-    if (requestRecord.user_id) await createNotificationSafely(database, {
-      userId: requestRecord.user_id,
-      type: 'request_status_changed',
-      title: 'Request status updated',
-      message: `${requestRecord.product_name || requestRecord.request_type + ' request'} is now ${status}${quote === null ? '' : ` with a quote of GHS ${quote.toFixed(2)}`}.`
-    });
-    recordAuditSafely(database, {
-      userId: request.admin.id,
-      action: 'request_status_changed',
-      entityType: 'customization_request',
-      entityId: Number(request.params.id),
-      details: { previousStatus: requestRecord.previous_status, status, quoteGhs: quote }
-    });
-    response.json({ id: Number(request.params.id), status, quoteGhs: quote, notes });
-    });
+
+  let requestRecord;
+  try {
+    const rows = await queryRows(
+      'SELECT user_id, product_name, request_type, customer_name, customer_email, status AS previous_status FROM customization_requests WHERE id = ?',
+      [Number(request.params.id)]
+    );
+    requestRecord = rows[0];
+  } catch (lookupError) {
+    return response.status(500).json({ error: databaseError('Loading the request failed.', lookupError) });
+  }
+  if (!requestRecord) return response.status(404).json({ error: 'Request was not found.' });
+
+  try {
+    await runQuery('UPDATE customization_requests SET status = ?, quote_gsh = ?, admin_notes = COALESCE(?, admin_notes) WHERE id = ?', [status, quote, notes, Number(request.params.id)]);
+  } catch (error) {
+    return response.status(500).json({ error: databaseError('Updating the request failed.', error) });
+  }
+
+  if (requestRecord.user_id) await createNotificationSafely(database, {
+    userId: requestRecord.user_id,
+    type: 'request_status_changed',
+    title: 'Request status updated',
+    message: `${requestRecord.product_name || requestRecord.request_type + ' request'} is now ${status}${quote === null ? '' : ` with a quote of GHS ${quote.toFixed(2)}`}.`
   });
+
+  let recipient = null;
+  if (requestRecord.user_id) {
+    try {
+      const userRows = await queryRows('SELECT name, email FROM users WHERE id = ?', [requestRecord.user_id]);
+      if (userRows[0]) recipient = { name: userRows[0].name, email: userRows[0].email };
+    } catch (userError) {
+      logger.error('request_status_email_lookup_failed', { requestId: Number(request.params.id), code: userError.code });
+    }
+  }
+  if (!recipient?.email && requestRecord.customer_email) {
+    recipient = { name: requestRecord.customer_name || 'there', email: requestRecord.customer_email };
+  }
+
+  try {
+    const statusTemplateMap = {
+      reviewing: 'request_reviewing',
+      quoted: 'request_quoted',
+      accepted: 'request_accepted',
+      rejected: 'request_rejected',
+      completed: 'request_completed'
+    };
+    const template = statusTemplateMap[status];
+    if (template && status !== requestRecord.previous_status && recipient?.email) {
+      await queueEmailSafely(database, {
+        to: recipient.email,
+        template,
+        idempotencyKey: `request-${status}:${Number(request.params.id)}`,
+        data: {
+          name: recipient.name,
+          productName: requestRecord.product_name,
+          requestType: requestRecord.request_type,
+          reference: String(Number(request.params.id)),
+          licensePrice: quote,
+          currency: 'GHS'
+        }
+      });
+    }
+  } catch (emailError) {
+    logger.error('request_status_email_failed', { requestId: Number(request.params.id), status, code: emailError.code });
+  }
+
+  recordAuditSafely(database, {
+    userId: request.admin.id,
+    action: 'request_status_changed',
+    entityType: 'customization_request',
+    entityId: Number(request.params.id),
+    details: { previousStatus: requestRecord.previous_status, status, quoteGhs: quote }
+  });
+  response.json({ id: Number(request.params.id), status, quoteGhs: quote, notes });
 });
 
 router.post('/admin/bookings/availability', sessions.requireAdmin, async (request, response) => {

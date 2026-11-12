@@ -406,6 +406,19 @@ for unfulfilled merchandise, and free booking slots. Partial refunds retain
 entitlements. Late success events cannot re-settle refunded or already-settled
 orders.
 
+`POST /api/payments/quote` validates the same catalog items as initialization
+without creating an order. It returns the server-authoritative GHS total and,
+when multi-currency charging is enabled and the approved rate is fresh, the
+locked foreign-currency amount, FX rate, markup, payment provider, and quote
+expiry. Requesting a currency whose feature flag is off or whose rate is stale
+returns a machine-readable `FX_*` error instead of a converted total.
+
+Administrators read approved rates with `GET /api/admin/fx-rates`, fetch
+advisory market suggestions with `GET /api/admin/fx-rates/suggestions`, and
+approve rates or the FX markup with `PUT /api/admin/fx-rates`. Suggestions are
+never used to charge customers; only an approved rate within the last 24 hours
+can price a non-GHS payment.
+
 Administrators can transition paid bookings with
 `PATCH /api/admin/bookings/:id/status` using `paid`, `confirmed`, `completed`,
 `cancelled`, or `rescheduled`, with optional notes; each change is audited

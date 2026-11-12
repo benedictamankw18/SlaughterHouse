@@ -220,10 +220,6 @@ function renderList(elementId, items, type) {
     }
     if (type === 'reviews') return `<article class="admin-list-item"><strong>${escapeHtml(item.customer_name)} · ${'★'.repeat(Number(item.rating) || 0)}${'☆'.repeat(Math.max(0, 5 - Number(item.rating || 0)))}</strong><p>${escapeHtml(item.customer_email)} · ${escapeHtml(item.status)} · ${escapeHtml(item.created_at || '')}</p><blockquote>${escapeHtml(item.review_text)}</blockquote><div class="admin-review-actions">${item.status === 'pending' ? '<button type="button" data-review-status="approved">Approve</button><button type="button" data-review-status="rejected">Reject</button>' : ''}${item.status !== 'removed' ? '<button type="button" data-review-status="removed">Remove</button>' : ''}</div><p class="admin-message" data-review-message></p><span data-review-id="${Number(item.id)}" hidden></span></article>`;
     if (type === 'customers') return `<article class="admin-list-item"><strong>${escapeHtml(item.name || item.artist_name || 'Customer')}</strong><p>${escapeHtml(item.email)} · ${escapeHtml(item.role)} · joined ${escapeHtml(item.created_at || '')} · email ${item.email_verified_at ? 'verified' : 'unverified'}</p></article>`;
-    if (type === 'artists') {
-      const purchases = item.purchases.length ? item.purchases.map(purchase => `<li>${escapeHtml(purchase.beat_title)} · ${escapeHtml(purchase.license)} license · ${purchase.amount === null ? 'GHS amount unavailable' : formatMoney(purchase.amount)}${purchase.exchange_rate ? ` · USD/GHS ${escapeHtml(purchase.exchange_rate)}` : ''} · ${escapeHtml(purchase.purchased_at || '')}</li>`).join('') : '<li>No beat purchases yet.</li>';
-      return `<article class="admin-list-item"><strong>${escapeHtml(item.artist_name || item.name)}</strong><p>${escapeHtml(item.email)} · ${item.purchases.length} license purchase(s)</p><ul>${purchases}</ul></article>`;
-    }
     if (type === 'withdrawals') return `<article class="admin-list-item"><strong>${formatMoney(item.amount)}</strong><p>${escapeHtml(item.created_at || '')}</p></article>`;
     if (type === 'audit') return `<article class="admin-list-item"><strong>${escapeHtml(item.action)}</strong><p>${escapeHtml(item.actor_email || 'System')} · ${escapeHtml(item.entity_type || 'event')}${item.entity_id ? ` #${escapeHtml(item.entity_id)}` : ''} · ${escapeHtml(item.created_at || '')}</p><small>${escapeHtml(item.details_json || '')}</small></article>`;
     return '';
@@ -284,11 +280,17 @@ function filterOrders(type = document.querySelector('[data-order-type].active')?
 
 function filterRequests() {
   const type = document.querySelector('[data-request-type].active')?.dataset.requestType || 'beat';
+  if (type === 'bookings') {
+    renderList('bookings-list', dashboardData.bookings || [], 'bookings');
+    $('#requests-list').innerHTML = '';
+    return;
+  }
   let items = (dashboardData.requests || []).filter(item => item.request_type === type);
   const status = $('#requests-status').value;
   if (status) items = items.filter(item => item.status === status);
   items = searchRecords(items, $('#requests-search').value);
   renderList('requests-list', items, 'requests');
+  $('#bookings-list').innerHTML = '';
 }
 
 function filterReviews() {
@@ -314,7 +316,61 @@ function filterArtists() {
   const purchases = $('#artists-purchases').value;
   if (purchases) items = items.filter(item => purchases === 'has-purchases' ? item.purchases.length > 0 : item.purchases.length === 0);
   items = searchRecords(items, $('#artists-search').value);
-  renderList('artists-list', items, 'artists');
+  renderArtistsGrid(items);
+}
+
+function renderArtistsGrid(artists) {
+  const container = $('#artists-list');
+  if (!artists.length) {
+    container.innerHTML = dashboardData.artists?.length ? '<p>No artists match these filters.</p>' : '<p>No artists registered yet.</p>';
+    return;
+  }
+  container.innerHTML = artists.map(artist => {
+    const initials = String(artist.artist_name || artist.name || 'A').split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase();
+    const purchases = artist.purchases || [];
+    const totalGhs = purchases.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const firstRate = purchases.length ? purchases[0].exchange_rate : null;
+    return `<article class="admin-card admin-artist-card" data-artist-id="${Number(artist.id)}">
+      <div class="admin-artist-avatar">${escapeHtml(initials)}</div>
+      <div class="admin-artist-card-content">
+        <div class="admin-beat-editor-heading">
+          <strong>${escapeHtml(artist.artist_name || artist.name)}</strong>
+          <span class="admin-beat-status">${escapeHtml(artist.role)}</span>
+        </div>
+        <p class="admin-beat-summary">${escapeHtml(artist.email)}</p>
+        <p class="admin-beat-summary">${purchases.length} license purchase${purchases.length === 1 ? '' : 's'}${totalGhs > 0 ? ` · GHS ${totalGhs.toFixed(2)}` : ''}${firstRate ? ` · USD/GHS ${firstRate}` : ''}</p>
+        <div class="admin-review-actions admin-artist-actions">
+          <button type="button" data-view-artist-purchases="${Number(artist.id)}">View purchases</button>
+        </div>
+      </div>
+    </article>`;
+  }).join('');
+}
+
+function renderArtistPurchasesDialog(artistId) {
+  const artist = dashboardData.artists.find(a => Number(a.id) === Number(artistId));
+  if (!artist) return;
+  const container = $('#artist-purchases-content');
+  const purchases = artist.purchases || [];
+  if (!purchases.length) {
+    container.innerHTML = '<p>No beat purchases found for this artist.</p>';
+  } else {
+    container.innerHTML = `<table style="width:100%;border-collapse:collapse;margin:16px 0">
+      <thead>
+        <tr><th style="text-align:left;padding:6px 0;color:rgba(255,255,255,.52);font-size:.7rem;text-transform:uppercase">Beat</th><th style="text-align:left;padding:6px 0;color:rgba(255,255,255,.52);font-size:.7rem;text-transform:uppercase">License</th><th style="text-align:right;padding:6px 0;color:rgba(255,255,255,.52);font-size:.7rem;text-transform:uppercase">Amount</th><th style="text-align:left;padding:6px 0;color:rgba(255,255,255,.52);font-size:.7rem;text-transform:uppercase">Purchased</th></tr>
+      </thead>
+      <tbody>
+        ${purchases.map(p => `<tr>
+          <td style="padding:6px 0;color:rgba(255,255,255,.78)">${escapeHtml(p.beat_title)}</td>
+          <td style="padding:6px 0;color:rgba(255,255,255,.78)">${escapeHtml(p.license)}</td>
+          <td style="padding:6px 0;color:rgba(255,255,255,.78);text-align:right">${p.amount === null ? 'GHS unavailable' : formatMoney(p.amount)}${p.exchange_rate ? ` · ${escapeHtml(p.exchange_rate)}` : ''}</td>
+          <td style="padding:6px 0;color:rgba(255,255,255,.78)">${escapeHtml(p.purchased_at || '')}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+  }
+  $('#artist-purchases-title').textContent = `Purchased Items — ${escapeHtml(artist.artist_name || artist.name)}`;
+  $('#artist-purchases-dialog').showModal();
 }
 
 function filterStaff() {
@@ -819,18 +875,24 @@ async function loadLicenseRights() {
 
 async function loadAdminAlerts() {
   try {
-    const [notifications, deliveries] = await Promise.all([
-      api('/api/admin/notifications'),
-      api('/api/admin/email-deliveries')
-    ]);
+    const notifications = await api('/api/admin/notifications');
     renderAdminNotifications(notifications.notifications || [], Number(notifications.unreadCount || 0));
+    $('#admin-alert-message').textContent = '';
+  } catch (error) {
+    message('admin-alert-message', error.message || 'Could not load administrator alerts.', true);
+  }
+}
+
+async function loadEmailDeliveries() {
+  try {
+    const deliveries = await api('/api/admin/email-deliveries');
     renderEmailDeliveries({
       deliveries: deliveries.deliveries || [],
       counts: deliveries.counts || {}
     });
-    $('#admin-alert-message').textContent = '';
+    $('#email-delivery-message').textContent = '';
   } catch (error) {
-    message('admin-alert-message', error.message || 'Could not load administrator alerts.', true);
+    message('email-delivery-message', error.message || 'Could not load email delivery status.', true);
   }
 }
 
@@ -953,6 +1015,7 @@ async function loadDashboard() {
   filterArtists();
   renderList('withdrawals-list', dashboardData.withdrawals || [], 'withdrawals');
   loadAdminAlerts();
+  loadEmailDeliveries();
   loadLicenseRights();
   loadBusinessSettings();
   loadBookingSettings();
@@ -2046,4 +2109,18 @@ $('#withdrawal-form').addEventListener('submit', async event => {
   } finally {
     stopBusy();
   }
+});
+
+$('#artists-list').addEventListener('click', async event => {
+  const button = event.target.closest('[data-view-artist-purchases]');
+  if (!button) return;
+  renderArtistPurchasesDialog(button.dataset.viewArtistPurchases);
+});
+
+$('#close-artist-purchases').addEventListener('click', () => {
+  $('#artist-purchases-dialog').close();
+});
+
+$('#artist-purchases-dialog').addEventListener('click', event => {
+  if (event.target === $('#artist-purchases-dialog')) $('#artist-purchases-dialog').close();
 });

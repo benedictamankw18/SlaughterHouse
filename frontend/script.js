@@ -49,6 +49,31 @@ function createSubmissionId() {
   if (window.crypto?.randomUUID) return window.crypto.randomUUID();
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }
+function beatLicenseLabel(license) {
+  return license ? license[0].toUpperCase() + license.slice(1) : '';
+}
+// Builds the license <select> options. When the page is opened from the
+// "Buy Exclusive" link, the exclusive license is preselected. Beats whose
+// exclusive license is already sold show a disabled "sold" option instead.
+function buildBeatLicenseOptions(prices = {}, exclusiveSold = false) {
+  const entries = Object.entries(prices);
+  if (!entries.length) return '';
+  const requestedLicense = String(new URLSearchParams(window.location.search).get('license') || '').trim().toLowerCase();
+  const exclusiveAvailable = entries.some(([license]) => license === 'exclusive') && !exclusiveSold;
+  const requestedAvailable = requestedLicense
+    && entries.some(([license]) => license === requestedLicense)
+    && (requestedLicense !== 'exclusive' || exclusiveAvailable);
+  const fallback = entries.find(([license]) => !(license === 'exclusive' && exclusiveSold))?.[0] || entries[0][0];
+  const defaultLicense = requestedAvailable ? requestedLicense : fallback;
+  return entries.map(([license, price]) => {
+    const sold = license === 'exclusive' && exclusiveSold;
+    const selected = license === defaultLicense && !sold;
+    return `<option value="${license}" data-price="${Number(price)}"${sold ? ' disabled' : ''}${selected ? ' selected' : ''}>${beatLicenseLabel(license)}${sold ? ' — sold' : ''}</option>`;
+  }).join('');
+}
+function beatSoldBadge(exclusiveSold) {
+  return exclusiveSold ? '<span class="beat-sold-badge">Exclusive sold</span>' : '';
+}
 const privatePageNames = new Set([
   'admin.html',
   'alerts.html',
@@ -1009,17 +1034,30 @@ let usdToGhsRate = null;
 
 const cartStorageKey = 'ultbigboyCart';
 const pendingCartPaymentsKey = 'ultbigboyPendingCartPayments';
+const currencyStorageKey = 'ultbigboyCurrency';
 let cart = [];
 try {
   const savedCart = JSON.parse(localStorage.getItem(cartStorageKey) || '[]');
   if (Array.isArray(savedCart)) {
     cart = savedCart.filter(item => item && typeof item.name === 'string' && (typeof item.license === 'string' || item.type === 'merchandise') && Number.isFinite(item.price) && typeof item.cover === 'string' && typeof item.selected === 'boolean')
-      .map(item => ({ ...item, priceCurrency: item.priceCurrency === 'GHS' ? 'GHS' : 'USD' }));
+      .map(item => {
+        const code = String(item.priceCurrency || 'USD').toUpperCase();
+        return { ...item, priceCurrency: SUPPORTED_CURRENCIES.includes(code) ? code : 'USD' };
+      });
   }
 } catch {
   cart = [];
 }
-let currentCurrency = currencySelect ? currencySelect.value : 'USD';
+let currentCurrency = null;
+try {
+  const saved = localStorage.getItem(currencyStorageKey);
+  if (saved && SUPPORTED_CURRENCIES.includes(String(saved).toUpperCase())) {
+    currentCurrency = String(saved).toUpperCase();
+  }
+} catch {}
+if (!currentCurrency && currencySelect) currentCurrency = currencySelect.value;
+if (!currentCurrency) currentCurrency = 'USD';
+if (currencySelect) currencySelect.value = currentCurrency;
 
 function createLicenseCode() {
   const purchaseCount = Number(localStorage.getItem('licensePurchaseCount') || 0) + 1;
@@ -1032,11 +1070,27 @@ function createLicenseCode() {
 
 const currencySymbols = {
   GHS: '₵',
-  USD: '$'
+  USD: '$',
+  NGN: '₦',
+  GBP: '£',
+  EUR: '€'
 };
 
+const currencyDecimals = {
+  GHS: 2,
+  USD: 2,
+  NGN: 0,
+  GBP: 2,
+  EUR: 2
+};
+
+const SUPPORTED_CURRENCIES = ['GHS', 'USD', 'NGN', 'GBP', 'EUR'];
+
 function formatCurrency(value, currency) {
-  return `${currencySymbols[currency]}${Number(value).toFixed(2)} ${currency}`;
+  const code = String(currency || 'GHS').toUpperCase();
+  const decimals = currencyDecimals[code] ?? 2;
+  const symbol = currencySymbols[code] || code;
+  return `${symbol}${Number(value).toFixed(decimals)} ${code}`;
 }
 
 function convertCartAmount(value, fromCurrency, toCurrency) {
@@ -1238,7 +1292,7 @@ async function loadProducedReleases() {
 loadProducedReleases();
 
 function addToCart(item) {
-  cart.push(item);
+  cart.push({ ...item, priceCurrency: item.priceCurrency || 'USD' });
   updateCart();
 }
 
@@ -1261,7 +1315,7 @@ function syncCartProductButtons() {
     }));
     button.classList.toggle('is-in-cart', inCart);
     button.disabled = inCart;
-    button.innerHTML = inCart ? '<span aria-hidden="true">&#10003;</span><small>In cart</small>' : '<span aria-hidden="true">&#128722;</span>';
+    button.innerHTML = inCart ? '<svg class="cart-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18c-1.5 0-2.5-.7-2.5-2h3.1l.4-2c.2-.9 1-1.6 1.9-1.6h5.7c.9 0 1.7.7 1.9 1.6l.4 2h2c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v9c0 1.1.9 2 2 2zm4-11h3l1 4H5v-.5c0-.3.2-.5.5-.5zm11 4l-.4-2c-.2-.9-1-1.6-1.9-1.6H9.4c-.6 0-1 .4-1.1 1l-.2 1H3c-.6 0-.9.5-.9 1.1c0 2.3 1.9 4.1 4.1 4.1h12.7c.9 0 1.7-.7 1.9-1.6c.1-.5.1-.9-.1-1.4zm-5.5 0H12v-2h4.5c.3 0 .5-.2.5-.5s-.2-.5-.5-.5H12v-2c0-.3-.2-.5-.5-.5h-5c-.3 0-.5.2-.5.5v5c0 .3.2.5.5.5h5c.3 0 .5-.2.5-.5z"/></svg><small>In cart</small>' : '<svg class="cart-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18c-1.5 0-2.5-.7-2.5-2h3.1l.4-2c.2-.9 1-1.6 1.9-1.6h5.7c.9 0 1.7.7 1.9 1.6l.4 2h2c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v9c0 1.1.9 2 2 2zm4-11h3l1 4H5v-.5c0-.3.2-.5.5-.5zm11 4l-.4-2c-.2-.9-1-1.6-1.9-1.6H9.4c-.6 0-1 .4-1.1 1l-.2 1H3c-.6 0-.9.5-.9 1.1c0 2.3 1.9 4.1 4.1 4.1h12.7c.9 0 1.7-.7 1.9-1.6c.1-.5.1-.9-.1-1.4zm-5.5 0H12v-2h4.5c.3 0 .5-.2.5-.5s-.2-.5-.5-.5H12v-2c0-.3-.2-.5-.5-.5h-5c-.3 0-.5.2-.5.5v5c0 .3.2.5.5.5h5c.3 0 .5-.2.5-.5z"/></svg>';
     button.setAttribute('aria-label', inCart ? `${card.querySelector('h3')?.textContent || 'Beat'} is in your cart` : `Add ${card.querySelector('h3')?.textContent || 'beat'} to cart`);
     button.title = inCart ? 'Already in cart' : 'Add to cart';
   });
@@ -1318,7 +1372,7 @@ function updateCart() {
     const displayedPrice = displayPrice === null
       ? `${formatCurrency(item.price, priceCurrency)} (conversion unavailable)`
       : formatCurrency(displayPrice, currentCurrency);
-    li.innerHTML = `<img class="cart-item-cover" src="${escapeHTML(item.cover || '/Images/Logo 2.png')}" alt="${escapeHTML(item.name)} cover art"><label class="cart-item-select"><input type="checkbox" data-cart-index="${index}" ${item.selected ? 'checked' : ''} aria-label="Select ${escapeHTML(item.name)} for checkout"><span><strong>${escapeHTML(item.name)}</strong><small>${escapeHTML(itemKind)}</small></span></label><span class="cart-item-actions"><strong>${displayedPrice}</strong><button type="button" class="cart-remove-button" data-cart-index="${index}" aria-label="Remove ${escapeHTML(item.name)}" title="Remove item">&#128465;</button></span>`;
+    li.innerHTML = `<img class="cart-item-cover" src="${escapeHTML(item.cover || '/Images/Logo 2.png')}" alt="${escapeHTML(item.name)} cover art"><label class="cart-item-select"><input type="checkbox" data-cart-index="${index}" ${item.selected ? 'checked' : ''} aria-label="Select ${escapeHTML(item.name)} for checkout"><span><strong>${escapeHTML(item.name)}</strong><small>${escapeHTML(itemKind)}</small></span></label><span class="cart-item-actions"><strong>${displayedPrice}</strong><button type="button" class="cart-remove-button" data-cart-index="${index}" aria-label="Remove ${escapeHTML(item.name)}" title="Remove item"><svg class="trash-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2c0 .6.4 1 1 1v12c0 .6.4 1 1 1h8c.6 0 1-.4 1-1V7c0-.6-.4-1-1-1zm-3 16c-.6 0-1-.4-1-1V8c0-.6.4-1 1-1s1 .4 1 1v11c0 .6-.4 1-1 1zm-4 0c-.6 0-1-.4-1-1V8c0-.6.4-1 1-1s1 .4 1 1v11c0 .6-.4 1-1 1z"/></svg></button></span>`;
     cartItems.appendChild(li);
   });
 
@@ -1357,6 +1411,7 @@ window.addEventListener('storage', event => {
 
 function switchCurrency() {
   currentCurrency = currencySelect ? currencySelect.value : currentCurrency;
+  try { localStorage.setItem(currencyStorageKey, currentCurrency); } catch {}
   updateBeatPrices();
   updateCart();
   updateMerchandisePrices();
@@ -1466,7 +1521,7 @@ async function loadDatabaseBeatCatalog() {
       card.dataset.genre = String(beat.genre || '').toLowerCase();
       card.dataset.mood = String(beat.mood || '').toLowerCase();
       const duration = beat.previewDurationSeconds ? ` • ${Math.floor(beat.previewDurationSeconds / 60)}:${String(beat.previewDurationSeconds % 60).padStart(2, '0')}` : '';
-      card.innerHTML = `<button class="beat-cover" type="button" aria-label="Play ${escapeHTML(beat.title)} preview"><img src="${escapeHTML(cover)}" alt="${escapeHTML(beat.title)} cover art"><span class="play-icon" aria-hidden="true">&#9654;</span></button><div class="beat-details"><h3>${escapeHTML(beat.title)}</h3><p class="beat-meta"><span class="meta-item">${escapeHTML(beat.bpm || '—')} BPM</span><span class="meta-item">${escapeHTML(beat.musicalKey || 'Key not set')}</span><span class="meta-item">${escapeHTML(beat.genre || 'Genre not set')}</span><span class="meta-item">${escapeHTML(beat.mood || 'Mood not set')}</span><span class="meta-item">${duration}</span></p><audio class="beat-audio" src="${escapeHTML(preview)}" preload="none"></audio><label class="license-label">License Type</label><select class="license-select">${Object.entries(prices).map(([license, price]) => `<option value="${license}" data-price="${Number(price)}">${license[0].toUpperCase() + license.slice(1)}</option>`).join('')}</select></div><div class="beat-purchase"><strong class="beat-price"></strong><button class="beat-cart-button" type="button" aria-label="Add ${escapeHTML(beat.title)} to cart"><span aria-hidden="true">&#128722;</span></button></div>`;
+      card.innerHTML = `<button class="beat-cover" type="button" aria-label="Play ${escapeHTML(beat.title)} preview"><img src="${escapeHTML(cover)}" alt="${escapeHTML(beat.title)} cover art"><span class="play-icon" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button><div class="beat-details"><h3>${escapeHTML(beat.title)}</h3>${beatSoldBadge(beat.exclusiveSold)}<p class="beat-meta"><span class="meta-item">${escapeHTML(beat.bpm || '—')} BPM</span><span class="meta-item">${escapeHTML(beat.musicalKey || 'Key not set')}</span><span class="meta-item">${escapeHTML(beat.genre || 'Genre not set')}</span><span class="meta-item">${escapeHTML(beat.mood || 'Mood not set')}</span><span class="meta-item">${duration}</span></p><audio class="beat-audio" src="${escapeHTML(preview)}" preload="none"></audio><label class="license-label">License Type</label><select class="license-select">${buildBeatLicenseOptions(prices, beat.exclusiveSold)}</select></div><div class="beat-purchase"><strong class="beat-price"></strong><button class="beat-cart-button" type="button" aria-label="Add ${escapeHTML(beat.title)} to cart"><span aria-hidden="true"><svg class="cart-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18c-1.5 0-2.5-.7-2.5-2h3.1l.4-2c.2-.9 1-1.6 1.9-1.6h5.7c.9 0 1.7.7 1.9 1.6l.4 2h2c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v9c0 1.1.9 2 2 2zm4-11h3l1 4H5v-.5c0-.3.2-.5.5-.5zm11 4l-.4-2c-.2-.9-1-1.6-1.9-1.6H9.4c-.6 0-1 .4-1.1 1l-.2 1H3c-.6 0-.9.5-.9 1.1c0 2.3 1.9 4.1 4.1 4.1h12.7c.9 0 1.7-.7 1.9-1.6c.1-.5.1-.9-.1-1.4zm-5.5 0H12v-2h4.5c.3 0 .5-.2.5-.5s-.2-.5-.5-.5H12v-2c0-.3-.2-.5-.5-.5h-5c-.3 0-.5.2-.5.5v5c0 .3.2.5.5.5h5c.3 0 .5-.2.5-.5z"/></svg></span></button></div>`;
       card.querySelector('.license-select').setAttribute('aria-label', `License type for ${beat.title}`);
       const coverImage = card.querySelector('.beat-cover img');
       coverImage.loading = 'lazy';
@@ -1507,11 +1562,11 @@ async function loadFeaturedBeatCatalog() {
   const catalogList = document.getElementById('beat-list');
   if (!catalogList || document.querySelector('.catalog-page')) return;
   if (catalogList.querySelector('.beat-card')) catalogList.setAttribute('aria-busy', 'true');
-  else setLoadingState(catalogList, 'Loading featured beats...');
+  else setLoadingState(catalogList, 'Loading latest beats...');
   try {
     const response = await fetch(`${API}/api/beats?page=1&pageSize=6`);
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Could not load featured beats.');
+    if (!response.ok) throw new Error(data.error || 'Could not load latest beats.');
     catalogList.replaceChildren(...data.beats.map(beat => {
       const card = document.createElement('article');
       const prices = beat.prices || {};
@@ -1527,7 +1582,7 @@ async function loadFeaturedBeatCatalog() {
       card.dataset.keyMode = keyMode;
       card.dataset.genre = String(beat.genre || '').toLowerCase();
       card.dataset.mood = String(beat.mood || '').toLowerCase();
-      card.innerHTML = `<button class="beat-cover" type="button" aria-label="Play ${escapeHTML(beat.title)} preview"><img src="${escapeHTML(cover)}" alt="${escapeHTML(beat.title)} cover art"><span class="play-icon" aria-hidden="true">&#9654;</span></button><div class="beat-details"><h3>${escapeHTML(beat.title)}</h3><p class="beat-meta"><span class="meta-item">${escapeHTML(beat.bpm || '—')} BPM</span><span class="meta-item">${escapeHTML(beat.musicalKey || 'Key not set')}</span><span class="meta-item">${escapeHTML(beat.genre || 'Genre not set')}</span><span class="meta-item">${escapeHTML(beat.mood || 'Mood not set')}</span><span class="meta-item">${duration}</span></p><audio class="beat-audio" src="${escapeHTML(preview)}" preload="none"></audio><label class="license-label">License Type</label><select class="license-select">${Object.entries(prices).map(([license, price]) => `<option value="${license}" data-price="${Number(price)}">${license[0].toUpperCase() + license.slice(1)}</option>`).join('')}</select></div><div class="beat-purchase"><strong class="beat-price"></strong><button class="beat-cart-button" type="button" aria-label="Add ${escapeHTML(beat.title)} to cart"><span aria-hidden="true">&#128722;</span></button></div>`;
+      card.innerHTML = `<button class="beat-cover" type="button" aria-label="Play ${escapeHTML(beat.title)} preview"><img src="${escapeHTML(cover)}" alt="${escapeHTML(beat.title)} cover art"><span class="play-icon" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button><div class="beat-details"><h3>${escapeHTML(beat.title)}</h3>${beatSoldBadge(beat.exclusiveSold)}<p class="beat-meta"><span class="meta-item">${escapeHTML(beat.bpm || '—')} BPM</span><span class="meta-item">${escapeHTML(beat.musicalKey || 'Key not set')}</span><span class="meta-item">${escapeHTML(beat.genre || 'Genre not set')}</span><span class="meta-item">${escapeHTML(beat.mood || 'Mood not set')}</span><span class="meta-item">${duration}</span></p><audio class="beat-audio" src="${escapeHTML(preview)}" preload="none"></audio><label class="license-label">License Type</label><select class="license-select">${buildBeatLicenseOptions(prices, beat.exclusiveSold)}</select></div><div class="beat-purchase"><strong class="beat-price"></strong><button class="beat-cart-button" type="button" aria-label="Add ${escapeHTML(beat.title)} to cart"><span aria-hidden="true"><svg class="cart-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18c-1.5 0-2.5-.7-2.5-2h3.1l.4-2c.2-.9 1-1.6 1.9-1.6h5.7c.9 0 1.7.7 1.9 1.6l.4 2h2c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v9c0 1.1.9 2 2 2zm4-11h3l1 4H5v-.5c0-.3.2-.5.5-.5zm11 4l-.4-2c-.2-.9-1-1.6-1.9-1.6H9.4c-.6 0-1 .4-1.1 1l-.2 1H3c-.6 0-.9.5-.9 1.1c0 2.3 1.9 4.1 4.1 4.1h12.7c.9 0 1.7-.7 1.9-1.6c.1-.5.1-.9-.1-1.4zm-5.5 0H12v-2h4.5c.3 0 .5-.2.5-.5s-.2-.5-.5-.5H12v-2c0-.3-.2-.5-.5-.5h-5c-.3 0-.5.2-.5.5v5c0 .3.2.5.5.5h5c.3 0 .5-.2.5-.5z"/></svg></span></button></div>`;
       card.querySelector('.license-select').setAttribute('aria-label', `License type for ${beat.title}`);
       const coverImage = card.querySelector('.beat-cover img');
       coverImage.loading = 'lazy';
@@ -1537,7 +1592,7 @@ async function loadFeaturedBeatCatalog() {
       setupPreviewCard(card);
       return card;
     }));
-    if (!data.beats.length) catalogList.innerHTML = '<p class="filter-empty-state">No featured beats are published yet. Browse all beats to explore the catalog.</p>';
+    if (!data.beats.length) catalogList.innerHTML = '<p class="filter-empty-state">No latest beats are published yet. Browse all beats to explore the catalog.</p>';
     clearLoadingState(catalogList);
     catalogList.querySelectorAll('.license-select').forEach(select => select.addEventListener('change', () => {
       updateBeatPrices();
@@ -1575,6 +1630,17 @@ const cartDrawer = document.getElementById('cart-drawer');
 const cartCloseButton = document.getElementById('cart-close-button');
 const cartCheckoutButton = document.getElementById('cart-checkout-button');
 
+async function fetchChargeQuote(items, currency) {
+  const response = await fetch(`${API}/api/payments/quote`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items, currency })
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Could not prepare the charge quote.');
+  return data;
+}
+
 function openCheckoutForm() {
   const existingPanel = document.getElementById('checkout-form-panel');
   if (existingPanel) {
@@ -1592,6 +1658,9 @@ function openCheckoutForm() {
     <div class="checkout-payment-panel" id="checkout-payment-panel" role="tabpanel" aria-labelledby="checkout-tab-mobile">
       <p class="checkout-method-description checkout-mobile-description">Paystack will collect your Mobile Money network and number securely.</p>
       <p class="checkout-method-description checkout-card-description" hidden>Card number, expiry, and CVV are entered securely on Paystack after you continue.</p>
+    </div>
+    <div class="checkout-charge-preview" role="status" aria-live="polite">
+      <strong>You will be charged:</strong> <span class="checkout-charge-amount">—</span>
     </div>
     <button class="auth-primary-button checkout-submit" type="button">Proceed with Mobile Money</button>
     <div class="checkout-card-brands" aria-label="Accepted cards: Mastercard and Visa" hidden><span class="checkout-mastercard" aria-label="Mastercard"><i></i><i></i><b>mastercard</b></span><span class="checkout-visa" aria-label="Visa">VISA</span></div>
@@ -1633,6 +1702,35 @@ function openCheckoutForm() {
     });
   });
 
+  const chargeAmount = panel.querySelector('.checkout-charge-amount');
+  async function refreshChargePreview() {
+    const selected = cart.filter(item => item.selected);
+    if (!selected.length) {
+      chargeAmount.textContent = '—';
+      return;
+    }
+    chargeAmount.textContent = 'Calculating…';
+    try {
+      const quote = await fetchChargeQuote(selected.map(item => ({
+        type: item.type,
+        productId: item.productId,
+        name: item.name,
+        license: item.license,
+        price: item.price
+      })), currentCurrency);
+      const decimals = currencyDecimals[quote.currency] ?? 2;
+      const symbol = currencySymbols[quote.currency] || quote.currency;
+      chargeAmount.textContent = `${symbol}${Number(quote.amount).toFixed(decimals)} ${quote.currency} (≈ ₵${Number(quote.amountGhs || 0).toFixed(2)} GHS)`;
+    } catch (error) {
+      chargeAmount.textContent = 'Charge preview unavailable';
+      message.textContent = error.message;
+      message.classList.add('error');
+    }
+  }
+  refreshChargePreview();
+
+  currencySelect?.addEventListener('change', refreshChargePreview);
+
   submitButton.addEventListener('click', async () => {
     await customerSessionReady;
     const currentSelectedItems = cart.filter(item => item.selected);
@@ -1652,7 +1750,7 @@ function openCheckoutForm() {
     const stopBusy = window.startActionBusy(submitButton, 'Starting payment…');
     if (!stopBusy) return;
     try {
-      const response = await fetch(`${API}/api/payments/initialize`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: customerUser?.name || 'Guest Customer', email: paymentEmail, items: currentSelectedItems, paymentMethod }) });
+      const response = await fetch(`${API}/api/payments/initialize`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: customerUser?.name || 'Guest Customer', email: paymentEmail, items: currentSelectedItems, paymentMethod, currency: currentCurrency }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not start payment.');
       if (!data.reference || !data.authorizationUrl) throw new Error('Payment could not be started because the response was incomplete.');
@@ -1870,7 +1968,7 @@ if (publicMain && !reviewsSection) {
   reviewsSection = document.createElement('section');
   reviewsSection.className = 'public-reviews vault-section';
   reviewsSection.id = 'public-reviews';
-  reviewsSection.innerHTML = `<div class="beat-listing-heading"><p class="section-kicker">COMMUNITY</p><h2>REVIEWS & COMMENTS</h2></div><div class="public-review-layout"><div id="public-review-list" class="public-review-list" aria-live="polite"><p>Loading reviews...</p></div><form id="public-review-form" class="public-review-form"><h3>Leave a review</h3><div class="review-rating-control"><span id="public-review-rating-label">Rating</span><div class="review-stars" role="group" aria-labelledby="public-review-rating-label"><button type="button" data-review-rating="1" aria-label="1 star" aria-pressed="false">&#9733;</button><button type="button" data-review-rating="2" aria-label="2 stars" aria-pressed="false">&#9733;</button><button type="button" data-review-rating="3" aria-label="3 stars" aria-pressed="false">&#9733;</button><button type="button" data-review-rating="4" aria-label="4 stars" aria-pressed="false">&#9733;</button><button type="button" data-review-rating="5" aria-label="5 stars" aria-pressed="false">&#9733;</button></div><input id="public-review-rating" name="rating" type="hidden" value=""></div><label for="public-review-text">Review</label><textarea id="public-review-text" name="review" rows="3" minlength="3" maxlength="2000" required></textarea><div class="review-login-prompt" id="review-login-prompt"><span>Log in to submit a review.</span><button type="button" id="review-login-button">Log in</button></div><button class="auth-primary-button" id="review-submit-button" type="submit" disabled>Submit</button><p class="request-form-message" id="public-review-message" role="status" aria-live="polite"></p></form></div>`;
+  reviewsSection.innerHTML = `<div class="beat-listing-heading"><p class="section-kicker">COMMUNITY</p><h2>REVIEWS & COMMENTS</h2></div><div class="public-review-layout"><div id="public-review-list" class="public-review-list" aria-live="polite"><p>Loading reviews...</p></div><form id="public-review-form" class="public-review-form"><h3>Leave a review</h3><div class="review-rating-control"><span id="public-review-rating-label">Rating</span><div class="review-stars" role="group" aria-labelledby="public-review-rating-label"><button type="button" data-review-rating="1" aria-label="1 star" aria-pressed="false"><svg class="star-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .587l3.668 7.568 8.332 1.151-6.064 5.828 1.48 8.279-4.732-3.95-4.732 3.95 1.48-8.279-6.064-5.828 8.332-1.151z"/></svg></button><button type="button" data-review-rating="2" aria-label="2 stars" aria-pressed="false"><svg class="star-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .587l3.668 7.568 8.332 1.151-6.064 5.828 1.48 8.279-4.732-3.95-4.732 3.95 1.48-8.279-6.064-5.828 8.332-1.151z"/></svg></button><button type="button" data-review-rating="3" aria-label="3 stars" aria-pressed="false"><svg class="star-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .587l3.668 7.568 8.332 1.151-6.064 5.828 1.48 8.279-4.732-3.95-4.732 3.95 1.48-8.279-6.064-5.828 8.332-1.151z"/></svg></button><button type="button" data-review-rating="4" aria-label="4 stars" aria-pressed="false"><svg class="star-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .587l3.668 7.568 8.332 1.151-6.064 5.828 1.48 8.279-4.732-3.95-4.732 3.95 1.48-8.279-6.064-5.828 8.332-1.151z"/></svg></button><button type="button" data-review-rating="5" aria-label="5 stars" aria-pressed="false"><svg class="star-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .587l3.668 7.568 8.332 1.151-6.064 5.828 1.48 8.279-4.732-3.95-4.732 3.95 1.48-8.279-6.064-5.828 8.332-1.151z"/></svg></button></div><input id="public-review-rating" name="rating" type="hidden" value=""></div><label for="public-review-text">Review</label><textarea id="public-review-text" name="review" rows="3" minlength="3" maxlength="2000" required></textarea><div class="review-login-prompt" id="review-login-prompt"><span>Log in to submit a review.</span><button type="button" id="review-login-button">Log in</button></div><button class="auth-primary-button" id="review-submit-button" type="submit" disabled>Submit</button><p class="request-form-message" id="public-review-message" role="status" aria-live="polite"></p></form></div>`;
   publicMain.append(reviewsSection);
   reviewsSection = document.getElementById('public-reviews');
 }
