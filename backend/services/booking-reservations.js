@@ -118,7 +118,7 @@ async function reserveBookingSlots(db, orderReference, slots, { sessionMinutes =
        WHERE booking_availability.status = 'available'
           OR (booking_availability.status = 'reserved' AND booking_availability.hold_expires_at <= CURRENT_TIMESTAMP)
           OR (booking_availability.status = 'reserved' AND booking_availability.booking_order_reference = EXCLUDED.booking_order_reference)`,
-      [slot.date, slot.time, orderReference]
+      [slot.date, slot.time, slot.time, orderReference]
     );
     if (result.changes !== 1) throw slotError([slot]);
   }

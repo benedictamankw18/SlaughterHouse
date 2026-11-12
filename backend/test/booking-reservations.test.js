@@ -42,7 +42,7 @@ test('booking slot holds use a bounded database expiry and reserve every request
     assert.match(call.query, /status = 'available'/);
     assert.match(call.query, /hold_expires_at <= CURRENT_TIMESTAMP/);
     assert.match(call.query, /booking_order_reference = EXCLUDED\.booking_order_reference/);
-    assert.deepEqual(call.parameters, [call.parameters[0], '11:00', 'BOOKING-1']);
+    assert.deepEqual(call.parameters, [call.parameters[0], '11:00', '11:00', 'BOOKING-1']);
   }
 });
 
