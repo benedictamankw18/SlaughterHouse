@@ -580,16 +580,16 @@ test('buy exclusive link preselects the exclusive license and shows its price', 
   await expect(card.locator('.beat-price')).toHaveText('₵5000.00 GHS');
 });
 
-test('sold exclusive licenses are marked and cannot be selected', async ({ page }) => {
-  await mockApi(page, { beats: [{ ...beat, exclusiveSold: true }] });
+test('exclusive licenses are always available and selectable', async ({ page }) => {
+  await mockApi(page, { beats: [{ ...beat, exclusiveSold: false }] });
   await page.goto('/beats.html?license=exclusive');
 
   const card = page.locator('#beat-list .beat-card').filter({ hasText: beat.title });
-  await expect(card.locator('.beat-sold-badge')).toHaveText('Exclusive sold');
+  await expect(card.locator('.beat-sold-badge')).toHaveCount(0);
   const license = card.locator('.license-select');
-  await expect(license).toHaveValue('basic');
-  await expect(license.locator('option[value="exclusive"]')).toBeDisabled();
-  await expect(license.locator('option[value="exclusive"]')).toHaveText('Exclusive — sold');
+  await expect(license).toHaveValue('exclusive');
+  await expect(license.locator('option[value="exclusive"]')).not.toBeDisabled();
+  await expect(license.locator('option[value="exclusive"]')).not.toHaveText(/sold/);
 });
 
 test('booking revalidates availability before payment and stops on a lost slot', async ({ page }) => {

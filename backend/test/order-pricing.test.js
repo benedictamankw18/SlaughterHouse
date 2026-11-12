@@ -160,7 +160,7 @@ test('priceCartItems rejects a beat that is missing or has no valid price', asyn
   );
 });
 
-test('priceCartItems refuses an exclusive license that was already sold', async () => {
+test('priceCartItems allows an exclusive license even after prior sales', async () => {
   const database = fakeDatabase({
     beats: { 'night drive': { id: 8, title: 'Night Drive', price: '470' } },
     exclusiveSales: [{
@@ -171,13 +171,11 @@ test('priceCartItems refuses an exclusive license that was already sold', async 
       license_active: true
     }]
   });
-  await assert.rejects(
-    priceCartItems(database, [{ type: 'beat', name: 'Night Drive', license: 'exclusive' }]),
-    /already been sold/
-  );
+  const result = await priceCartItems(database, [{ type: 'beat', name: 'Night Drive', license: 'exclusive' }]);
+  assert.ok(result.items.some(item => item.license === 'exclusive'), 'Exclusive license should be purchasable even after prior sales.');
 });
 
-test('hasPaidExclusiveLicense ignores revoked, expired, and unrelated sales', async () => {
+test('hasPaidExclusiveLicense always returns false (unlimited stock)', async () => {
   const items = JSON.stringify([{ type: 'beat', productId: 8, license: 'exclusive' }]);
   const queryAll = rows => async () => rows;
   assert.equal(await hasPaidExclusiveLicense(queryAll([]), 8), false);
@@ -189,13 +187,13 @@ test('hasPaidExclusiveLicense ignores revoked, expired, and unrelated sales', as
   ]), 8), false);
   assert.equal(await hasPaidExclusiveLicense(queryAll([
     { reference: 'A', items_json: items, license_id: 3, revoked_at: null, license_active: true }
-  ]), 8), true);
+  ]), 8), false);
   assert.equal(await hasPaidExclusiveLicense(queryAll([
     { reference: 'A', items_json: JSON.stringify([{ type: 'beat', productId: 8, license: 'basic' }]), license_id: null }
   ]), 8), false);
 });
 
-test('getSoldExclusiveBeatIds reports paid exclusives and skips revoked licenses', async () => {
+test('getSoldExclusiveBeatIds always returns an empty set (unlimited stock)', async () => {
   const database = fakeDatabase({
     orders: [
       { id: 1, items_json: JSON.stringify([{ type: 'beat', productId: 8, license: 'exclusive' }]) },
@@ -209,5 +207,5 @@ test('getSoldExclusiveBeatIds reports paid exclusives and skips revoked licenses
     ]
   });
   const sold = await getSoldExclusiveBeatIds(database);
-  assert.deepEqual([...sold], [8, 11]);
+  assert.deepEqual([...sold], []);
 });

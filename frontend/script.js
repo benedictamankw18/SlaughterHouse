@@ -53,26 +53,22 @@ function beatLicenseLabel(license) {
   return license ? license[0].toUpperCase() + license.slice(1) : '';
 }
 // Builds the license <select> options. When the page is opened from the
-// "Buy Exclusive" link, the exclusive license is preselected. Beats whose
-// exclusive license is already sold show a disabled "sold" option instead.
-function buildBeatLicenseOptions(prices = {}, exclusiveSold = false) {
+// "Buy Exclusive" link, the exclusive license is preselected. All licenses
+// (including Exclusive) have unlimited stock and can be purchased repeatedly.
+function buildBeatLicenseOptions(prices = {}) {
   const entries = Object.entries(prices);
   if (!entries.length) return '';
   const requestedLicense = String(new URLSearchParams(window.location.search).get('license') || '').trim().toLowerCase();
-  const exclusiveAvailable = entries.some(([license]) => license === 'exclusive') && !exclusiveSold;
   const requestedAvailable = requestedLicense
-    && entries.some(([license]) => license === requestedLicense)
-    && (requestedLicense !== 'exclusive' || exclusiveAvailable);
-  const fallback = entries.find(([license]) => !(license === 'exclusive' && exclusiveSold))?.[0] || entries[0][0];
-  const defaultLicense = requestedAvailable ? requestedLicense : fallback;
+    && entries.some(([license]) => license === requestedLicense);
+  const defaultLicense = requestedAvailable ? requestedLicense : entries[0][0];
   return entries.map(([license, price]) => {
-    const sold = license === 'exclusive' && exclusiveSold;
-    const selected = license === defaultLicense && !sold;
-    return `<option value="${license}" data-price="${Number(price)}"${sold ? ' disabled' : ''}${selected ? ' selected' : ''}>${beatLicenseLabel(license)}${sold ? ' — sold' : ''}</option>`;
+    const selected = license === defaultLicense;
+    return `<option value="${license}" data-price="${Number(price)}"${selected ? ' selected' : ''}>${beatLicenseLabel(license)}</option>`;
   }).join('');
 }
-function beatSoldBadge(exclusiveSold) {
-  return exclusiveSold ? '<span class="beat-sold-badge">Exclusive sold</span>' : '';
+function beatSoldBadge() {
+  return '';
 }
 const privatePageNames = new Set([
   'admin.html',
@@ -953,7 +949,7 @@ function applyPreviewFilters() {
       emptyState = document.createElement('p');
       emptyState.id = 'preview-empty-state';
       emptyState.className = 'filter-empty-state';
-      emptyState.textContent = 'No featured beats match those filters.';
+      emptyState.textContent = 'No latest beats match those filters.';
       document.getElementById('beat-list')?.appendChild(emptyState);
     }
   } else {
@@ -1521,7 +1517,7 @@ async function loadDatabaseBeatCatalog() {
       card.dataset.genre = String(beat.genre || '').toLowerCase();
       card.dataset.mood = String(beat.mood || '').toLowerCase();
       const duration = beat.previewDurationSeconds ? ` • ${Math.floor(beat.previewDurationSeconds / 60)}:${String(beat.previewDurationSeconds % 60).padStart(2, '0')}` : '';
-      card.innerHTML = `<button class="beat-cover" type="button" aria-label="Play ${escapeHTML(beat.title)} preview"><img src="${escapeHTML(cover)}" alt="${escapeHTML(beat.title)} cover art"><span class="play-icon" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button><div class="beat-details"><h3>${escapeHTML(beat.title)}</h3>${beatSoldBadge(beat.exclusiveSold)}<p class="beat-meta"><span class="meta-item">${escapeHTML(beat.bpm || '—')} BPM</span><span class="meta-item">${escapeHTML(beat.musicalKey || 'Key not set')}</span><span class="meta-item">${escapeHTML(beat.genre || 'Genre not set')}</span><span class="meta-item">${escapeHTML(beat.mood || 'Mood not set')}</span><span class="meta-item">${duration}</span></p><audio class="beat-audio" src="${escapeHTML(preview)}" preload="none"></audio><label class="license-label">License Type</label><select class="license-select">${buildBeatLicenseOptions(prices, beat.exclusiveSold)}</select></div><div class="beat-purchase"><strong class="beat-price"></strong><button class="beat-cart-button" type="button" aria-label="Add ${escapeHTML(beat.title)} to cart"><span aria-hidden="true"><svg class="cart-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18c-1.5 0-2.5-.7-2.5-2h3.1l.4-2c.2-.9 1-1.6 1.9-1.6h5.7c.9 0 1.7.7 1.9 1.6l.4 2h2c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v9c0 1.1.9 2 2 2zm4-11h3l1 4H5v-.5c0-.3.2-.5.5-.5zm11 4l-.4-2c-.2-.9-1-1.6-1.9-1.6H9.4c-.6 0-1 .4-1.1 1l-.2 1H3c-.6 0-.9.5-.9 1.1c0 2.3 1.9 4.1 4.1 4.1h12.7c.9 0 1.7-.7 1.9-1.6c.1-.5.1-.9-.1-1.4zm-5.5 0H12v-2h4.5c.3 0 .5-.2.5-.5s-.2-.5-.5-.5H12v-2c0-.3-.2-.5-.5-.5h-5c-.3 0-.5.2-.5.5v5c0 .3.2.5.5.5h5c.3 0 .5-.2.5-.5z"/></svg></span></button></div>`;
+      card.innerHTML = `<button class="beat-cover" type="button" aria-label="Play ${escapeHTML(beat.title)} preview"><img src="${escapeHTML(cover)}" alt="${escapeHTML(beat.title)} cover art"><span class="play-icon" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button><div class="beat-details"><h3>${escapeHTML(beat.title)}</h3><p class="beat-meta"><span class="meta-item">${escapeHTML(beat.bpm || '—')} BPM</span><span class="meta-item">${escapeHTML(beat.musicalKey || 'Key not set')}</span><span class="meta-item">${escapeHTML(beat.genre || 'Genre not set')}</span><span class="meta-item">${escapeHTML(beat.mood || 'Mood not set')}</span><span class="meta-item">${duration}</span></p><audio class="beat-audio" src="${escapeHTML(preview)}" preload="none"></audio><label class="license-label">License Type</label><select class="license-select">${buildBeatLicenseOptions(prices)}</select></div><div class="beat-purchase"><strong class="beat-price"></strong><button class="beat-cart-button" type="button" aria-label="Add ${escapeHTML(beat.title)} to cart"><span aria-hidden="true"><svg class="cart-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18c-1.5 0-2.5-.7-2.5-2h3.1l.4-2c.2-.9 1-1.6 1.9-1.6h5.7c.9 0 1.7.7 1.9 1.6l.4 2h2c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v9c0 1.1.9 2 2 2zm4-11h3l1 4H5v-.5c0-.3.2-.5.5-.5zm11 4l-.4-2c-.2-.9-1-1.6-1.9-1.6H9.4c-.6 0-1 .4-1.1 1l-.2 1H3c-.6 0-.9.5-.9 1.1c0 2.3 1.9 4.1 4.1 4.1h12.7c.9 0 1.7-.7 1.9-1.6c.1-.5.1-.9-.1-1.4zm-5.5 0H12v-2h4.5c.3 0 .5-.2.5-.5s-.2-.5-.5-.5H12v-2c0-.3-.2-.5-.5-.5h-5c-.3 0-.5.2-.5.5v5c0 .3.2.5.5.5h5c.3 0 .5-.2.5-.5z"/></svg></span></button></div>`;
       card.querySelector('.license-select').setAttribute('aria-label', `License type for ${beat.title}`);
       const coverImage = card.querySelector('.beat-cover img');
       coverImage.loading = 'lazy';
@@ -1582,7 +1578,7 @@ async function loadFeaturedBeatCatalog() {
       card.dataset.keyMode = keyMode;
       card.dataset.genre = String(beat.genre || '').toLowerCase();
       card.dataset.mood = String(beat.mood || '').toLowerCase();
-      card.innerHTML = `<button class="beat-cover" type="button" aria-label="Play ${escapeHTML(beat.title)} preview"><img src="${escapeHTML(cover)}" alt="${escapeHTML(beat.title)} cover art"><span class="play-icon" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button><div class="beat-details"><h3>${escapeHTML(beat.title)}</h3>${beatSoldBadge(beat.exclusiveSold)}<p class="beat-meta"><span class="meta-item">${escapeHTML(beat.bpm || '—')} BPM</span><span class="meta-item">${escapeHTML(beat.musicalKey || 'Key not set')}</span><span class="meta-item">${escapeHTML(beat.genre || 'Genre not set')}</span><span class="meta-item">${escapeHTML(beat.mood || 'Mood not set')}</span><span class="meta-item">${duration}</span></p><audio class="beat-audio" src="${escapeHTML(preview)}" preload="none"></audio><label class="license-label">License Type</label><select class="license-select">${buildBeatLicenseOptions(prices, beat.exclusiveSold)}</select></div><div class="beat-purchase"><strong class="beat-price"></strong><button class="beat-cart-button" type="button" aria-label="Add ${escapeHTML(beat.title)} to cart"><span aria-hidden="true"><svg class="cart-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18c-1.5 0-2.5-.7-2.5-2h3.1l.4-2c.2-.9 1-1.6 1.9-1.6h5.7c.9 0 1.7.7 1.9 1.6l.4 2h2c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v9c0 1.1.9 2 2 2zm4-11h3l1 4H5v-.5c0-.3.2-.5.5-.5zm11 4l-.4-2c-.2-.9-1-1.6-1.9-1.6H9.4c-.6 0-1 .4-1.1 1l-.2 1H3c-.6 0-.9.5-.9 1.1c0 2.3 1.9 4.1 4.1 4.1h12.7c.9 0 1.7-.7 1.9-1.6c.1-.5.1-.9-.1-1.4zm-5.5 0H12v-2h4.5c.3 0 .5-.2.5-.5s-.2-.5-.5-.5H12v-2c0-.3-.2-.5-.5-.5h-5c-.3 0-.5.2-.5.5v5c0 .3.2.5.5.5h5c.3 0 .5-.2.5-.5z"/></svg></span></button></div>`;
+      card.innerHTML = `<button class="beat-cover" type="button" aria-label="Play ${escapeHTML(beat.title)} preview"><img src="${escapeHTML(cover)}" alt="${escapeHTML(beat.title)} cover art"><span class="play-icon" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button><div class="beat-details"><h3>${escapeHTML(beat.title)}</h3><p class="beat-meta"><span class="meta-item">${escapeHTML(beat.bpm || '—')} BPM</span><span class="meta-item">${escapeHTML(beat.musicalKey || 'Key not set')}</span><span class="meta-item">${escapeHTML(beat.genre || 'Genre not set')}</span><span class="meta-item">${escapeHTML(beat.mood || 'Mood not set')}</span><span class="meta-item">${duration}</span></p><audio class="beat-audio" src="${escapeHTML(preview)}" preload="none"></audio><label class="license-label">License Type</label><select class="license-select">${buildBeatLicenseOptions(prices)}</select></div><div class="beat-purchase"><strong class="beat-price"></strong><button class="beat-cart-button" type="button" aria-label="Add ${escapeHTML(beat.title)} to cart"><span aria-hidden="true"><svg class="cart-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18c-1.5 0-2.5-.7-2.5-2h3.1l.4-2c.2-.9 1-1.6 1.9-1.6h5.7c.9 0 1.7.7 1.9 1.6l.4 2h2c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v9c0 1.1.9 2 2 2zm4-11h3l1 4H5v-.5c0-.3.2-.5.5-.5zm11 4l-.4-2c-.2-.9-1-1.6-1.9-1.6H9.4c-.6 0-1 .4-1.1 1l-.2 1H3c-.6 0-.9.5-.9 1.1c0 2.3 1.9 4.1 4.1 4.1h12.7c.9 0 1.7-.7 1.9-1.6c.1-.5.1-.9-.1-1.4zm-5.5 0H12v-2h4.5c.3 0 .5-.2.5-.5s-.2-.5-.5-.5H12v-2c0-.3-.2-.5-.5-.5h-5c-.3 0-.5.2-.5.5v5c0 .3.2.5.5.5h5c.3 0 .5-.2.5-.5z"/></svg></span></button></div>`;
       card.querySelector('.license-select').setAttribute('aria-label', `License type for ${beat.title}`);
       const coverImage = card.querySelector('.beat-cover img');
       coverImage.loading = 'lazy';
@@ -1609,7 +1605,7 @@ async function loadFeaturedBeatCatalog() {
     updateBeatPrices();
     syncCartProductButtons();
   } catch (error) {
-    showRetryState(catalogList, error.message || 'Could not load featured beats.', loadFeaturedBeatCatalog);
+    showRetryState(catalogList, error.message || 'Could not load latest beats.', loadFeaturedBeatCatalog);
   }
 }
 

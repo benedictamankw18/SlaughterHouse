@@ -29,63 +29,16 @@ function queryOne(database, query, parameters = []) {
   });
 }
 
-// A beat can only be sold exclusively once. Shared by order pricing and verification.
+// All beat licenses (basic, premium, unlimited, and exclusive) have unlimited
+// stock and can be purchased repeatedly. Exclusive is no longer limited to one sale.
 async function hasPaidExclusiveLicense(queryAll, beatId, excludedReference = null) {
-  const parameters = excludedReference ? [beatId, 'paid', excludedReference] : [beatId, 'paid'];
-  const rows = await queryAll(
-    `SELECT o.reference, o.items_json, l.id AS license_id, l.revoked_at,
-            (l.expires_at IS NULL OR l.expires_at > CURRENT_TIMESTAMP) AS license_active
-     FROM orders o
-     LEFT JOIN licenses l ON l.order_id = o.id AND l.beat_id = ? AND l.license_type = 'exclusive'
-     WHERE o.status = ?${excludedReference ? ' AND o.reference <> ?' : ''}`,
-    parameters
-  );
-  return rows.some(order => {
-    const items = parseOrderItems(order.items_json);
-    if (!items) return false;
-    const purchasedExclusive = items.some(item => item.type === 'beat' && Number(item.productId) === Number(beatId) && item.license === 'exclusive');
-    return purchasedExclusive && (!order.license_id || (!order.revoked_at && Number(order.license_active)));
-  });
+  return false;
 }
 
-// Bulk version of hasPaidExclusiveLicense for catalog display. Returns the set
-// of beat IDs whose exclusive license has already been sold and is still active.
+// Bulk version kept for API compatibility. Always returns an empty set because
+// exclusive licenses now have unlimited stock.
 async function getSoldExclusiveBeatIds(database) {
-  const [orderRows, licenseRows] = await Promise.all([
-    queryRows(database, `SELECT id, items_json FROM orders WHERE status = ?`, ['paid']),
-    queryRows(
-      database,
-      `SELECT order_id, beat_id, revoked_at,
-              (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) AS license_active
-       FROM licenses WHERE license_type = 'exclusive'`
-    )
-  ]);
-  const licensesByOrder = new Map();
-  for (const license of licenseRows) {
-    const orderId = Number(license.order_id);
-    if (!Number.isInteger(orderId)) continue;
-    if (!licensesByOrder.has(orderId)) licensesByOrder.set(orderId, new Map());
-    licensesByOrder.get(orderId).set(Number(license.beat_id), {
-      revoked: Boolean(license.revoked_at),
-      active: Boolean(Number(license.license_active))
-    });
-  }
-  const sold = new Set();
-  for (const order of orderRows) {
-    const items = parseOrderItems(order.items_json);
-    if (!items) continue;
-    const licenses = licensesByOrder.get(Number(order.id));
-    for (const item of items) {
-      if (item.type !== 'beat' || item.license !== 'exclusive') continue;
-      const beatId = Number(item.productId);
-      if (!Number.isInteger(beatId)) continue;
-      const license = licenses?.get(beatId);
-      // No license row yet means the paid order still counts as a sale, matching
-      // hasPaidExclusiveLicense; an existing license must be active and unrevoked.
-      if (!license || (!license.revoked && license.active)) sold.add(beatId);
-    }
-  }
-  return sold;
+  return new Set();
 }
 
 async function availableLicenseTypes(database) {
@@ -125,9 +78,6 @@ async function priceBeat(database, item, { licenseTypes, beatDefaultPrices }) {
   );
   if (!beat || !Number.isFinite(Number(beat.price)) || Number(beat.price) <= 0) {
     throw invalidItem(`Beat unavailable: ${item.name || 'Unknown beat'}.`);
-  }
-  if (license === 'exclusive' && await hasPaidExclusiveLicense((sql, parameters) => queryRows(database, sql, parameters), beat.id)) {
-    throw invalidItem(`The exclusive license for "${beat.title}" has already been sold.`);
   }
   return { type: 'beat', productId: beat.id, name: beat.title, license, priceUsd: Number(beat.price) };
 }
