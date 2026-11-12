@@ -94,6 +94,7 @@
     let calendarToday = '';
     let sessionSelections = [];
     let activeSessionIndex = 0;
+    let bookingSubmissionId = null;
     const monthAvailability = new Map();
     const monthLoading = new Set();
     const monthErrors = new Map();
@@ -317,6 +318,7 @@
 
     function renderBookingSlots() {
       ensureSessionSelections();
+      bookingSubmissionId = null;
       if (!calendarToday) ensureCalendarDefaults();
       const count = getBookingSlotCount();
       if (!count) {
@@ -516,6 +518,34 @@
       message.classList.add('error');
     }
 
+    async function revalidateSelectedSlots(slots) {
+      const dates = [...new Set(slots.map(slot => slot.date).filter(Boolean))];
+      const unavailable = [];
+      let networkError = null;
+      for (const date of dates) {
+        let response;
+        let data;
+        try {
+          response = await fetch(`${bookingApiBaseUrl}/api/bookings/availability?date=${encodeURIComponent(date)}`);
+          data = await response.json().catch(() => ({}));
+        } catch (error) {
+          networkError = error;
+          break;
+        }
+        const dateSlots = slots.filter(slot => slot.date === date);
+        if (!response.ok) {
+          dateSlots.forEach(slot => unavailable.push({ date, time: slot.time }));
+          continue;
+        }
+        dayAvailability.set(date, data);
+        const availableTimes = new Set((Array.isArray(data.slots) ? data.slots : []).filter(slot => slot.available).map(slot => slot.time));
+        dateSlots.forEach(slot => {
+          if (!availableTimes.has(slot.time)) unavailable.push({ date, time: slot.time });
+        });
+      }
+      return { unavailable, networkError };
+    }
+
     bookingForm.addEventListener('submit', async event => {
       event.preventDefault();
       const submitButton = event.submitter || bookingSubmit;
@@ -538,10 +568,26 @@
           message.classList.add('error');
           return;
         }
+        message.textContent = 'Checking slot availability...';
+        const revalidation = await revalidateSelectedSlots(slots);
+        if (revalidation.networkError) {
+          message.textContent = 'Could not verify availability right now. Please try again.';
+          message.classList.add('error');
+          return;
+        }
+        if (revalidation.unavailable.length) {
+          await handleBookingConflict(revalidation.unavailable, message);
+          return;
+        }
         message.textContent = 'Connecting to secure payment...';
         const bookingFields = Object.fromEntries(new FormData(form));
         Object.keys(bookingFields).filter(key => key.startsWith('sessionDate-') || key.startsWith('sessionTime-')).forEach(key => delete bookingFields[key]);
-        const booking = { ...bookingFields, slots, timezone: 'Africa/Accra', durationMinutes: 140, name: customerUser.name, email: customerUser.email, phone: customerUser.phone || '' };
+        if (!bookingSubmissionId) {
+          bookingSubmissionId = typeof createSubmissionId === 'function'
+            ? createSubmissionId()
+            : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+        }
+        const booking = { ...bookingFields, slots, timezone: 'Africa/Accra', durationMinutes: 140, name: customerUser.name, email: customerUser.email, phone: customerUser.phone || '', submissionId: bookingSubmissionId };
         const response = await fetch(`${bookingApiBaseUrl}/api/bookings/initialize-payment`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(booking) });
         const data = await response.json().catch(() => ({}));
         if (response.status === 409 || data?.conflict === 'booking_slot_unavailable') {

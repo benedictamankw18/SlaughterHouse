@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { priceCartItems, hasPaidExclusiveLicense } = require('../services/order-pricing');
+const { priceCartItems, hasPaidExclusiveLicense, getSoldExclusiveBeatIds } = require('../services/order-pricing');
 
 const baseSettings = {
   booking_fee_mixtape_ghs: '700',
@@ -24,7 +24,9 @@ function fakeDatabase({
   licenseStatus = [],
   beats = {},
   merchandise = {},
-  exclusiveSales = []
+  exclusiveSales = [],
+  orders = [],
+  exclusiveLicenses = []
 } = {}) {
   return {
     all(query, parameters, callback) {
@@ -36,6 +38,8 @@ function fakeDatabase({
       }
       if (/FROM license_definition_status/.test(query)) return callback(null, licenseStatus);
       if (/FROM orders o/.test(query)) return callback(null, exclusiveSales);
+      if (/FROM orders WHERE status/.test(query)) return callback(null, orders);
+      if (/FROM licenses WHERE license_type = 'exclusive'/.test(query)) return callback(null, exclusiveLicenses);
       return callback(new Error(`Unexpected all query: ${query}`));
     },
     get(query, parameters, callback) {
@@ -189,4 +193,21 @@ test('hasPaidExclusiveLicense ignores revoked, expired, and unrelated sales', as
   assert.equal(await hasPaidExclusiveLicense(queryAll([
     { reference: 'A', items_json: JSON.stringify([{ type: 'beat', productId: 8, license: 'basic' }]), license_id: null }
   ]), 8), false);
+});
+
+test('getSoldExclusiveBeatIds reports paid exclusives and skips revoked licenses', async () => {
+  const database = fakeDatabase({
+    orders: [
+      { id: 1, items_json: JSON.stringify([{ type: 'beat', productId: 8, license: 'exclusive' }]) },
+      { id: 2, items_json: JSON.stringify([{ type: 'beat', productId: 9, license: 'exclusive' }]) },
+      { id: 3, items_json: JSON.stringify([{ type: 'beat', productId: 10, license: 'basic' }]) },
+      { id: 4, items_json: JSON.stringify([{ type: 'beat', productId: 11, license: 'exclusive' }]) }
+    ],
+    exclusiveLicenses: [
+      { order_id: 1, beat_id: 8, revoked_at: null, license_active: true },
+      { order_id: 2, beat_id: 9, revoked_at: new Date(), license_active: true }
+    ]
+  });
+  const sold = await getSoldExclusiveBeatIds(database);
+  assert.deepEqual([...sold], [8, 11]);
 });

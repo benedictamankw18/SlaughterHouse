@@ -52,6 +52,13 @@ function bookingPaymentErrorStatus(code) {
   return BOOKING_PAYMENT_HTTP_STATUS[code] || null;
 }
 
+function normalizeSubmissionId(value) {
+  if (value === undefined || value === null || value === '') return { id: null };
+  const candidate = typeof value === 'string' ? value.trim() : '';
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(candidate)) return { error: 'The submission identifier is invalid.' };
+  return { id: candidate };
+}
+
 const AVAILABILITY_COLUMNS = 'slot_date::text AS slot_date, start_time, status, hold_expires_at, booking_order_reference';
 
 router.get('/bookings/fees', (request, response) => {
@@ -155,7 +162,7 @@ router.get('/bookings/availability', async (request, response) => {
 router.post('/bookings', (request, response) => response.status(402).json({ error: 'Payment is required before a booking can be submitted.' }));
 
 router.post('/bookings/initialize-payment', bookingPaymentRateLimit, async (request, response) => {
-  const { name, email, phone, service, artistCount, songCount, slots, details, paymentMethod, timezone, durationMinutes, currency } = request.body;
+  const { name, email, phone, service, artistCount, songCount, slots, details, paymentMethod, timezone, durationMinutes, currency, submissionId } = request.body;
   const normalizedEmail = String(email || '').trim().toLowerCase();
   const normalizedArtistCount = Number(artistCount);
   const normalizedSongCount = Number(songCount);
@@ -178,6 +185,18 @@ router.post('/bookings/initialize-payment', bookingPaymentRateLimit, async (requ
   }
   if (timezone !== 'Africa/Accra') return response.status(400).json({ error: 'Booking timezone must be Africa/Accra.' });
   if (Number(durationMinutes) !== 140) return response.status(400).json({ error: 'Each booking session must have a duration of exactly 140 minutes.' });
+  const submission = normalizeSubmissionId(submissionId);
+  if (submission.error) return response.status(400).json({ error: submission.error });
+  if (submission.id) {
+    const existingRows = await queryRows('SELECT reference, checkout_url, amount, currency FROM orders WHERE submission_id = ? AND lower(customer_email) = lower(?)', [submission.id, normalizedEmail]);
+    const existing = existingRows[0];
+    if (existing) {
+      if (existing.checkout_url) {
+        return response.json({ authorizationUrl: existing.checkout_url, reference: existing.reference, amount: existing.amount, currency: existing.currency, replay: true });
+      }
+      return response.status(409).json({ error: 'This booking payment is already being prepared. Please wait a moment and try again.' });
+    }
+  }
   let fees;
   let bookingRules;
   try { ({ bookingFees: fees, bookingRules } = await getPricing(database)); } catch (error) { return response.status(500).json({ error: databaseError('Loading booking fees failed.', error) }); }
@@ -222,9 +241,10 @@ router.post('/bookings/initialize-payment', bookingPaymentRateLimit, async (requ
     };
     await database.transaction(async transaction => {
       await reserveBookingSlots(transaction, reference, slots);
-      await transaction.run(
-        `INSERT INTO orders (reference, customer_name, customer_email, amount, currency, items_json, amount_ghs, fx_rate, fx_markup_percent, fx_source, fx_quoted_at, provider)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      const insertResult = await transaction.run(
+        `INSERT INTO orders (reference, customer_name, customer_email, amount, currency, items_json, amount_ghs, fx_rate, fx_markup_percent, fx_source, fx_quoted_at, provider, submission_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (submission_id) DO NOTHING`,
         [
           reference,
           bookingItem.booking.name,
@@ -237,9 +257,13 @@ router.post('/bookings/initialize-payment', bookingPaymentRateLimit, async (requ
           foreign ? quote.markupPercent : null,
           foreign ? quote.source : null,
           foreign ? new Date() : null,
-          quote.provider
+          quote.provider,
+          submission.id
         ]
       );
+      if (submission.id && insertResult.changes === 0) {
+        throw Object.assign(new Error('This booking payment was already started.'), { code: 'BOOKING_DUPLICATE_SUBMISSION' });
+      }
     });
     holdAcquired = true;
     let checkout;
@@ -287,6 +311,7 @@ router.post('/bookings/initialize-payment', bookingPaymentRateLimit, async (requ
          provider_payload = EXCLUDED.provider_payload`,
       [quote.provider, checkout.providerReference, 'pending', quote.amount, quote.currency, quote.amountGhs, JSON.stringify(checkout.payload), reference]
     );
+    await run('UPDATE orders SET checkout_url = ? WHERE reference = ?', [checkout.authorizationUrl, reference]).catch(() => {});
     await queueEmailSafely(database, {
       to: normalizedEmail,
       template: 'booking_request_received',
@@ -305,6 +330,14 @@ router.post('/bookings/initialize-payment', bookingPaymentRateLimit, async (requ
     });
     response.json({ authorizationUrl: checkout.authorizationUrl, reference, amount: quote.amount, currency: quote.currency });
   } catch (error) {
+    if (error.code === 'BOOKING_DUPLICATE_SUBMISSION') {
+      const existingRows = await queryRows('SELECT reference, checkout_url, amount, currency FROM orders WHERE submission_id = ? AND lower(customer_email) = lower(?)', [submission.id, normalizedEmail]);
+      const existing = existingRows[0];
+      if (existing?.checkout_url) {
+        return response.json({ authorizationUrl: existing.checkout_url, reference: existing.reference, amount: existing.amount, currency: existing.currency, replay: true });
+      }
+      return response.status(409).json({ error: 'This booking payment is already being prepared. Please wait a moment and try again.' });
+    }
     if (error.code === 'BOOKING_SLOT_UNAVAILABLE') {
       return response.status(409).json({
         error: error.message,

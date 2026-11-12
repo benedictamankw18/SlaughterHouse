@@ -728,6 +728,14 @@ const migrations = [
          AND setting_value ~ '^[0-9]+(\\.[0-9]+)?$'
        ON CONFLICT (currency) DO NOTHING`
     ]
+  },
+  {
+    version: 38,
+    statements: [
+      { ensureColumn: { table: 'orders', column: 'submission_id', definition: 'VARCHAR(64) NULL' } },
+      { ensureColumn: { table: 'orders', column: 'checkout_url', definition: 'TEXT NULL' } },
+      'CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_submission ON orders (submission_id)'
+    ]
   }
 ];
 

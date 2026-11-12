@@ -335,6 +335,16 @@ test('migration 37 adds multi-currency snapshots and approved FX rates', () => {
   assert.match(sql, /usd_to_ghs_rate/);
 });
 
+test('migration 38 adds booking submission and checkout replay columns', () => {
+  const migration = migrations.find(candidate => candidate.version === 38);
+  assert.ok(migration, 'migration 38 must exist');
+  assert.deepEqual(migration.statements.slice(0, 2).map(statement => statement.ensureColumn), [
+    { table: 'orders', column: 'submission_id', definition: 'VARCHAR(64) NULL' },
+    { table: 'orders', column: 'checkout_url', definition: 'TEXT NULL' }
+  ]);
+  assert.match(migration.statements[2], /CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_submission ON orders \(submission_id\)/);
+});
+
 test('applyMigrations runs every statement once and records each version', async () => {
   const pool = fakePool();
   await applyMigrations(pool);

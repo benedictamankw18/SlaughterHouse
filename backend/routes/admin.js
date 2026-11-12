@@ -1439,7 +1439,7 @@ router.post('/admin/orders/:reference/booking-resolution', sessions.requireAdmin
   response.json({ reference, resolution: 'refund_pending' });
 });
 
-router.patch('/admin/requests/:id/status', sessions.requireAdmin, (request, response) => {
+router.patch('/admin/requests/:id/status', sessions.requireAdmin, async (request, response) => {
   if (!/^\d+$/.test(request.params.id) || Number(request.params.id) < 1) return response.status(400).json({ error: 'Request ID must be a positive whole number.' });
   const status = String(request.body.status || '').toLowerCase();
   const quote = request.body.quoteGhs === '' || request.body.quoteGhs === null || request.body.quoteGhs === undefined ? null : Number(request.body.quoteGhs);
@@ -1448,68 +1448,81 @@ router.patch('/admin/requests/:id/status', sessions.requireAdmin, (request, resp
   if (!statuses.includes(status)) return response.status(400).json({ error: `Request status must be one of: ${statuses.join(', ')}.` });
   if (quote !== null && (!Number.isFinite(quote) || quote < 0)) return response.status(400).json({ error: 'Quote must be a non-negative amount or blank.' });
   if (notes !== null && notes.length > 5000) return response.status(400).json({ error: 'Request notes must be 5000 characters or fewer.' });
-  database.get('SELECT user_id, product_name, request_type, status AS previous_status FROM customization_requests WHERE id = ?', [Number(request.params.id)], (lookupError, requestRecord) => {
-    if (lookupError) return response.status(500).json({ error: databaseError('Loading the request failed.', lookupError) });
-    if (!requestRecord) return response.status(404).json({ error: 'Request was not found.' });
-    database.run('UPDATE customization_requests SET status = ?, quote_gsh = ?, admin_notes = COALESCE(?, admin_notes) WHERE id = ?', [status, quote, notes, Number(request.params.id)], async function (error) {
-    if (error) return response.status(500).json({ error: databaseError('Updating the request failed.', error) });
-    if (requestRecord.user_id) await createNotificationSafely(database, {
-      userId: requestRecord.user_id,
-      type: 'request_status_changed',
-      title: 'Request status updated',
-      message: `${requestRecord.product_name || requestRecord.request_type + ' request'} is now ${status}${quote === null ? '' : ` with a quote of GHS ${quote.toFixed(2)}`}.`
-    });
 
-    database.get('SELECT name, email FROM users WHERE id = ?', [requestRecord.user_id], async (userError, userRecord) => {
-      if (userError) {
-        recordAuditSafely(database, {
-          userId: request.admin.id,
-          action: 'request_status_changed',
-          entityType: 'customization_request',
-          entityId: Number(request.params.id),
-          details: { previousStatus: requestRecord.previous_status, status, quoteGhs: quote }
-        });
-        return response.json({ id: Number(request.params.id), status, quoteGhs: quote, notes });
-      }
-      try {
-        const statusTemplateMap = {
-          reviewing: 'request_reviewing',
-          quoted: 'request_quoted',
-          accepted: 'request_accepted',
-          rejected: 'request_rejected',
-          completed: 'request_completed'
-        };
-        const template = statusTemplateMap[status];
-        if (template && status !== requestRecord.previous_status && userRecord) {
-          await queueEmailSafely(database, {
-            to: userRecord.email,
-            template,
-            idempotencyKey: `request-${status}:${Number(request.params.id)}`,
-            data: {
-              name: userRecord.name,
-              productName: requestRecord.product_name,
-              requestType: requestRecord.request_type,
-              reference: String(Number(request.params.id)),
-              licensePrice: quote,
-              currency: 'GHS'
-            }
-          });
-        }
-      } catch (emailError) {
-        logger.error('request_status_email_failed', { requestId: Number(request.params.id), status, code: emailError.code });
-      }
-    });
+  let requestRecord;
+  try {
+    const rows = await queryRows(
+      'SELECT user_id, product_name, request_type, customer_name, customer_email, status AS previous_status FROM customization_requests WHERE id = ?',
+      [Number(request.params.id)]
+    );
+    requestRecord = rows[0];
+  } catch (lookupError) {
+    return response.status(500).json({ error: databaseError('Loading the request failed.', lookupError) });
+  }
+  if (!requestRecord) return response.status(404).json({ error: 'Request was not found.' });
 
-    recordAuditSafely(database, {
-      userId: request.admin.id,
-      action: 'request_status_changed',
-      entityType: 'customization_request',
-      entityId: Number(request.params.id),
-      details: { previousStatus: requestRecord.previous_status, status, quoteGhs: quote }
-    });
-    response.json({ id: Number(request.params.id), status, quoteGhs: quote, notes });
-    });
+  try {
+    await runQuery('UPDATE customization_requests SET status = ?, quote_gsh = ?, admin_notes = COALESCE(?, admin_notes) WHERE id = ?', [status, quote, notes, Number(request.params.id)]);
+  } catch (error) {
+    return response.status(500).json({ error: databaseError('Updating the request failed.', error) });
+  }
+
+  if (requestRecord.user_id) await createNotificationSafely(database, {
+    userId: requestRecord.user_id,
+    type: 'request_status_changed',
+    title: 'Request status updated',
+    message: `${requestRecord.product_name || requestRecord.request_type + ' request'} is now ${status}${quote === null ? '' : ` with a quote of GHS ${quote.toFixed(2)}`}.`
   });
+
+  let recipient = null;
+  if (requestRecord.user_id) {
+    try {
+      const userRows = await queryRows('SELECT name, email FROM users WHERE id = ?', [requestRecord.user_id]);
+      if (userRows[0]) recipient = { name: userRows[0].name, email: userRows[0].email };
+    } catch (userError) {
+      logger.error('request_status_email_lookup_failed', { requestId: Number(request.params.id), code: userError.code });
+    }
+  }
+  if (!recipient?.email && requestRecord.customer_email) {
+    recipient = { name: requestRecord.customer_name || 'there', email: requestRecord.customer_email };
+  }
+
+  try {
+    const statusTemplateMap = {
+      reviewing: 'request_reviewing',
+      quoted: 'request_quoted',
+      accepted: 'request_accepted',
+      rejected: 'request_rejected',
+      completed: 'request_completed'
+    };
+    const template = statusTemplateMap[status];
+    if (template && status !== requestRecord.previous_status && recipient?.email) {
+      await queueEmailSafely(database, {
+        to: recipient.email,
+        template,
+        idempotencyKey: `request-${status}:${Number(request.params.id)}`,
+        data: {
+          name: recipient.name,
+          productName: requestRecord.product_name,
+          requestType: requestRecord.request_type,
+          reference: String(Number(request.params.id)),
+          licensePrice: quote,
+          currency: 'GHS'
+        }
+      });
+    }
+  } catch (emailError) {
+    logger.error('request_status_email_failed', { requestId: Number(request.params.id), status, code: emailError.code });
+  }
+
+  recordAuditSafely(database, {
+    userId: request.admin.id,
+    action: 'request_status_changed',
+    entityType: 'customization_request',
+    entityId: Number(request.params.id),
+    details: { previousStatus: requestRecord.previous_status, status, quoteGhs: quote }
+  });
+  response.json({ id: Number(request.params.id), status, quoteGhs: quote, notes });
 });
 
 router.post('/admin/bookings/availability', sessions.requireAdmin, async (request, response) => {

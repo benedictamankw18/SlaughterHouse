@@ -48,6 +48,46 @@ async function hasPaidExclusiveLicense(queryAll, beatId, excludedReference = nul
   });
 }
 
+// Bulk version of hasPaidExclusiveLicense for catalog display. Returns the set
+// of beat IDs whose exclusive license has already been sold and is still active.
+async function getSoldExclusiveBeatIds(database) {
+  const [orderRows, licenseRows] = await Promise.all([
+    queryRows(database, `SELECT id, items_json FROM orders WHERE status = ?`, ['paid']),
+    queryRows(
+      database,
+      `SELECT order_id, beat_id, revoked_at,
+              (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP) AS license_active
+       FROM licenses WHERE license_type = 'exclusive'`
+    )
+  ]);
+  const licensesByOrder = new Map();
+  for (const license of licenseRows) {
+    const orderId = Number(license.order_id);
+    if (!Number.isInteger(orderId)) continue;
+    if (!licensesByOrder.has(orderId)) licensesByOrder.set(orderId, new Map());
+    licensesByOrder.get(orderId).set(Number(license.beat_id), {
+      revoked: Boolean(license.revoked_at),
+      active: Boolean(Number(license.license_active))
+    });
+  }
+  const sold = new Set();
+  for (const order of orderRows) {
+    const items = parseOrderItems(order.items_json);
+    if (!items) continue;
+    const licenses = licensesByOrder.get(Number(order.id));
+    for (const item of items) {
+      if (item.type !== 'beat' || item.license !== 'exclusive') continue;
+      const beatId = Number(item.productId);
+      if (!Number.isInteger(beatId)) continue;
+      const license = licenses?.get(beatId);
+      // No license row yet means the paid order still counts as a sale, matching
+      // hasPaidExclusiveLicense; an existing license must be active and unrevoked.
+      if (!license || (!license.revoked && license.active)) sold.add(beatId);
+    }
+  }
+  return sold;
+}
+
 async function availableLicenseTypes(database) {
   const licenseStatusRows = await queryRows(database, 'SELECT license_type, is_active FROM license_definition_status');
   if (!licenseStatusRows.length) return new Set(DEFAULT_LICENSE_TYPES);
@@ -129,5 +169,6 @@ module.exports = {
   LICENSE_PRICE_COLUMNS,
   amountToCents,
   hasPaidExclusiveLicense,
+  getSoldExclusiveBeatIds,
   priceCartItems
 };

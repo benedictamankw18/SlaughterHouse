@@ -3,14 +3,24 @@ const assert = require('node:assert/strict');
 const Module = require('node:module');
 const express = require('express');
 
-function loadBookingsRouter({ unavailableTime = null, chargeQuote = null, flutterwave = null } = {}) {
+function loadBookingsRouter({ unavailableTime = null, chargeQuote = null, flutterwave = null, existingOrder = null, orderInsertChanges = 1 } = {}) {
   const routeId = require.resolve('../routes/bookings');
   const originals = new Map([[routeId, require.cache[routeId]]]);
   const calls = [];
   const rateLimitPolicies = [];
+  let orderInsertAttempted = false;
   const database = {
-    async all() {
-      return [];
+    all(query, parameters = [], callback) {
+      if (typeof parameters === 'function') {
+        callback = parameters;
+        parameters = [];
+      }
+      const rows = existingOrder
+        && /WHERE submission_id/.test(query)
+        && (orderInsertChanges !== 0 || orderInsertAttempted)
+        ? [existingOrder]
+        : [];
+      callback?.(null, rows);
     },
     async transaction(callback) {
       return callback({
@@ -20,6 +30,10 @@ function loadBookingsRouter({ unavailableTime = null, chargeQuote = null, flutte
         async run(query, parameters = []) {
           calls.push({ query, parameters, transaction: true });
           if (/INSERT INTO booking_availability/.test(query) && parameters[1] === unavailableTime) return { changes: 0 };
+          if (/INSERT INTO orders/.test(query)) {
+            orderInsertAttempted = true;
+            if (orderInsertChanges === 0) return { changes: 0, lastID: undefined };
+          }
           return { changes: 1, lastID: 1 };
         }
       });
@@ -317,6 +331,85 @@ test('foreign booking checkout is blocked before any hold is taken when charging
     assert.equal(loaded.calls.some(call => /INSERT INTO booking_availability/.test(call.query)), false);
     assert.equal(loaded.calls.some(call => /INSERT INTO orders/.test(call.query)), false);
   } finally {
+    loaded.restore();
+  }
+});
+
+test('a repeated booking submission replays the stored checkout without charging twice', async () => {
+  const loaded = loadBookingsRouter({
+    existingOrder: {
+      reference: 'UBB-EXISTING-1',
+      checkout_url: 'https://paystack.example.test/replay',
+      amount: 700,
+      currency: 'GHS'
+    }
+  });
+  const originalFetch = global.fetch;
+  global.fetch = async (...args) => {
+    if (String(args[0]).startsWith('https://api.paystack.co/')) {
+      throw new Error('Paystack must not be called when replaying a booking checkout.');
+    }
+    return originalFetch(...args);
+  };
+
+  try {
+    const result = await postBooking(loaded.router, { submissionId: 'submission-12345678' });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.authorizationUrl, 'https://paystack.example.test/replay');
+    assert.equal(result.body.reference, 'UBB-EXISTING-1');
+    assert.equal(result.body.replay, true);
+    assert.equal(loaded.calls.some(call => /INSERT INTO orders/.test(call.query)), false);
+  } finally {
+    global.fetch = originalFetch;
+    loaded.restore();
+  }
+});
+
+test('a duplicate booking submission still being prepared returns a clear conflict', async () => {
+  const loaded = loadBookingsRouter({
+    existingOrder: {
+      reference: 'UBB-EXISTING-2',
+      checkout_url: null,
+      amount: 700,
+      currency: 'GHS'
+    }
+  });
+  try {
+    const result = await postBooking(loaded.router, { submissionId: 'submission-87654321' });
+    assert.equal(result.status, 409);
+    assert.match(result.body.error, /already being prepared/);
+    assert.equal(loaded.calls.some(call => /INSERT INTO orders/.test(call.query)), false);
+  } finally {
+    loaded.restore();
+  }
+});
+
+test('a submission id that collides during order insert replays the original checkout', async () => {
+  const loaded = loadBookingsRouter({
+    existingOrder: {
+      reference: 'UBB-EXISTING-3',
+      checkout_url: 'https://paystack.example.test/recovered',
+      amount: 700,
+      currency: 'GHS'
+    },
+    orderInsertChanges: 0
+  });
+  const originalFetch = global.fetch;
+  global.fetch = async (...args) => {
+    if (String(args[0]).startsWith('https://api.paystack.co/')) {
+      throw new Error('Paystack must not be called after an order insert conflict.');
+    }
+    return originalFetch(...args);
+  };
+
+  try {
+    const result = await postBooking(loaded.router, { submissionId: 'submission-11112222' });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.authorizationUrl, 'https://paystack.example.test/recovered');
+    assert.equal(result.body.replay, true);
+    assert.ok(loaded.calls.some(call => /INSERT INTO orders/.test(call.query)));
+  } finally {
+    global.fetch = originalFetch;
     loaded.restore();
   }
 });
