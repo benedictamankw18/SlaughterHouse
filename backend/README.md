@@ -362,8 +362,12 @@ Administrators can export up to 5,000 orders as CSV through the protected
 The admin dashboard includes customer and staff views, database-backed business
 pricing settings, and date-filtered reports. `GET /api/admin/reports` and
 `GET /api/admin/reports.csv` accept optional `from` and `to` dates in
-`YYYY-MM-DD` format (maximum 366 days when both are supplied); CSV exports
-contain up to 5,000 orders. Super-admins manage user roles through
+`YYYY-MM-DD` format; CSV exports contain up to 5,000 orders. Reports also accept
+`granularity=day|week|month|year` (default `day`) and return zero-filled
+`revenueByPeriod` and `withdrawalsByPeriod` buckets plus a summary containing
+net revenue, total withdrawals, and net after withdrawals. Week buckets start on
+Monday. The maximum date-range span is 366 days for daily reports, 3,660 days
+for weekly and monthly reports, and 36,600 days for yearly reports. Super-admins manage user roles through
 `GET /api/admin/staff` and `PATCH /api/admin/staff/:id/role`. Business settings
 are read through `GET /api/admin/settings` and edited by super-admins with
 `PUT /api/admin/settings`; only the known booking fees, custom-beat license

@@ -3,6 +3,9 @@ let adminMfaChallengeToken = null;
 let adminMfaEnrollment = false;
 let dashboardData = { sales: [], requests: [], orders: [], reviews: [], artists: [], withdrawals: [], analytics: {} };
 let staffRecords = [];
+let reportState = { granularity: 'day', metric: 'revenue', chart: 'line' };
+let lastReport = null;
+let reportRequestId = 0;
 const activeAdminSectionKey = 'adminActiveSection';
 const adminCsrfHeaders = method => {
   if (['GET', 'HEAD', 'OPTIONS'].includes(String(method || 'GET').toUpperCase())) return {};
@@ -330,9 +333,6 @@ function renderAnalytics(analytics) {
   $('#metric-pending-reviews').textContent = analytics.pendingReviews || 0;
   $('#metric-withdrawals').textContent = formatMoney(analytics.withdrawals);
   $('#metric-net-revenue').textContent = formatMoney(Number(analytics.revenue || 0) - Number(analytics.withdrawals || 0));
-  const monthlySales = analytics.monthlySales || [];
-  const maximum = Math.max(1, ...monthlySales.map(month => Number(month.amount) || 0));
-  $('#analytics-chart').innerHTML = monthlySales.length ? monthlySales.map(month => `<div class="analytics-bar"><div class="analytics-bar-track"><span style="height:${Math.max(4, Number(month.amount) / maximum * 100)}%" title="${formatMoney(month.amount)}"></span></div><strong>${escapeHtml(formatMoney(month.amount))}</strong><small>${escapeHtml(month.month)}</small></div>`).join('') : '<p>No paid orders to chart yet.</p>';
 }
 
 function dateInputValue(date) {
@@ -340,13 +340,133 @@ function dateInputValue(date) {
   return new Date(date.getTime() - offset).toISOString().slice(0, 10);
 }
 
+const REPORT_RANGE_DAYS = { day: 30, week: 84, month: 365 };
+const REPORT_METRIC_LABELS = { revenue: 'Revenue', withdrawals: 'Withdrawals', both: 'Revenue and withdrawals' };
+const ANALYTICS_CHART_WIDTH = 760;
+const ANALYTICS_CHART_HEIGHT = 300;
+const ANALYTICS_CHART_SPACE = { top: 24, right: 24, bottom: 74, left: 86 };
+
+function setReportRange(granularity) {
+  const form = $('#report-filter');
+  if (!form) return;
+  const today = new Date();
+  form.elements.to.value = dateInputValue(today);
+  const days = REPORT_RANGE_DAYS[granularity];
+  if (!days) {
+    form.elements.from.value = '';
+    return;
+  }
+  const start = new Date(today);
+  start.setDate(start.getDate() - (days - 1));
+  form.elements.from.value = dateInputValue(start);
+}
+
+function formatReportPeriod(period, granularity) {
+  if (granularity === 'year') return String(period);
+  if (granularity === 'month') {
+    const [year, month] = String(period).split('-').map(Number);
+    return new Date(Date.UTC(year, (month || 1) - 1, 1)).toLocaleString('en', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+  }
+  const date = new Date(`${period}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return String(period);
+  const label = date.toLocaleString('en', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  return granularity === 'week' ? `Week of ${label}` : label;
+}
+
+function formatChartMoney(value) {
+  const amount = Number(value) || 0;
+  if (Math.abs(amount) >= 1000000) return `GHS ${(amount / 1000000).toFixed(1)}m`;
+  if (Math.abs(amount) >= 1000) return `GHS ${(amount / 1000).toFixed(1)}k`;
+  return `GHS ${Math.round(amount)}`;
+}
+
+function analyticsChartGeometry(periods, series) {
+  const { top, right, bottom, left } = ANALYTICS_CHART_SPACE;
+  const innerWidth = ANALYTICS_CHART_WIDTH - left - right;
+  const innerHeight = ANALYTICS_CHART_HEIGHT - top - bottom;
+  const maximum = Math.max(1, ...series.flatMap(item => item.values));
+  const lineStep = periods.length > 1 ? innerWidth / (periods.length - 1) : 0;
+  return {
+    top, right, bottom, left, innerWidth, innerHeight, maximum,
+    lineX: index => left + (periods.length > 1 ? index * lineStep : innerWidth / 2),
+    groupWidth: innerWidth / Math.max(1, periods.length),
+    y: value => top + innerHeight - (value / maximum) * innerHeight
+  };
+}
+
+function analyticsChartLabel(periods, series) {
+  return `${series.map(item => item.label).join(' and ')} by ${reportState.granularity}, ${periods.length} periods.`;
+}
+
+function analyticsAxisMarkup(periods, geometry, labelX) {
+  const parts = [];
+  for (let index = 0; index <= 4; index += 1) {
+    const value = (geometry.maximum / 4) * index;
+    const gridY = geometry.y(value);
+    parts.push(`<line x1="${geometry.left}" y1="${gridY}" x2="${ANALYTICS_CHART_WIDTH - geometry.right}" y2="${gridY}" class="analytics-grid" />`);
+    parts.push(`<text x="${geometry.left - 10}" y="${gridY + 4}" text-anchor="end" class="analytics-axis-text">${escapeHtml(formatChartMoney(value))}</text>`);
+  }
+  const labelStep = Math.max(1, Math.ceil(periods.length / 8));
+  periods.forEach((period, index) => {
+    if (index % labelStep !== 0 && index !== periods.length - 1) return;
+    parts.push(`<text x="${labelX(index)}" y="${geometry.top + geometry.innerHeight + 24}" text-anchor="middle" class="analytics-axis-text">${escapeHtml(formatReportPeriod(period, reportState.granularity))}</text>`);
+  });
+  return parts.join('');
+}
+
+function renderLineChart(periods, series) {
+  const geometry = analyticsChartGeometry(periods, series);
+  const paths = series.map(item => {
+    const points = item.values.map((value, index) => `${geometry.lineX(index)},${geometry.y(value)}`).join(' ');
+    const dots = item.values.map((value, index) => `<circle cx="${geometry.lineX(index)}" cy="${geometry.y(value)}" r="3" fill="${item.color}" class="analytics-point"><title>${escapeHtml(`${item.label} · ${formatReportPeriod(periods[index], reportState.granularity)}: ${formatMoney(value)}`)}</title></circle>`).join('');
+    return `<polyline points="${points}" fill="none" stroke="${item.color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" />${dots}`;
+  }).join('');
+  return `<svg viewBox="0 0 ${ANALYTICS_CHART_WIDTH} ${ANALYTICS_CHART_HEIGHT}" role="img" aria-label="${escapeHtml(analyticsChartLabel(periods, series))}" preserveAspectRatio="xMidYMid meet">${analyticsAxisMarkup(periods, geometry, geometry.lineX)}${paths}</svg>`;
+}
+
+function renderHistogramChart(periods, series) {
+  const geometry = analyticsChartGeometry(periods, series);
+  const barWidth = Math.max(2, Math.min(28, (geometry.groupWidth * 0.72) / Math.max(1, series.length)));
+  const bars = series.map((item, seriesIndex) => item.values.map((value, index) => {
+    const height = (value / geometry.maximum) * geometry.innerHeight;
+    const offset = (geometry.groupWidth - barWidth * series.length) / 2;
+    const x = geometry.left + index * geometry.groupWidth + offset + seriesIndex * barWidth;
+    const y = geometry.top + geometry.innerHeight - height;
+    return `<rect x="${x}" y="${y}" width="${barWidth}" height="${Math.max(0, height)}" rx="2" fill="${item.color}" class="analytics-bar-rect"><title>${escapeHtml(`${item.label} · ${formatReportPeriod(periods[index], reportState.granularity)}: ${formatMoney(value)}`)}</title></rect>`;
+  }).join('')).join('');
+  return `<svg viewBox="0 0 ${ANALYTICS_CHART_WIDTH} ${ANALYTICS_CHART_HEIGHT}" role="img" aria-label="${escapeHtml(analyticsChartLabel(periods, series))}" preserveAspectRatio="xMidYMid meet">${analyticsAxisMarkup(periods, geometry, index => geometry.left + (index + 0.5) * geometry.groupWidth)}${bars}</svg>`;
+}
+
+function renderAnalyticsLegend(series) {
+  return `<div class="analytics-legend">${series.map(item => `<span><i style="background:${item.color}" aria-hidden="true"></i>${escapeHtml(item.label)}</span>`).join('')}</div>`;
+}
+
 function renderReport(report) {
-  const months = report.revenueByMonth || [];
-  const maximum = Math.max(1, ...months.map(month => Number(month.revenue) || 0));
-  $('#analytics-chart').innerHTML = months.length ? months.map(month => `<div class="analytics-bar"><div class="analytics-bar-track"><span style="height:${Math.max(4, Number(month.revenue) / maximum * 100)}%" title="${formatMoney(month.revenue)}"></span></div><strong>${escapeHtml(formatMoney(month.revenue))}</strong><small>${escapeHtml(month.month)}</small></div>`).join('') : '<p>No paid orders in this date range.</p>';
+  lastReport = report;
   const summary = report.summary || {};
-  $('#report-summary').innerHTML = `<article class="admin-metric"><span>Orders in range</span><strong>${Number(summary.orderCount || 0)}</strong></article><article class="admin-metric"><span>Paid / partially refunded</span><strong>${Number(summary.paidOrderCount || 0)}</strong></article><article class="admin-metric"><span>Net order amount</span><strong>${escapeHtml(formatMoney(summary.netRevenue))}</strong></article>`;
+  $('#report-summary').innerHTML = `<article class="admin-metric"><span>Orders in range</span><strong>${Number(summary.orderCount || 0)}</strong></article><article class="admin-metric"><span>Paid / partially refunded</span><strong>${Number(summary.paidOrderCount || 0)}</strong></article><article class="admin-metric"><span>Net order amount</span><strong>${escapeHtml(formatMoney(summary.netRevenue))}</strong></article><article class="admin-metric"><span>Withdrawals in range</span><strong>${escapeHtml(formatMoney(summary.withdrawals))}</strong></article><article class="admin-metric"><span>Net after withdrawals</span><strong>${escapeHtml(formatMoney(summary.netAfterWithdrawals))}</strong></article>`;
   $('#booking-report-summary').textContent = `Bookings in range: ${(report.bookingCounts || []).map(item => `${item.status}: ${item.count}`).join(' · ') || 'none'}`;
+  const metricLabel = REPORT_METRIC_LABELS[reportState.metric] || REPORT_METRIC_LABELS.revenue;
+  $('#analytics-chart-title').innerHTML = `${escapeHtml(metricLabel)} by ${escapeHtml(reportState.granularity)} <small>(GHS)</small>`;
+  const revenueRows = report.revenueByPeriod || [];
+  const withdrawalRows = report.withdrawalsByPeriod || [];
+  const periods = [...new Set([...revenueRows, ...withdrawalRows].map(item => item.period))];
+  const revenueByPeriod = new Map(revenueRows.map(item => [item.period, Number(item.revenue) || 0]));
+  const withdrawalsByPeriod = new Map(withdrawalRows.map(item => [item.period, Number(item.withdrawals) || 0]));
+  const series = [];
+  if (reportState.metric !== 'withdrawals') {
+    series.push({ label: 'Revenue', color: '#22c55e', values: periods.map(period => revenueByPeriod.get(period) || 0) });
+  }
+  if (reportState.metric !== 'revenue') {
+    series.push({ label: 'Withdrawals', color: '#f59e0b', values: periods.map(period => withdrawalsByPeriod.get(period) || 0) });
+  }
+  const chart = $('#analytics-chart');
+  const hasData = series.some(item => item.values.some(value => value > 0));
+  if (!periods.length || !hasData) {
+    chart.innerHTML = '<p class="analytics-empty">No paid orders or withdrawals in this range.</p>';
+    return;
+  }
+  chart.innerHTML = `${reportState.chart === 'histogram' ? renderHistogramChart(periods, series) : renderLineChart(periods, series)}${renderAnalyticsLegend(series)}`;
 }
 
 function renderBusinessSettings(settings, canEdit) {
@@ -719,11 +839,15 @@ async function loadReports() {
   const query = new URLSearchParams();
   if (form.elements.from.value) query.set('from', form.elements.from.value);
   if (form.elements.to.value) query.set('to', form.elements.to.value);
+  query.set('granularity', reportState.granularity);
+  const requestId = ++reportRequestId;
   try {
     const report = await api(`/api/admin/reports?${query}`);
+    if (requestId !== reportRequestId) return;
     renderReport(report);
     $('#report-message').textContent = '';
   } catch (error) {
+    if (requestId !== reportRequestId) return;
     message('report-message', error.message || 'Could not load reports.', true);
   }
 }
@@ -834,12 +958,8 @@ async function loadDashboard() {
   loadBookingSettings();
   loadStaff();
   loadCertificates();
-  if (!$('#report-filter').elements.from.value || !$('#report-filter').elements.to.value) {
-    const today = new Date();
-    $('#report-filter').elements.to.value = dateInputValue(today);
-    const monthAgo = new Date(today);
-    monthAgo.setDate(monthAgo.getDate() - 29);
-    $('#report-filter').elements.from.value = dateInputValue(monthAgo);
+  if (!$('#report-filter').elements.from.value && !$('#report-filter').elements.to.value) {
+    setReportRange(reportState.granularity);
   }
   loadReports();
   loadAuditLogs();
@@ -984,10 +1104,36 @@ document.querySelectorAll('.admin-tab').forEach(button => button.addEventListene
   activateAdminSection(button.dataset.section);
 }));
 
-$('#report-filter').addEventListener('submit', event => {
+$('#report-filter').addEventListener('submit', async event => {
   event.preventDefault();
-  loadReports();
+  const button = event.submitter || event.currentTarget.querySelector('button[type="submit"]');
+  const stopBusy = startButtonBusy(button, 'Running…');
+  if (!stopBusy) return;
+  try {
+    await loadReports();
+  } finally {
+    stopBusy();
+  }
 });
+
+document.querySelectorAll('[data-report-granularity]').forEach(button => button.addEventListener('click', () => {
+  reportState.granularity = button.dataset.reportGranularity;
+  document.querySelectorAll('[data-report-granularity]').forEach(item => item.classList.toggle('active', item === button));
+  setReportRange(reportState.granularity);
+  loadReports();
+}));
+
+document.querySelectorAll('[data-report-metric]').forEach(button => button.addEventListener('click', () => {
+  reportState.metric = button.dataset.reportMetric;
+  document.querySelectorAll('[data-report-metric]').forEach(item => item.classList.toggle('active', item === button));
+  if (lastReport) renderReport(lastReport);
+}));
+
+document.querySelectorAll('[data-report-chart]').forEach(button => button.addEventListener('click', () => {
+  reportState.chart = button.dataset.reportChart;
+  document.querySelectorAll('[data-report-chart]').forEach(item => item.classList.toggle('active', item === button));
+  if (lastReport) renderReport(lastReport);
+}));
 
 $('#export-report').addEventListener('click', async event => {
   const button = event.currentTarget;

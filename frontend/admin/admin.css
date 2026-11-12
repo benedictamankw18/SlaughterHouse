@@ -122,15 +122,21 @@
 .admin-review-actions button:disabled { opacity: .55; cursor: wait; }
 .admin-notification-unread { border-left-color: #f59e0b; }
 .admin-delivery-status { display: inline-block; margin-left: 8px; padding: 2px 7px; border: 1px solid rgba(255,255,255,.25); border-radius: 999px; font-size: .72rem; text-transform: uppercase; }
-.analytics-chart { display: grid; min-height: 230px; grid-template-columns: repeat(6, minmax(0, 1fr)); align-items: end; gap: 12px; padding: 16px 0; border-bottom: 1px solid rgba(255,255,255,.2); }
-.analytics-bar { display: grid; height: 210px; grid-template-rows: 1fr auto auto; align-items: end; justify-items: center; gap: 7px; min-width: 0; }
-.analytics-bar-track { display: flex; width: min(48px, 75%); height: 100%; align-items: end; background: #202020; }
-.analytics-bar-track span { display: block; width: 100%; min-height: 4px; background: #22c55e; }
-.analytics-bar strong { overflow: hidden; max-width: 100%; font-size: .7rem; text-overflow: ellipsis; }
-.analytics-bar small { color: rgba(255,255,255,.65); }
+.analytics-controls { display: grid; gap: 8px; margin: 0 0 8px; }
+.analytics-controls .admin-toggle { margin-bottom: 0; }
+.analytics-chart { display: block; padding: 16px 0; border-bottom: 1px solid rgba(255,255,255,.2); }
+.analytics-chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.analytics-grid { stroke: rgba(255,255,255,.16); stroke-width: 1; }
+.analytics-axis-text { fill: rgba(255,255,255,.75); font-size: 11px; }
+.analytics-point { stroke: #0b0b0b; stroke-width: 1.5; }
+.analytics-bar-rect { stroke: #0b0b0b; stroke-width: 1; }
+.analytics-legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; color: rgba(255,255,255,.85); font-size: .8rem; }
+.analytics-legend span { display: inline-flex; align-items: center; gap: 7px; }
+.analytics-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 2px; }
+.analytics-empty { margin: 0; padding: 24px 0; color: rgba(255,255,255,.7); }
 @media (max-width: 650px) { .admin-grid, .admin-file-grid { grid-template-columns: 1fr; } .admin-header { flex-direction: column; } }
 @media (max-width: 720px) { .admin-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 420px) { .admin-metrics { grid-template-columns: 1fr; } .analytics-chart { gap: 5px; } .analytics-bar strong { font-size: .58rem; } }
+@media (max-width: 420px) { .admin-metrics { grid-template-columns: 1fr; } .analytics-axis-text { font-size: 12px; } }
 .admin-certificate-card { display: grid; gap: 12px; }
 .admin-certificate-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
 .admin-certificate-heading > div { min-width: 0; }

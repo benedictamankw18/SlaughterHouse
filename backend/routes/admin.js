@@ -17,7 +17,7 @@ const { fulfillPaidBooking } = require('../services/booking-fulfillment');
 const { reserveBookingSlots } = require('../services/booking-reservations');
 const { LICENSE_TYPES, loadLicenseRights, loadLicenseDefinitions, saveLicenseRights } = require('../services/license-rights');
 const { FULFILLMENT_STATUSES, updateFulfillmentStatus } = require('../services/fulfillment');
-const { BUSINESS_SETTINGS, validateDateRange, validateSettingUpdates } = require('../services/admin-controls');
+const { BUSINESS_SETTINGS, REPORT_GRANULARITIES, validateDateRange, validateSettingUpdates, validateReportGranularity, buildReportPeriods } = require('../services/admin-controls');
 const { isUsdGhsRateFresh } = require('../services/pricing');
 const logger = require('../services/logger');
 const monitoring = require('../services/monitoring');
@@ -635,7 +635,14 @@ router.get('/admin/audit-logs', sessions.requireAdmin, (request, response) => {
 });
 
 router.get('/admin/reports', sessions.requireAdmin, async (request, response) => {
-  const dateRange = validateDateRange(String(request.query.from || ''), String(request.query.to || ''));
+  const granularity = validateReportGranularity(request.query.granularity);
+  if (granularity.error) return response.status(400).json({ error: granularity.error });
+  const granularityConfig = REPORT_GRANULARITIES[granularity.value];
+  const dateRange = validateDateRange(
+    String(request.query.from || ''),
+    String(request.query.to || ''),
+    granularityConfig.maxRangeDays
+  );
   if (dateRange.error) return response.status(400).json({ error: dateRange.error });
   const conditions = [];
   const parameters = [];
@@ -648,20 +655,28 @@ router.get('/admin/reports', sessions.requireAdmin, async (request, response) =>
     parameters.push(`${dateRange.value.to} 00:00:00`);
   }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const orderWhere = `WHERE ${[...conditions, "status IN ('paid', 'partially_refunded')"].join(' AND ')}`;
+  const { sqlUnit, format } = granularityConfig;
   try {
-    const [orders, revenueByMonth, bookings, summaryRows] = await Promise.all([
+    const [orders, revenueRows, withdrawalRows, bookings, summaryRows, withdrawalSummaryRows, firstRows] = await Promise.all([
       queryRows(
         `SELECT reference, customer_name, customer_email, status, amount, currency, refunded_amount, created_at
          FROM orders ${where} ORDER BY created_at DESC LIMIT 5000`,
         parameters
       ),
       queryRows(
-        `SELECT month, order_count, revenue FROM (
-           SELECT TO_CHAR(created_at, 'YYYY-MM') AS month, COUNT(*) AS order_count,
-                  SUM(amount - COALESCE(refunded_amount, 0)) AS revenue
-           FROM orders ${conditions.length ? `${where} AND` : 'WHERE'} status IN ('paid', 'partially_refunded')
-           GROUP BY TO_CHAR(created_at, 'YYYY-MM') ORDER BY month DESC LIMIT 24
-         ) AS monthly_revenue ORDER BY month`,
+        `SELECT TO_CHAR(DATE_TRUNC('${sqlUnit}', created_at), '${format}') AS period,
+                COUNT(*) AS order_count,
+                SUM(amount - COALESCE(refunded_amount, 0)) AS revenue
+         FROM orders ${orderWhere}
+         GROUP BY 1 ORDER BY 1`,
+        parameters
+      ),
+      queryRows(
+        `SELECT TO_CHAR(DATE_TRUNC('${sqlUnit}', created_at), '${format}') AS period,
+                SUM(amount) AS withdrawals
+         FROM withdrawals ${where}
+         GROUP BY 1 ORDER BY 1`,
         parameters
       ),
       queryRows(
@@ -674,18 +689,50 @@ router.get('/admin/reports', sessions.requireAdmin, async (request, response) =>
                 SUM(CASE WHEN status IN ('paid', 'partially_refunded') THEN amount - COALESCE(refunded_amount, 0) ELSE 0 END) AS net_revenue
          FROM orders ${where}`,
         parameters
+      ),
+      queryRows(
+        `SELECT COUNT(*) AS withdrawal_count, COALESCE(SUM(amount), 0) AS withdrawals
+         FROM withdrawals ${where}`,
+        parameters
+      ),
+      queryRows(
+        `SELECT LEAST(
+           COALESCE((SELECT MIN(created_at) FROM orders), CURRENT_TIMESTAMP),
+           COALESCE((SELECT MIN(created_at) FROM withdrawals), CURRENT_TIMESTAMP)
+         ) AS first_at`
       )
     ]);
+    const to = dateRange.value.to || new Date().toISOString().slice(0, 10);
+    const firstAt = firstRows[0]?.first_at;
+    const earliest = firstAt && !Number.isNaN(new Date(firstAt).getTime())
+      ? new Date(firstAt).toISOString().slice(0, 10)
+      : to;
+    const periods = buildReportPeriods(dateRange.value.from || earliest, to, granularity.value);
+    const revenueByPeriodMap = new Map(revenueRows.map(row => [row.period, row]));
+    const withdrawalsByPeriodMap = new Map(withdrawalRows.map(row => [row.period, row]));
+    const netRevenue = Number(summaryRows[0]?.net_revenue || 0);
+    const withdrawals = Number(withdrawalSummaryRows[0]?.withdrawals || 0);
     response.json({
       from: dateRange.value.from,
       to: dateRange.value.to,
+      granularity: granularity.value,
       orders,
-      revenueByMonth,
+      revenueByPeriod: periods.map(period => {
+        const row = revenueByPeriodMap.get(period);
+        return { period, orderCount: Number(row?.order_count || 0), revenue: Number(row?.revenue || 0) };
+      }),
+      withdrawalsByPeriod: periods.map(period => ({
+        period,
+        withdrawals: Number(withdrawalsByPeriodMap.get(period)?.withdrawals || 0)
+      })),
       bookingCounts: bookings.map(row => ({ status: row.status, count: Number(row.count) })),
       summary: {
         orderCount: Number(summaryRows[0]?.order_count || 0),
         paidOrderCount: Number(summaryRows[0]?.paid_order_count || 0),
-        netRevenue: Number(summaryRows[0]?.net_revenue || 0)
+        netRevenue,
+        withdrawals,
+        withdrawalCount: Number(withdrawalSummaryRows[0]?.withdrawal_count || 0),
+        netAfterWithdrawals: netRevenue - withdrawals
       }
     });
   } catch (error) {
