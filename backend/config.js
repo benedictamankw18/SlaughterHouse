@@ -25,6 +25,12 @@ const configuredPaystackKey = String(process.env.PAYSTACK_SECRET_KEY || '').trim
 const paystackSecretKey = configuredPaystackKey && configuredPaystackKey !== 'sk_test_your_paystack_secret_key'
   ? configuredPaystackKey
   : null;
+const configuredFlutterwaveKey = String(process.env.FLUTTERWAVE_SECRET_KEY || '').trim();
+const flutterwaveSecretKey = configuredFlutterwaveKey && !/your[-_\s]?flutterwave/i.test(configuredFlutterwaveKey)
+  ? configuredFlutterwaveKey
+  : null;
+const flutterwaveWebhookHash = String(process.env.FLUTTERWAVE_WEBHOOK_HASH || '').trim() || null;
+const flutterwaveApiBase = (String(process.env.FLUTTERWAVE_API_BASE || '').trim() || 'https://api.flutterwave.com/v3').replace(/\/+$/, '');
 const configuredDownloadSecret = String(process.env.DOWNLOAD_SIGNING_SECRET || '').trim();
 const configuredCertificateSecret = String(process.env.CERTIFICATE_SIGNING_SECRET || '').trim();
 const configuredAdminMfaKey = String(process.env.ADMIN_MFA_ENCRYPTION_KEY || '').trim();
@@ -121,6 +127,9 @@ module.exports = {
   certificateSigningSecret,
   adminMfaEncryptionKey,
   paystackSecretKey,
+  flutterwaveSecretKey,
+  flutterwaveWebhookHash,
+  flutterwaveApiBase,
   downloadSigningSecret,
   storageDriver,
   s3,

@@ -36,6 +36,10 @@ const { checkReadiness } = require('../services/health');
 const storage = require('../services/storage');
 const { sendStoredFile } = require('../services/storage/response');
 const { parseOrderItems } = require('../services/order-items');
+const {
+  isConfigured: isFlutterwaveConfigured,
+  refundTransaction: refundFlutterwaveTransaction
+} = require('../services/flutterwave');
 
 const router = express.Router();
 router.use(rateLimit({ windowMs: 60 * 1000, max: 60, message: 'Too many administrator requests. Try again shortly.' }));
@@ -1328,7 +1332,6 @@ router.post('/admin/orders/:reference/booking-resolution', sessions.requireAdmin
     }
   }
 
-  if (!config.paystackSecretKey) return response.status(503).json({ error: 'Refund processing is unavailable because PAYSTACK_SECRET_KEY is not configured.' });
   let refundDetails;
   try {
     refundDetails = await database.transaction(async transaction => {
@@ -1337,14 +1340,27 @@ router.post('/admin/orders/:reference/booking-resolution', sessions.requireAdmin
       if (!order.fulfillment_review_required || order.status !== 'paid') return { status: 409, error: 'This paid order is not awaiting booking reconciliation.' };
       if (order.fulfillment_review_reason === 'refund_pending') return { status: 200, alreadyPending: true, orderId: order.id };
       const payment = await transaction.get(
-        `SELECT provider_reference FROM payments
-         WHERE order_id = ? AND provider = ? AND status = ?
+        `SELECT provider, provider_reference, provider_transaction_id FROM payments
+         WHERE order_id = ? AND status = ?
          ORDER BY verified_at DESC NULLS LAST, created_at DESC LIMIT 1`,
-        [order.id, 'paystack', 'paid']
+        [order.id, 'paid']
       );
-      if (!payment?.provider_reference) return { status: 409, error: 'A confirmed Paystack transaction could not be found for this order.' };
+      if (!payment?.provider_reference) return { status: 409, error: 'A confirmed payment transaction could not be found for this order.' };
+      const provider = String(payment.provider || order.provider || 'paystack').toLowerCase() === 'flutterwave' ? 'flutterwave' : 'paystack';
+      if (provider === 'paystack' && !config.paystackSecretKey) return { status: 503, error: 'Refund processing is unavailable because PAYSTACK_SECRET_KEY is not configured.' };
+      if (provider === 'flutterwave' && !isFlutterwaveConfigured()) return { status: 503, error: 'Refund processing is unavailable because FLUTTERWAVE_SECRET_KEY is not configured.' };
+      if (provider === 'flutterwave' && !payment.provider_transaction_id) return { status: 409, error: 'A confirmed Flutterwave transaction id could not be found for this order.' };
       await transaction.run('UPDATE orders SET fulfillment_review_reason = ? WHERE id = ?', ['refund_pending', order.id]);
-      return { status: 200, orderId: order.id, amount: Number(order.amount) - Number(order.refunded_amount || 0), providerReference: payment.provider_reference, email: order.customer_email };
+      return {
+        status: 200,
+        orderId: order.id,
+        amount: Number(order.amount) - Number(order.refunded_amount || 0),
+        currency: order.currency,
+        provider,
+        providerReference: payment.provider_reference,
+        providerTransactionId: payment.provider_transaction_id,
+        email: order.customer_email
+      };
     });
   } catch (error) {
     return response.status(500).json({ error: databaseError('Preparing the booking refund failed.', error) });
@@ -1352,26 +1368,41 @@ router.post('/admin/orders/:reference/booking-resolution', sessions.requireAdmin
   if (refundDetails.status !== 200) return response.status(refundDetails.status).json({ error: refundDetails.error });
   if (refundDetails.alreadyPending) return response.json({ reference, resolution: 'refund_pending' });
   try {
-    const providerResponse = await fetch('https://api.paystack.co/refund', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${config.paystackSecretKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        transaction: refundDetails.providerReference,
-        amount: Math.round(refundDetails.amount * 100)
-      })
-    });
-    const providerResult = await providerResponse.json();
-    if (!providerResponse.ok || !providerResult.status) {
+    if (refundDetails.provider === 'flutterwave') {
+      await refundFlutterwaveTransaction({
+        transactionId: refundDetails.providerTransactionId,
+        amount: refundDetails.amount
+      });
+    } else {
+      const providerResponse = await fetch('https://api.paystack.co/refund', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${config.paystackSecretKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transaction: refundDetails.providerReference,
+          amount: Math.round(refundDetails.amount * 100)
+        })
+      });
+      const providerResult = await providerResponse.json();
+      if (!providerResponse.ok || !providerResult.status) {
+        await runQuery(
+          `UPDATE orders SET fulfillment_review_reason = ?
+           WHERE reference = ? AND fulfillment_review_required = TRUE AND fulfillment_review_reason = ?`,
+          ['booking_slot_unavailable', reference, 'refund_pending']
+        );
+        return response.status(502).json({ error: providerResult.message || 'Paystack did not accept the refund request.' });
+      }
+    }
+  } catch (error) {
+    if (error.code === 'FLW_REFUND_FAILED' || error.code === 'FLW_REFUND_INVALID') {
       await runQuery(
         `UPDATE orders SET fulfillment_review_reason = ?
          WHERE reference = ? AND fulfillment_review_required = TRUE AND fulfillment_review_reason = ?`,
         ['booking_slot_unavailable', reference, 'refund_pending']
       );
-      return response.status(502).json({ error: providerResult.message || 'Paystack did not accept the refund request.' });
+      return response.status(502).json({ error: error.message || 'Flutterwave did not accept the refund request.' });
     }
-  } catch (error) {
     logger.error('booking_refund_request_uncertain', { reference, code: error.code });
-    return response.status(502).json({ error: 'The refund request could not be confirmed. Check Paystack before retrying; the order is marked refund pending to prevent duplicate requests.' });
+    return response.status(502).json({ error: 'The refund request could not be confirmed. Check the payment provider before retrying; the order is marked refund pending to prevent duplicate requests.' });
   }
   await recordAuditSafely(database, {
     userId: request.admin.id,
@@ -1390,7 +1421,7 @@ router.post('/admin/orders/:reference/booking-resolution', sessions.requireAdmin
     userId: customer.id,
     type: 'booking_refund_pending',
     title: 'Booking refund requested',
-    message: 'A refund has been requested for your booking payment. We will notify you when Paystack confirms it.'
+    message: 'A refund has been requested for your booking payment. We will notify you when the payment provider confirms it.'
   });
   response.json({ reference, resolution: 'refund_pending' });
 });

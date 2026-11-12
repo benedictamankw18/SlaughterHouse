@@ -2,16 +2,24 @@ const express = require('express');
 const crypto = require('node:crypto');
 const database = require('../database');
 const config = require('../config');
-const { getPricing, getUsdGhsRate } = require('../services/pricing');
 const { getDownloadItems } = require('../services/downloads');
 const { parseOrderItems } = require('../services/order-items');
+const { priceCartItems, hasPaidExclusiveLicense } = require('../services/order-pricing');
+const { getChargeQuote, isSupportedCurrency, QUOTE_TTL_MS } = require('../services/fx');
+const {
+  createCheckout: createFlutterwaveCheckout,
+  isConfigured: isFlutterwaveConfigured,
+  hasWebhookHash: hasFlutterwaveWebhookHash,
+  verifyTransaction: verifyFlutterwaveTransaction,
+  verifyWebhookHash: verifyFlutterwaveWebhookHash
+} = require('../services/flutterwave');
 const { databaseError } = require('../services/error-messages');
 const validators = require('../services/input-validation');
 const { recordAuditSafely } = require('../services/audit');
 const { createNotificationSafely, notifyAdminsSafely } = require('../services/notifications');
 const { loadLicenseRights, rightsFor } = require('../services/license-rights');
 const { issueCertificateRecord } = require('../services/license-certificates');
-const { refundEventDetails, refundEventKey, applyRefund, applyPaymentReversal } = require('../services/refunds');
+const { refundEventDetails, refundEventKey, flutterwaveRefundDetails, flutterwaveRefundKey, applyRefund, applyPaymentReversal } = require('../services/refunds');
 const { paymentFailureStatus, isRefundEvent, recordNonSuccessPayment } = require('../services/payment-events');
 const { queueEmailSafely } = require('../services/email/outbox');
 const { fulfillPaidBooking } = require('../services/booking-fulfillment');
@@ -22,31 +30,37 @@ const router = express.Router();
 const { apiPublicUrl, paymentCallbackUrl, paystackSecretKey } = config;
 const LOW_STOCK_THRESHOLD = 5;
 const paymentInitializationRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, message: 'Too many payment initialization requests. Try again later.' });
+const paymentQuoteRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 120, message: 'Too many price quote requests. Try again shortly.' });
 const paymentVerificationRateLimit = rateLimit({ windowMs: 60 * 1000, max: 30, message: 'Too many payment verification requests. Try again shortly.' });
 const paymentWebhookRateLimit = rateLimit({ windowMs: 60 * 1000, max: 300, message: 'Too many payment webhook requests. Try again shortly.' });
-const queryRows = (query, parameters = []) => new Promise((resolve, reject) => database.all(query, parameters, (error, rows) => error ? reject(error) : resolve(rows || [])));
 const run = (query, parameters = []) => new Promise((resolve, reject) => database.run(query, parameters, function (error) { error ? reject(error) : resolve(this); }));
+const get = (query, parameters = []) => new Promise((resolve, reject) => database.get(query, parameters, (error, row) => error ? reject(error) : resolve(row)));
+
+const FX_HTTP_STATUS = Object.freeze({
+  FX_CURRENCY_UNSUPPORTED: 400,
+  FX_AMOUNT_INVALID: 400,
+  FX_CHARGING_DISABLED: 409,
+  FX_RATE_STALE: 503,
+  FX_RATE_INVALID: 503,
+  FX_MARKUP_INVALID: 503,
+  USD_GHS_RATE_INVALID: 503,
+  USD_GHS_RATE_STALE: 503,
+  CART_ITEM_INVALID: 400,
+  FLW_NOT_CONFIGURED: 503,
+  FLW_UNAVAILABLE: 503,
+  FLW_REJECTED: 502,
+  FLW_AMOUNT_INVALID: 400,
+  FLW_VERIFY_FAILED: 502,
+  FLW_REFUND_INVALID: 400,
+  FLW_REFUND_FAILED: 502
+});
+
+function quoteErrorStatus(code) {
+  return FX_HTTP_STATUS[code] || null;
+}
 
 function rejectWebhook(httpStatus, body) {
   throw Object.assign(new Error(body.error), { webhookResponse: { httpStatus, body } });
-}
-
-async function hasPaidExclusiveLicense(queryAll, beatId, excludedReference = null) {
-  const parameters = excludedReference ? [beatId, 'paid', excludedReference] : [beatId, 'paid'];
-  const rows = await queryAll(
-    `SELECT o.reference, o.items_json, l.id AS license_id, l.revoked_at,
-            (l.expires_at IS NULL OR l.expires_at > CURRENT_TIMESTAMP) AS license_active
-     FROM orders o
-     LEFT JOIN licenses l ON l.order_id = o.id AND l.beat_id = ? AND l.license_type = 'exclusive'
-     WHERE o.status = ?${excludedReference ? ' AND o.reference <> ?' : ''}`,
-    parameters
-  );
-  return rows.some(order => {
-    const items = parseOrderItems(order.items_json);
-    if (!items) return false;
-    const purchasedExclusive = items.some(item => item.type === 'beat' && Number(item.productId) === Number(beatId) && item.license === 'exclusive');
-    return purchasedExclusive && (!order.license_id || (!order.revoked_at && Number(order.license_active)));
-  });
 }
 
 async function decrementMerchandiseStock(db, items, orderReference) {
@@ -79,6 +93,50 @@ function saleAmount(item) {
 
 function amountToCents(amount) {
   return Math.round(Number(amount) * 100);
+}
+
+function paymentProvider(order) {
+  return String(order?.provider || 'paystack').toLowerCase() === 'flutterwave' ? 'flutterwave' : 'paystack';
+}
+
+// Canonical charge shape shared by both providers: amounts are major units.
+function normalizePaystackPayment(data = {}) {
+  return {
+    provider: 'paystack',
+    reference: String(data.reference || ''),
+    transactionId: data.id ?? null,
+    status: String(data.status || '').toLowerCase(),
+    amount: Number(data.amount) / 100,
+    currency: String(data.currency || '').toUpperCase(),
+    raw: data
+  };
+}
+
+function normalizeFlutterwavePayment(data = {}) {
+  const status = String(data.status || '').toLowerCase();
+  return {
+    provider: 'flutterwave',
+    reference: String(data.tx_ref || data.reference || ''),
+    transactionId: data.id ?? null,
+    status: status === 'successful' ? 'success' : status,
+    amount: Number(data.amount),
+    currency: String(data.currency || '').toUpperCase(),
+    raw: data
+  };
+}
+
+function chargeMatchesOrder(order, payment) {
+  if (!payment.currency || payment.currency !== String(order.currency || '').toUpperCase()) return false;
+  const expected = Number(order.amount);
+  const actual = Number(payment.amount);
+  if (!Number.isFinite(expected) || !Number.isFinite(actual)) return false;
+  return amountToCents(actual) === amountToCents(expected);
+}
+
+function orderAmountGhs(order, fallback) {
+  const stored = Number(order.amount_ghs);
+  if (Number.isFinite(stored) && stored > 0) return stored;
+  return Number(fallback);
 }
 
 function snapshotLegacyBeatPrices(order, items) {
@@ -116,9 +174,9 @@ async function recordOrderSales(db, order, items) {
     const amount = saleAmount(item);
     if (amount === null || amount === undefined || !Number.isFinite(Number(amount))) continue;
     await db.run(
-      `INSERT INTO sales (order_reference, line_index, sale_type, product_id, product_name, buyer_name, buyer_email, amount)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (order_reference, line_index) DO UPDATE SET amount = EXCLUDED.amount`,
+      `INSERT INTO sales (order_reference, line_index, sale_type, product_id, product_name, buyer_name, buyer_email, amount, currency, amount_ghs)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'GHS', ?)
+       ON CONFLICT (order_reference, line_index) DO UPDATE SET amount = EXCLUDED.amount, amount_ghs = EXCLUDED.amount_ghs`,
       [
         order.reference,
         lineIndex,
@@ -127,13 +185,14 @@ async function recordOrderSales(db, order, items) {
         item.type === 'beat' || !item.type ? `${item.name} (${item.license})` : item.name,
         order.customer_name,
         order.customer_email,
+        amount,
         amount
       ]
     );
   }
 }
 
-async function normalizePaidOrder(db, order, items, paymentData) {
+async function normalizePaidOrder(db, order, items, payment) {
   for (const item of items) {
     if (item.type === 'booking') continue;
     await db.run(
@@ -145,12 +204,23 @@ async function normalizePaidOrder(db, order, items, paymentData) {
   }
 
   await db.run(
-    `INSERT INTO payments (order_id, provider, provider_reference, status, amount, currency, provider_payload, verified_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `INSERT INTO payments (order_id, provider, provider_reference, provider_transaction_id, status, amount, currency, amount_ghs, provider_payload, verified_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
      ON CONFLICT (provider_reference) DO UPDATE SET order_id = EXCLUDED.order_id, status = EXCLUDED.status,
-       amount = EXCLUDED.amount, currency = EXCLUDED.currency, provider_payload = EXCLUDED.provider_payload,
-       verified_at = EXCLUDED.verified_at`,
-    [order.id, 'paystack', paymentData.reference, 'paid', Number(paymentData.amount) / 100, paymentData.currency, JSON.stringify(paymentData)]
+       amount = EXCLUDED.amount, currency = EXCLUDED.currency, amount_ghs = EXCLUDED.amount_ghs,
+       provider_transaction_id = EXCLUDED.provider_transaction_id,
+       provider_payload = EXCLUDED.provider_payload, verified_at = EXCLUDED.verified_at`,
+    [
+      order.id,
+      payment.provider,
+      payment.reference,
+      payment.transactionId ?? null,
+      'paid',
+      payment.amount,
+      payment.currency,
+      orderAmountGhs(order, payment.amount),
+      JSON.stringify(payment.raw ?? payment)
+    ]
   );
 
   const customer = await db.get("SELECT id FROM users WHERE lower(email) = lower(?) AND role NOT IN ('admin', 'super_admin')", [order.customer_email]);
@@ -199,11 +269,11 @@ async function normalizePaidOrder(db, order, items, paymentData) {
   }
 }
 
-async function completePaidOrder(db, order, items, paymentData) {
+async function completePaidOrder(db, order, items, payment) {
   await decrementMerchandiseStock(db, items, order.reference);
   await db.run('UPDATE orders SET status = ?, items_json = ? WHERE reference = ? AND status <> ?', ['paid', JSON.stringify(items), order.reference, 'paid']);
   await recordOrderSales(db, order, items);
-  await normalizePaidOrder(db, order, items, paymentData);
+  await normalizePaidOrder(db, order, items, payment);
   if (!items.some(item => item.type === 'booking')) await notifyAdminsSafely(db, {
     type: 'order_paid',
     title: 'Order paid',
@@ -229,18 +299,29 @@ async function completePaidOrder(db, order, items, paymentData) {
   });
 }
 
-async function markBookingForReview(db, order, items, paymentData, reason = 'booking_slot_unavailable') {
+async function markBookingForReview(db, order, items, payment, reason = 'booking_slot_unavailable') {
   await db.run(
     'UPDATE orders SET status = ?, items_json = ?, fulfillment_review_required = TRUE, fulfillment_review_reason = ? WHERE id = ?',
     ['paid', JSON.stringify(items), reason, order.id]
   );
   await db.run(
-    `INSERT INTO payments (order_id, provider, provider_reference, status, amount, currency, provider_payload, verified_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `INSERT INTO payments (order_id, provider, provider_reference, provider_transaction_id, status, amount, currency, amount_ghs, provider_payload, verified_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
      ON CONFLICT (provider_reference) DO UPDATE SET order_id = EXCLUDED.order_id, status = EXCLUDED.status,
-       amount = EXCLUDED.amount, currency = EXCLUDED.currency, provider_payload = EXCLUDED.provider_payload,
-       verified_at = EXCLUDED.verified_at`,
-    [order.id, 'paystack', paymentData.reference, 'paid', Number(paymentData.amount) / 100, paymentData.currency, JSON.stringify(paymentData)]
+       amount = EXCLUDED.amount, currency = EXCLUDED.currency, amount_ghs = EXCLUDED.amount_ghs,
+       provider_transaction_id = EXCLUDED.provider_transaction_id,
+       provider_payload = EXCLUDED.provider_payload, verified_at = EXCLUDED.verified_at`,
+    [
+      order.id,
+      payment.provider,
+      payment.reference,
+      payment.transactionId ?? null,
+      'paid',
+      payment.amount,
+      payment.currency,
+      orderAmountGhs(order, payment.amount),
+      JSON.stringify(payment.raw ?? payment)
+    ]
   );
   await recordOrderSales(db, order, items);
 }
@@ -286,24 +367,80 @@ async function hasConflictingExclusiveSale(db, items, orderReference) {
 }
 
 router.post('/payments/webhook', paymentWebhookRateLimit, async (request, response) => {
-  if (!paystackSecretKey) return response.status(503).json({ error: 'Payment webhooks are unavailable because PAYSTACK_SECRET_KEY is not configured.' });
-  const signature = request.get('x-paystack-signature');
   const rawBody = Buffer.isBuffer(request.body) ? request.body : Buffer.from('');
-  const expectedSignature = crypto.createHmac('sha512', paystackSecretKey).update(rawBody).digest('hex');
-  if (!signature || signature.length !== expectedSignature.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) return response.status(401).json({ error: 'Invalid payment webhook signature.' });
+  const flutterwaveHash = request.get('verif-hash');
+  let provider;
   let event;
-  try { event = JSON.parse(rawBody.toString('utf8')); } catch { return response.status(400).json({ error: 'Payment webhook payload is invalid JSON.' }); }
-  const eventType = String(event.event || '').toLowerCase();
-  const isRefund = isRefundEvent(eventType);
-  const failureStatus = paymentFailureStatus(eventType, event.data?.status);
-  const isReversal = !isRefund && failureStatus === 'reversed';
-  const refund = isRefund || isReversal ? refundEventDetails(event) : null;
-  const eventReference = isRefund
-    ? refundEventKey(event)
-    : isReversal
-      ? String(refund.reference || event.data?.id || '')
-      : String(event.data?.reference || event.data?.id || '');
+  if (flutterwaveHash !== undefined) {
+    if (!isFlutterwaveConfigured() || !hasFlutterwaveWebhookHash()) {
+      return response.status(503).json({ error: 'Flutterwave webhooks are unavailable because FLUTTERWAVE_SECRET_KEY or FLUTTERWAVE_WEBHOOK_HASH is not configured.' });
+    }
+    if (!verifyFlutterwaveWebhookHash(flutterwaveHash)) return response.status(401).json({ error: 'Invalid Flutterwave webhook signature.' });
+    provider = 'flutterwave';
+    try { event = JSON.parse(rawBody.toString('utf8')); } catch { return response.status(400).json({ error: 'Payment webhook payload is invalid JSON.' }); }
+  } else {
+    if (!paystackSecretKey) return response.status(503).json({ error: 'Payment webhooks are unavailable because PAYSTACK_SECRET_KEY is not configured.' });
+    const signature = request.get('x-paystack-signature');
+    const expectedSignature = crypto.createHmac('sha512', paystackSecretKey).update(rawBody).digest('hex');
+    if (!signature || signature.length !== expectedSignature.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) return response.status(401).json({ error: 'Invalid payment webhook signature.' });
+    provider = 'paystack';
+    try { event = JSON.parse(rawBody.toString('utf8')); } catch { return response.status(400).json({ error: 'Payment webhook payload is invalid JSON.' }); }
+  }
+
+  let eventType;
+  let eventReference;
+  let isRefund = false;
+  let isReversal = false;
+  let flutterwaveRefund = false;
+  let failureStatus = null;
+  let refund = null;
+  let payment = null;
+
+  if (provider === 'flutterwave') {
+    // Refund notifications arrive as a flat object with no `event` field and no currency.
+    flutterwaveRefund = !event.event && (event.AmountRefunded !== undefined || event.TransactionId !== undefined);
+    if (flutterwaveRefund) {
+      isRefund = true;
+      refund = flutterwaveRefundDetails(event);
+      if (!refund.transactionId) return response.status(400).json({ error: 'Flutterwave refund webhook is missing its transaction id.' });
+      eventType = 'refund.completed';
+      eventReference = flutterwaveRefundKey(event) || `refund:${refund.transactionId}`;
+    } else {
+      if (String(event.event || '').toLowerCase() !== 'charge.completed') {
+        return response.json({ received: true, ignored: true });
+      }
+      const txRef = String(event.data?.tx_ref || event.data?.reference || '');
+      if (!txRef) return response.status(400).json({ error: 'Flutterwave webhook is missing its transaction reference.' });
+      let verified;
+      try {
+        verified = await verifyFlutterwaveTransaction(txRef);
+      } catch (error) {
+        logger.error('flutterwave_webhook_verify_failed', { code: error.code });
+        return response.status(quoteErrorStatus(error.code) || 502).json({ error: 'The Flutterwave transaction could not be verified.' });
+      }
+      if (!verified) return response.status(404).json({ error: `No Flutterwave transaction was found for reference ${txRef}.` });
+      payment = normalizeFlutterwavePayment(verified.raw);
+      eventReference = payment.reference || txRef;
+      failureStatus = paymentFailureStatus(event.event, payment.status);
+      isReversal = failureStatus === 'reversed';
+      eventType = payment.status === 'success' ? 'charge.success' : failureStatus ? `charge.${failureStatus}` : 'charge.pending';
+    }
+  } else {
+    eventType = String(event.event || '').toLowerCase();
+    isRefund = isRefundEvent(eventType);
+    failureStatus = paymentFailureStatus(eventType, event.data?.status);
+    isReversal = !isRefund && failureStatus === 'reversed';
+    refund = isRefund || isReversal ? refundEventDetails(event) : null;
+    eventReference = isRefund
+      ? refundEventKey(event)
+      : isReversal
+        ? String(refund.reference || event.data?.id || '')
+        : String(event.data?.reference || event.data?.id || '');
+    payment = normalizePaystackPayment(event.data || {});
+  }
+
   if (!eventReference || !eventType) return response.status(400).json({ error: 'Payment webhook is missing its event reference or type.' });
+
   try {
     const outcome = await database.transaction(async tx => {
       const stored = await tx.get(
@@ -311,39 +448,53 @@ router.post('/payments/webhook', paymentWebhookRateLimit, async (request, respon
          VALUES (?, ?, ?, ?)
          ON CONFLICT (provider, event_reference, event_type) DO NOTHING
          RETURNING id`,
-        ['paystack', eventReference, eventType, JSON.stringify(event)]
+        [provider, eventReference, eventType, JSON.stringify(event)]
       );
       if (!stored) return { duplicate: true };
       if (isRefund || isReversal) {
-        if (!refund.reference) rejectWebhook(400, { error: 'Refund webhook is missing its transaction reference.' });
-        if (isRefund && eventType !== 'refund.processed') {
-          return { processed: true, audit: { action: 'refund_event_ignored', details: { reference: refund.reference, event: eventType } } };
+        let order;
+        if (flutterwaveRefund) {
+          order = await tx.get(
+            `SELECT o.* FROM orders o
+             JOIN payments p ON p.order_id = o.id
+             WHERE p.provider = ? AND p.provider_transaction_id = ?
+             ORDER BY p.verified_at DESC NULLS LAST LIMIT 1 FOR UPDATE`,
+            ['flutterwave', String(refund.transactionId)]
+          );
+          if (!order) rejectWebhook(404, { error: `No order was found for Flutterwave refund ${refund.transactionId}.` });
+        } else {
+          if (!refund.reference) rejectWebhook(400, { error: 'Refund webhook is missing its transaction reference.' });
+          order = await tx.get('SELECT * FROM orders WHERE reference = ? FOR UPDATE', [refund.reference]);
+          if (!order) rejectWebhook(404, { error: `No order was found for refund reference ${refund.reference}.` });
         }
-        const order = await tx.get('SELECT * FROM orders WHERE reference = ? FOR UPDATE', [refund.reference]);
-        if (!order) rejectWebhook(404, { error: `No order was found for refund reference ${refund.reference}.` });
+        const refundCompleted = flutterwaveRefund
+          ? ['completed', 'successful'].includes(String(refund.status || '').toLowerCase())
+          : eventType === 'refund.processed';
+        if (isRefund && !refundCompleted) {
+          return { processed: true, audit: { action: 'refund_event_ignored', details: { reference: order.reference, event: eventType } } };
+        }
         if (refund.currency && refund.currency !== order.currency) rejectWebhook(400, { error: 'Refund currency does not match the order currency.' });
-        const reversalAmount = isReversal && !Number.isFinite(refund.amountGhs) ? Number(order.amount) : refund.amountGhs;
-        if (!Number.isFinite(reversalAmount) || reversalAmount <= 0) rejectWebhook(400, { error: 'Refund amount could not be validated.' });
+        const refundAmount = isReversal
+          ? (Number.isFinite(refund.amountGhs) ? refund.amountGhs : Number(order.amount))
+          : (flutterwaveRefund ? refund.amount : refund.amountGhs);
+        if (!Number.isFinite(refundAmount) || refundAmount <= 0) rejectWebhook(400, { error: 'Refund amount could not be validated.' });
         if (isReversal) {
-          const result = await applyPaymentReversal(tx, order, {
-            reference: refund.reference,
-            paymentData: { ...event.data, amount: Number.isFinite(refund.amountGhs) ? Number(event.data?.amount) : Number(order.amount) * 100, currency: refund.currency || order.currency }
-          });
+          const result = await applyPaymentReversal(tx, order, { reference: order.reference, payment });
           return { processed: true, orderId: order.id, refund: result, eventType };
         }
         const result = await applyRefund(tx, order, {
-          amountGhs: reversalAmount,
-          reference: refund.reference,
-          reason: refund.reason || (isReversal ? 'Payment reversed by provider' : null)
+          amountGhs: refundAmount,
+          reference: order.reference,
+          reason: refund.reason || null
         });
         return { processed: true, orderId: order.id, refund: result, eventType };
       }
       const order = await tx.get('SELECT * FROM orders WHERE reference = ? FOR UPDATE', [eventReference]);
-      if (eventType !== 'charge.success' || event.data?.status !== 'success') {
+      if (eventType !== 'charge.success' || payment.status !== 'success') {
         await recordNonSuccessPayment(tx, order, {
           reference: eventReference,
-          status: failureStatus || String(event.data?.status || eventType).toLowerCase(),
-          paymentData: event.data || event
+          status: failureStatus || payment.status || eventType,
+          payment
         });
         return { processed: true };
       }
@@ -354,7 +505,7 @@ router.post('/payments/webhook', paymentWebhookRateLimit, async (request, respon
         orderId: order.id,
         conflict: { reason: 'order_already_refunded', reference: eventReference }
       };
-      if (Number(event.data.amount) !== Math.round(Number(order.amount) * 100) || event.data.currency !== order.currency) rejectWebhook(400, { error: 'Payment webhook amount could not be reconciled.' });
+      if (!chargeMatchesOrder(order, payment)) rejectWebhook(400, { error: 'Payment webhook amount could not be reconciled.' });
       const orderItems = parseOrderItems(order.items_json);
       if (!orderItems) rejectWebhook(500, { error: 'Order data is invalid.' });
       let items;
@@ -376,7 +527,7 @@ router.post('/payments/webhook', paymentWebhookRateLimit, async (request, respon
           await fulfillPaidBooking(tx, order, bookingItem);
         } catch (error) {
           if (error.code === 'BOOKING_SLOT_UNAVAILABLE' || error.code === 'ER_DUP_ENTRY') {
-            await markBookingForReview(tx, order, items, event.data);
+            await markBookingForReview(tx, order, items, payment);
             return {
               processed: true,
               orderId: order.id,
@@ -389,7 +540,7 @@ router.post('/payments/webhook', paymentWebhookRateLimit, async (request, respon
         }
       }
       try {
-        await completePaidOrder(tx, order, items, event.data);
+        await completePaidOrder(tx, order, items, payment);
       } catch (error) {
         if (error.code !== 'OUT_OF_STOCK') throw error;
         return {
@@ -437,124 +588,177 @@ router.post('/payments/webhook', paymentWebhookRateLimit, async (request, respon
   }
 });
 
+router.post('/payments/quote', paymentQuoteRateLimit, async (request, response) => {
+  const { items, currency } = request.body || {};
+  const normalizedCurrency = String(currency || 'GHS').trim().toUpperCase();
+  if (!Array.isArray(items) || !items.length || items.length > 100) {
+    return response.status(400).json({ error: 'A quote must contain between 1 and 100 items.' });
+  }
+  try {
+    const { items: pricedItems, amountGhs } = await priceCartItems(database, items);
+    const quote = await getChargeQuote(database, amountGhs, normalizedCurrency);
+    response.json({
+      ...quote,
+      items: pricedItems.map(item => ({
+        type: item.type,
+        productId: item.productId,
+        name: item.name,
+        license: item.license || null,
+        amountGhs: item.priceGhs
+      }))
+    });
+  } catch (error) {
+    if (error.code === 'CART_ITEM_INVALID') {
+      return response.status(400).json({ error: error.message, code: error.code });
+    }
+    const status = quoteErrorStatus(error.code);
+    if (status) {
+      return response.status(status).json({ error: error.message, code: error.code });
+    }
+    logger.error('payment_quote_failed', { code: error.code });
+    response.status(500).json({ error: databaseError('The price quote could not be prepared.', error) });
+  }
+});
+
 router.post('/payments/initialize', paymentInitializationRateLimit, async (request, response) => {
   const { name, email, items, paymentMethod } = request.body;
+  const requestedCurrency = String(request.body.currency || 'GHS').trim().toUpperCase();
   const normalizedEmail = String(email || '').trim().toLowerCase();
   const paymentError = validators.text(name, 'Customer name', { required: true, max: 255 }) || validators.email(email);
   if (paymentError) return response.status(400).json({ error: paymentError });
   if (!Array.isArray(items) || !items.length || items.length > 100) return response.status(400).json({ error: 'Payment must contain between 1 and 100 items.' });
   if (!['card', 'mobile_money'].includes(paymentMethod)) return response.status(400).json({ error: 'Choose Card or Mobile Money to continue.' });
-  if (!paystackSecretKey) return response.status(503).json({ error: 'Store payments are unavailable because PAYSTACK_SECRET_KEY is missing or still set to the example placeholder. Add a valid Paystack secret key to backend/.env and restart the server.' });
+  if (!isSupportedCurrency(requestedCurrency)) return response.status(400).json({ error: `Unsupported currency "${requestedCurrency}". Choose one of: GHS, USD, NGN, GBP, EUR.` });
   try {
-    const [{ beatDefaultPrices }, licenseStatusRows] = await Promise.all([
-      getPricing(database),
-      queryRows('SELECT license_type, is_active FROM license_definition_status')
-    ]);
-    const availableLicenseTypes = new Set(
-      licenseStatusRows.length
-        ? licenseStatusRows.filter(row => Boolean(Number(row.is_active))).map(row => String(row.license_type).toLowerCase())
-        : ['basic', 'premium', 'unlimited', 'exclusive']
-    );
-    const validatedItems = await Promise.all(items.map(item => new Promise((resolve, reject) => {
-      if (!item || typeof item !== 'object' || Array.isArray(item)) return reject(new Error('Each payment item must be an object.'));
-      if (item.type === 'merchandise') {
-        const productId = Number(item.productId);
-        if (!Number.isInteger(productId) || productId < 1) return reject(new Error('Invalid merchandise selected.'));
-        database.get("SELECT id, title, price, stock_quantity FROM merchandise WHERE id = ? AND catalog_status = 'published'", [productId], (error, product) => {
-          if (error) return reject(error);
-          if (!product || !Number.isFinite(Number(product.price)) || Number(product.price) <= 0) return reject(new Error(`Merchandise unavailable: ${item.name || 'Unknown item'}.`));
-          if (product.stock_quantity !== null && Number(product.stock_quantity) < 1) return reject(new Error(`${product.title} is out of stock.`));
-          resolve({ type: 'merchandise', productId: product.id, name: product.title, priceGhs: Number(product.price) });
-        });
-        return;
-      }
-      const license = String(item.license || '').toLowerCase();
-      if (typeof item.name !== 'string' || !item.name.trim() || item.name.trim().length > 255) return reject(new Error('Each beat item must include a title up to 255 characters.'));
-      const priceColumns = { basic: 'basic_price', premium: 'premium_price', unlimited: 'unlimited_price', exclusive: 'exclusive_price' };
-      if (!priceColumns[license]) return reject(new Error('Invalid license selected.'));
-      if (!availableLicenseTypes.has(license)) return reject(new Error('This license is no longer available for new purchases.'));
-      database.get('SELECT id, title, cover_art, COALESCE(NULLIF(' + priceColumns[license] + ', 0), ?) AS price FROM beats WHERE lower(title) = lower(?)', [beatDefaultPrices[license], String(item.name || '')], (error, beat) => {
-        if (error) return reject(error);
-        if (!beat || !Number.isFinite(Number(beat.price)) || Number(beat.price) <= 0) return reject(new Error(`Beat unavailable: ${item.name || 'Unknown beat'}.`));
-        if (license !== 'exclusive') return resolve({ type: 'beat', productId: beat.id, name: beat.title, license, priceUsd: Number(beat.price) });
-        hasPaidExclusiveLicense(queryRows, beat.id)
-          .then(isSold => isSold ? reject(new Error(`The exclusive license for "${beat.title}" has already been sold.`)) : resolve({ type: 'beat', productId: beat.id, name: beat.title, license, priceUsd: Number(beat.price) }))
-          .catch(reject);
-      });
-    })));
-    const exchangeRate = validatedItems.some(item => item.type === 'beat')
-      ? await getUsdGhsRate(database)
-      : null;
-    const pricedItems = validatedItems.map(item => {
-      if (item.type !== 'beat') return { ...item, priceGhs: amountToCents(item.priceGhs) / 100 };
-      return {
-        ...item,
-        priceGhs: amountToCents(Number(item.priceUsd) * exchangeRate.rate) / 100,
-        exchangeRate: exchangeRate.rate
-      };
-    });
-    const amountCents = pricedItems.reduce((total, item) => total + amountToCents(item.priceGhs), 0);
-    const amountGhs = amountCents / 100;
+    const { items: pricedItems, amountGhs } = await priceCartItems(database, items);
+    const quote = await getChargeQuote(database, amountGhs, requestedCurrency, { ttlMs: QUOTE_TTL_MS });
+    if (quote.provider === 'paystack' && !paystackSecretKey) {
+      return response.status(503).json({ error: 'Store payments are unavailable because PAYSTACK_SECRET_KEY is missing or still set to the example placeholder. Add a valid Paystack secret key to backend/.env and restart the server.' });
+    }
+    if (quote.provider === 'flutterwave' && !isFlutterwaveConfigured()) {
+      return response.status(503).json({ error: 'Charging in this currency is unavailable because FLUTTERWAVE_SECRET_KEY is not configured. Choose GHS to continue.' });
+    }
     const reference = `UBB-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
-    await run('INSERT INTO orders (reference, customer_name, customer_email, amount, currency, items_json) VALUES (?, ?, ?, ?, ?, ?)', [reference, String(name).trim(), normalizedEmail, amountGhs, 'GHS', JSON.stringify(pricedItems)]);
-    const paystackResponse = await fetch('https://api.paystack.co/transaction/initialize', { method: 'POST', headers: { Authorization: `Bearer ${paystackSecretKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ email: normalizedEmail, amount: Math.round(amountGhs * 100), currency: 'GHS', reference, channels: [paymentMethod], callback_url: paymentCallbackUrl.toString() }) });
-    const payment = await paystackResponse.json();
-    if (!paystackResponse.ok || !payment.status) throw new Error(payment.message || 'Could not start payment.');
+    const foreign = quote.provider === 'flutterwave';
     await run(
-      `INSERT INTO payments (order_id, provider, provider_reference, status, amount, currency, provider_payload)
-       SELECT id, ?, ?, ?, ?, ?, ? FROM orders WHERE reference = ?
-       ON CONFLICT (provider_reference) DO UPDATE SET order_id = EXCLUDED.order_id, status = EXCLUDED.status,
-         amount = EXCLUDED.amount, currency = EXCLUDED.currency, provider_payload = EXCLUDED.provider_payload`,
-      [ 'paystack', payment.data.reference, 'pending', amountGhs, 'GHS', JSON.stringify(payment.data), reference ]
+      `INSERT INTO orders (reference, customer_name, customer_email, amount, currency, items_json, amount_ghs, fx_rate, fx_markup_percent, fx_source, fx_quoted_at, provider)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        reference,
+        String(name).trim(),
+        normalizedEmail,
+        quote.amount,
+        quote.currency,
+        JSON.stringify(pricedItems),
+        quote.amountGhs,
+        foreign ? quote.midRate : null,
+        foreign ? quote.markupPercent : null,
+        foreign ? quote.source : null,
+        foreign ? new Date() : null,
+        quote.provider
+      ]
     );
-    response.json({ authorizationUrl: payment.data.authorization_url, reference });
+    let checkout;
+    if (foreign) {
+      checkout = await createFlutterwaveCheckout({
+        reference,
+        amount: quote.amount,
+        currency: quote.currency,
+        customer: { email: normalizedEmail, name: String(name).trim() },
+        redirectUrl: paymentCallbackUrl.toString(),
+        meta: { order_reference: reference }
+      });
+    } else {
+      const paystackResponse = await fetch('https://api.paystack.co/transaction/initialize', { method: 'POST', headers: { Authorization: `Bearer ${paystackSecretKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ email: normalizedEmail, amount: Math.round(quote.amount * 100), currency: quote.currency, reference, channels: [paymentMethod], callback_url: paymentCallbackUrl.toString() }) });
+      const payment = await paystackResponse.json();
+      if (!paystackResponse.ok || !payment.status) throw new Error(payment.message || 'Could not start payment.');
+      checkout = {
+        authorizationUrl: payment.data.authorization_url,
+        providerReference: payment.data.reference,
+        payload: payment.data
+      };
+    }
+    await run(
+      `INSERT INTO payments (order_id, provider, provider_reference, status, amount, currency, amount_ghs, provider_payload)
+       SELECT id, ?, ?, ?, ?, ?, ?, ? FROM orders WHERE reference = ?
+       ON CONFLICT (provider_reference) DO UPDATE SET order_id = EXCLUDED.order_id, status = EXCLUDED.status,
+         amount = EXCLUDED.amount, currency = EXCLUDED.currency, amount_ghs = EXCLUDED.amount_ghs,
+         provider_payload = EXCLUDED.provider_payload`,
+      [quote.provider, checkout.providerReference, 'pending', quote.amount, quote.currency, quote.amountGhs, JSON.stringify(checkout.payload), reference]
+    );
+    response.json({ authorizationUrl: checkout.authorizationUrl, reference, amount: quote.amount, currency: quote.currency });
   } catch (error) {
-    const status = ['USD_GHS_RATE_INVALID', 'USD_GHS_RATE_STALE'].includes(error.code) ? 503 : 400;
-    response.status(status).json({ error: error.message || 'Store payment initialization failed because the order could not be prepared.' });
+    const status = quoteErrorStatus(error.code) || 400;
+    response.status(status).json({
+      error: error.message || 'Store payment initialization failed because the order could not be prepared.',
+      ...(error.code ? { code: error.code } : {})
+    });
   }
 });
 
 router.get('/payments/verify/:reference', paymentVerificationRateLimit, async (request, response) => {
-  if (!paystackSecretKey) return response.status(503).json({ error: 'Payment verification is unavailable because PAYSTACK_SECRET_KEY is missing or still set to the example placeholder. Add a valid Paystack secret key to backend/.env and restart the server.' });
+  const reference = request.params.reference;
+  let order;
   try {
-    const paymentResponse = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(request.params.reference)}`, { headers: { Authorization: `Bearer ${paystackSecretKey}` } });
-    const payment = await paymentResponse.json();
-    if (!paymentResponse.ok || payment.data?.reference !== request.params.reference) return response.status(400).json({ error: 'Payment was not completed.' });
-    if (payment.data?.status !== 'success') {
-      const failureStatus = paymentFailureStatus('', payment.data?.status);
+    order = await get('SELECT * FROM orders WHERE reference = ?', [reference]);
+  } catch (error) {
+    logger.error('payment_verification_order_load_failed', { code: error.code });
+    return response.status(500).json({ error: databaseError('Payment verification failed.', error) });
+  }
+  if (!order) return response.status(404).json({ error: `No order was found for payment reference ${reference}.` });
+
+  const provider = paymentProvider(order);
+  let payment;
+  try {
+    if (provider === 'flutterwave') {
+      if (!isFlutterwaveConfigured()) return response.status(503).json({ error: 'Payment verification is unavailable because FLUTTERWAVE_SECRET_KEY is not configured.' });
+      const verified = await verifyFlutterwaveTransaction(reference);
+      if (!verified) return response.status(400).json({ error: 'Payment was not completed.' });
+      payment = normalizeFlutterwavePayment(verified.raw);
+    } else {
+      if (!paystackSecretKey) return response.status(503).json({ error: 'Payment verification is unavailable because PAYSTACK_SECRET_KEY is missing or still set to the example placeholder. Add a valid Paystack secret key to backend/.env and restart the server.' });
+      const paymentResponse = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, { headers: { Authorization: `Bearer ${paystackSecretKey}` } });
+      const payload = await paymentResponse.json();
+      if (!paymentResponse.ok || payload.data?.reference !== reference) return response.status(400).json({ error: 'Payment was not completed.' });
+      payment = normalizePaystackPayment(payload.data || {});
+    }
+  } catch (error) {
+    logger.error('payment_verification_failed', { code: error.code });
+    return response.status(quoteErrorStatus(error.code) || 502).json({ error: error.code ? databaseError('Payment verification failed.', error) : `Payment verification failed: ${error.message}` });
+  }
+
+  try {
+    if (payment.status !== 'success') {
+      const failureStatus = paymentFailureStatus('', payment.status);
       if (failureStatus) {
         const failureOutcome = await database.transaction(async tx => {
-          const order = await tx.get('SELECT * FROM orders WHERE reference = ? FOR UPDATE', [request.params.reference]);
-          if (!order) return { httpStatus: 404, body: { error: `No order was found for payment reference ${request.params.reference}.` } };
+          const lockedOrder = await tx.get('SELECT * FROM orders WHERE reference = ? FOR UPDATE', [reference]);
+          if (!lockedOrder) return { httpStatus: 404, body: { error: `No order was found for payment reference ${reference}.` } };
           if (failureStatus === 'reversed') {
-            if (payment.data.currency !== order.currency) return { httpStatus: 400, body: { error: 'Payment currency could not be verified.' } };
-            const result = await applyPaymentReversal(tx, order, { reference: request.params.reference, paymentData: payment.data });
-            return { orderId: order.id, refund: result };
+            if (payment.currency !== lockedOrder.currency) return { httpStatus: 400, body: { error: 'Payment currency could not be verified.' } };
+            const result = await applyPaymentReversal(tx, lockedOrder, { reference, payment });
+            return { orderId: lockedOrder.id, refund: result };
           }
-          await recordNonSuccessPayment(tx, order, {
-            reference: request.params.reference,
-            status: failureStatus,
-            paymentData: payment.data
-          });
-          return { orderId: order.id };
+          await recordNonSuccessPayment(tx, lockedOrder, { reference, status: failureStatus, payment });
+          return { orderId: lockedOrder.id };
         });
         if (failureOutcome.httpStatus) return response.status(failureOutcome.httpStatus).json(failureOutcome.body);
         if (failureOutcome.orderId) recordAuditSafely(database, {
           action: failureStatus === 'reversed' ? 'payment_reversed' : `payment_${failureStatus}`,
           entityType: 'order',
           entityId: failureOutcome.orderId,
-          details: { reference: request.params.reference, status: failureStatus }
+          details: { reference, status: failureStatus }
         });
       }
       return response.status(400).json({ error: 'Payment was not completed.' });
     }
     const outcome = await database.transaction(async tx => {
-      const order = await tx.get('SELECT * FROM orders WHERE reference = ? FOR UPDATE', [request.params.reference]);
-      if (!order) return { httpStatus: 404, body: { error: `No order was found for payment reference ${request.params.reference}.` } };
-      const orderItems = parseOrderItems(order.items_json);
+      const lockedOrder = await tx.get('SELECT * FROM orders WHERE reference = ? FOR UPDATE', [reference]);
+      if (!lockedOrder) return { httpStatus: 404, body: { error: `No order was found for payment reference ${reference}.` } };
+      const orderItems = parseOrderItems(lockedOrder.items_json);
       if (!orderItems) return { httpStatus: 500, body: { error: 'Order data is invalid.' } };
       let items;
-      try { items = snapshotLegacyBeatPrices(order, orderItems); } catch (error) {
+      try { items = snapshotLegacyBeatPrices(lockedOrder, orderItems); } catch (error) {
         return { httpStatus: 500, body: { error: error.code === 'ORDER_PRICING_INVALID' ? error.message : 'Order data is invalid.' } };
       }
       const bookingItem = items.find(item => item.type === 'booking');
@@ -563,26 +767,26 @@ router.get('/payments/verify/:reference', paymentVerificationRateLimit, async (r
         httpStatus: 200,
         body: {
           status: 'success',
-          reference: order.reference,
+          reference: lockedOrder.reference,
           booking: bookingItem ? { service: bookingItem.name, feeGhs: bookingItem.feeGhs } : null,
-          downloads: order.status === 'paid' ? getDownloadItems(order, apiPublicUrl, licenseRights) : []
+          downloads: lockedOrder.status === 'paid' ? getDownloadItems(lockedOrder, apiPublicUrl, licenseRights) : []
         }
       });
-      if (order.status === 'paid' || order.status === 'partially_refunded') return success();
-      if (order.status === 'refunded') return { httpStatus: 409, body: { error: 'This order was refunded and cannot be marked paid again.' } };
-      if (Number(payment.data.amount) !== Math.round(order.amount * 100) || payment.data.currency !== order.currency) return { httpStatus: 400, body: { error: 'Payment amount could not be verified.' } };
+      if (lockedOrder.status === 'paid' || lockedOrder.status === 'partially_refunded') return success();
+      if (lockedOrder.status === 'refunded') return { httpStatus: 409, body: { error: 'This order was refunded and cannot be marked paid again.' } };
+      if (!chargeMatchesOrder(lockedOrder, payment)) return { httpStatus: 400, body: { error: 'Payment amount could not be verified.' } };
       await lockExclusiveBeats(tx, items);
-      const conflictingBeatId = await hasConflictingExclusiveSale(tx, items, order.reference);
+      const conflictingBeatId = await hasConflictingExclusiveSale(tx, items, lockedOrder.reference);
       if (conflictingBeatId) return { httpStatus: 409, body: { error: `The exclusive license for beat ${conflictingBeatId} has already been sold. Payment cannot unlock this order.` } };
       if (bookingItem) {
         try {
-          await fulfillPaidBooking(tx, order, bookingItem);
+          await fulfillPaidBooking(tx, lockedOrder, bookingItem);
         } catch (error) {
           if (error.code === 'BOOKING_SLOT_UNAVAILABLE' || error.code === 'ER_DUP_ENTRY') {
-            await markBookingForReview(tx, order, items, payment.data);
+            await markBookingForReview(tx, lockedOrder, items, payment);
             return {
               httpStatus: 409,
-              order,
+              order: lockedOrder,
               conflict: 'booking_slot_unavailable',
               body: { error: 'Payment was received, but the selected booking slot is no longer available. The team has been notified to resolve your booking.' }
             };
@@ -590,7 +794,7 @@ router.get('/payments/verify/:reference', paymentVerificationRateLimit, async (r
           throw error;
         }
       }
-      await completePaidOrder(tx, order, items, payment.data);
+      await completePaidOrder(tx, lockedOrder, items, payment);
       return success();
     });
     if (outcome.conflict) {

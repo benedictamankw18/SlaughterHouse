@@ -72,7 +72,7 @@ test('a full refund revokes licences, restores unfulfilled stock, and notifies b
   assert.equal(result.manualReview.length, 0);
 
   const sql = db.calls.map(call => call.query).join('\n');
-  assert.match(sql, /UPDATE orders SET status = \?, refunded_amount = \?, refunded_at/);
+  assert.match(sql, /UPDATE orders SET status = \?, refunded_amount = \?, refunded_amount_ghs = \?, refunded_at/);
   assert.match(sql, /SET fulfillment_review_required = FALSE, fulfillment_review_reason = NULL/);
   assert.match(sql, /UPDATE licenses SET revoked_at/);
   assert.match(sql, /UPDATE merchandise SET stock_quantity = stock_quantity \+ 1/);

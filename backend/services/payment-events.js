@@ -14,16 +14,38 @@ function isRefundEvent(eventType) {
   return String(eventType || '').toLowerCase().startsWith('refund.');
 }
 
-async function recordNonSuccessPayment(db, order, { reference, status, paymentData }) {
+async function recordNonSuccessPayment(db, order, { reference, status, paymentData, payment }) {
   if (!order) return;
   const settledStatuses = ['paid', 'partially_refunded', 'refunded'];
   if (settledStatuses.includes(String(order.status || ''))) return;
+  const provider = payment?.provider || order.provider || 'paystack';
+  const paymentAmount = Number(payment?.amount);
+  const legacyAmount = Number(paymentData?.amount);
+  const amount = Number.isFinite(paymentAmount) && paymentAmount > 0
+    ? paymentAmount
+    : Number.isFinite(legacyAmount) && legacyAmount > 0
+      ? (provider === 'paystack' ? legacyAmount / 100 : legacyAmount)
+      : 0;
+  const currency = payment?.currency || paymentData?.currency || order.currency || 'GHS';
+  const amountGhs = Number(order.amount_ghs ?? amount);
   await db.run(
-    `INSERT INTO payments (order_id, provider, provider_reference, status, amount, currency, provider_payload)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO payments (order_id, provider, provider_reference, provider_transaction_id, status, amount, currency, amount_ghs, provider_payload)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (provider_reference) DO UPDATE SET order_id = EXCLUDED.order_id, status = EXCLUDED.status,
-       amount = EXCLUDED.amount, currency = EXCLUDED.currency, provider_payload = EXCLUDED.provider_payload`,
-    [order.id, 'paystack', reference, status, Number(paymentData?.amount || 0) / 100, paymentData?.currency || order.currency || 'GHS', JSON.stringify(paymentData || {})]
+       amount = EXCLUDED.amount, currency = EXCLUDED.currency, amount_ghs = EXCLUDED.amount_ghs,
+       provider_transaction_id = EXCLUDED.provider_transaction_id,
+       provider_payload = EXCLUDED.provider_payload`,
+    [
+      order.id,
+      provider,
+      reference,
+      payment?.transactionId ?? null,
+      status,
+      amount,
+      currency,
+      Number.isFinite(amountGhs) && amountGhs > 0 ? amountGhs : amount,
+      JSON.stringify(payment?.raw ?? paymentData ?? {})
+    ]
   );
   if (status !== 'failed' && status !== 'abandoned') return;
   await db.run(
@@ -42,7 +64,7 @@ async function recordNonSuccessPayment(db, order, { reference, status, paymentDa
   await notifyAdminsSafely(db, {
     type: 'payment_failed',
     title: status === 'abandoned' ? 'Payment abandoned' : 'Payment failed',
-    message: `Payment ${reference} for order ${order.reference} (${Number(paymentData?.amount || 0) / 100} ${paymentData?.currency || order.currency}) was ${status}.`,
+    message: `Payment ${reference} for order ${order.reference} (${amount} ${currency}) was ${status}.`,
     dedupeKey: `payment-${status}:${reference}`
   });
 }

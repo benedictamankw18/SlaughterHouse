@@ -48,6 +48,7 @@ async function fulfillPaidBooking(db, order, bookingItem) {
       name: booking.name || order.customer_name,
       reference: order.reference,
       service: bookingItem.name,
+      amount: order.amount,
       feeGhs: bookingItem.feeGhs,
       currency: order.currency,
       slots: sessionSlots,

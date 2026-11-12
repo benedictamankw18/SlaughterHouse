@@ -5,13 +5,16 @@ const Module = require('node:module');
 const express = require('express');
 const { configureRequestBodyParsing } = require('../middleware/request-body');
 
-function loadPaymentsRouter({ bookingSlotUnavailable = false, exchangeRate = { rate: 10 }, beat = null } = {}) {
+function loadPaymentsRouter({ bookingSlotUnavailable = false, exchangeRate = { rate: 10 }, beat = null, chargeQuote = null, flutterwave = null, flutterwaveTransactionId = 99 } = {}) {
   const routeId = require.resolve('../routes/payments');
   const refundsId = require.resolve('../services/refunds');
+  const orderPricingId = require.resolve('../services/order-pricing');
   const originalRoute = require.cache[routeId];
   const originalModules = new Map();
   originalModules.set(refundsId, require.cache[refundsId]);
   delete require.cache[refundsId];
+  originalModules.set(orderPricingId, require.cache[orderPricingId]);
+  delete require.cache[orderPricingId];
   const calls = [];
   const rateLimitPolicies = [];
   const webhookEvents = new Set();
@@ -23,6 +26,7 @@ function loadPaymentsRouter({ bookingSlotUnavailable = false, exchangeRate = { r
     amount: 125,
     currency: 'GHS',
     status: 'pending',
+    provider: 'paystack',
     items_json: '[]'
   };
 
@@ -46,6 +50,11 @@ function loadPaymentsRouter({ bookingSlotUnavailable = false, exchangeRate = { r
           if (/FROM orders WHERE reference = \? FOR UPDATE/.test(query)) {
             return parameters[0] === order.reference ? { ...order } : null;
           }
+          if (/JOIN payments p/.test(query)) {
+            return parameters[0] === order.provider && String(parameters[1]) === String(flutterwaveTransactionId)
+              ? { ...order }
+              : null;
+          }
           return null;
         },
         async all(query, parameters = []) {
@@ -63,7 +72,11 @@ function loadPaymentsRouter({ bookingSlotUnavailable = false, exchangeRate = { r
       return Promise.resolve([]);
     },
     get(query, parameters, callback) {
-      const result = /FROM beats/.test(query) ? beat : null;
+      const result = /FROM beats/.test(query)
+        ? beat
+        : /FROM orders WHERE reference = \?/.test(query) && parameters?.[0] === order.reference
+          ? { ...order }
+          : null;
       callback?.(null, result);
       return Promise.resolve(result);
     },
@@ -109,6 +122,24 @@ function loadPaymentsRouter({ bookingSlotUnavailable = false, exchangeRate = { r
     },
     '../services/logger': { error() {}, info() {}, warn() {} }
   };
+
+  if (chargeQuote) {
+    mocks['../services/fx'] = {
+      QUOTE_TTL_MS: 15 * 60 * 1000,
+      BOOKING_QUOTE_TTL_MS: 30 * 60 * 1000,
+      isSupportedCurrency: currency => ['GHS', 'USD', 'NGN', 'GBP', 'EUR'].includes(String(currency || '').toUpperCase()),
+      getChargeQuote: typeof chargeQuote === 'function' ? chargeQuote : async () => chargeQuote
+    };
+  }
+  if (flutterwave) {
+    mocks['../services/flutterwave'] = {
+      isConfigured: () => flutterwave.configured !== false,
+      hasWebhookHash: () => flutterwave.webhookHash !== undefined,
+      verifyWebhookHash: value => value === flutterwave.webhookHash,
+      verifyTransaction: flutterwave.verifyTransaction,
+      createCheckout: flutterwave.createCheckout
+    };
+  }
 
   delete require.cache[routeId];
   for (const [modulePath, exports] of Object.entries(mocks)) {
@@ -196,6 +227,44 @@ async function postJson(router, path, body) {
   }
 }
 
+async function getJson(router, path) {
+  const app = express();
+  app.use('/api', router);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api${path}`, {
+      headers: { Connection: 'close' }
+    });
+    return { status: response.status, body: await response.json() };
+  } finally {
+    if (server.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+}
+
+async function postFlutterwaveWebhook(router, payload, { hash = 'flutterwave-webhook-secret' } = {}) {
+  const rawBody = JSON.stringify(payload);
+  const app = express();
+  configureRequestBodyParsing(app);
+  app.use('/api', router);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/payments/webhook`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'verif-hash': hash,
+        Connection: 'close'
+      },
+      body: rawBody
+    });
+    return { status: response.status, body: await response.json() };
+  } finally {
+    if (server.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+}
+
 function withRouter(run) {
   const loaded = loadPaymentsRouter();
   return Promise.resolve()
@@ -262,6 +331,173 @@ test('beat checkout snapshots the current rate and rounded GHS amount', async ()
     }]);
   } finally {
     global.fetch = originalFetch;
+    loaded.restore();
+  }
+});
+
+test('USD cart checkout stores the quoted charge and uses Flutterwave', async () => {
+  const checkoutRequests = [];
+  const quote = {
+    currency: 'USD',
+    amount: 10.2,
+    amountGhs: 127.5,
+    midRate: 12.5,
+    markupPercent: 2,
+    decimals: 2,
+    provider: 'flutterwave',
+    source: 'admin_approved:open.er-api.com',
+    quotedAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString()
+  };
+  const loaded = loadPaymentsRouter({
+    beat: { id: 8, title: 'Foreign Beat', price: 12.5 },
+    chargeQuote: quote,
+    flutterwave: {
+      async createCheckout(input) {
+        checkoutRequests.push(input);
+        return {
+          provider: 'flutterwave',
+          providerReference: input.reference,
+          authorizationUrl: 'https://flw.test/pay/abc',
+          payload: { id: 55, link: 'https://flw.test/pay/abc' }
+        };
+      }
+    }
+  });
+  try {
+    const result = await postJson(loaded.router, '/payments/initialize', {
+      name: 'Customer',
+      email: 'customer@example.test',
+      items: [{ type: 'beat', name: 'Foreign Beat', license: 'basic' }],
+      paymentMethod: 'card',
+      currency: 'USD'
+    });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.authorizationUrl, 'https://flw.test/pay/abc');
+    assert.equal(result.body.amount, 10.2);
+    assert.equal(result.body.currency, 'USD');
+
+    assert.equal(checkoutRequests.length, 1);
+    assert.equal(checkoutRequests[0].amount, 10.2);
+    assert.equal(checkoutRequests[0].currency, 'USD');
+    assert.deepEqual(checkoutRequests[0].meta, { order_reference: result.body.reference });
+
+    const orderInsert = loaded.calls.find(call => /INSERT INTO orders/.test(call.query));
+    assert.equal(orderInsert.parameters[0], result.body.reference);
+    assert.equal(orderInsert.parameters[3], 10.2);
+    assert.equal(orderInsert.parameters[4], 'USD');
+    assert.equal(orderInsert.parameters[6], 127.5);
+    assert.equal(Number(orderInsert.parameters[7]), 12.5);
+    assert.equal(Number(orderInsert.parameters[8]), 2);
+    assert.equal(orderInsert.parameters[9], 'admin_approved:open.er-api.com');
+    assert.ok(orderInsert.parameters[10] instanceof Date);
+    assert.equal(orderInsert.parameters[11], 'flutterwave');
+
+    const paymentInsert = loaded.calls.find(call => /INSERT INTO payments/.test(call.query));
+    assert.equal(paymentInsert.parameters[0], 'flutterwave');
+    assert.equal(paymentInsert.parameters[2], 'pending');
+    assert.equal(paymentInsert.parameters[3], 10.2);
+    assert.equal(paymentInsert.parameters[4], 'USD');
+    assert.equal(paymentInsert.parameters[5], 127.5);
+  } finally {
+    loaded.restore();
+  }
+});
+
+test('foreign checkout is blocked with the FX error status when charging is disabled', async () => {
+  const loaded = loadPaymentsRouter({
+    beat: { id: 8, title: 'Foreign Beat', price: 12.5 },
+    chargeQuote: async () => {
+      throw Object.assign(new Error('Charging in USD is not enabled yet.'), { code: 'FX_CHARGING_DISABLED' });
+    }
+  });
+  try {
+    const result = await postJson(loaded.router, '/payments/initialize', {
+      name: 'Customer',
+      email: 'customer@example.test',
+      items: [{ type: 'beat', name: 'Foreign Beat', license: 'basic' }],
+      paymentMethod: 'card',
+      currency: 'USD'
+    });
+    assert.equal(result.status, 409);
+    assert.equal(result.body.code, 'FX_CHARGING_DISABLED');
+    assert.equal(loaded.calls.some(call => /INSERT INTO orders/.test(call.query)), false);
+  } finally {
+    loaded.restore();
+  }
+});
+
+test('checkout rejects currencies outside the supported set before pricing', async () => {
+  const loaded = loadPaymentsRouter({ beat: { id: 8, title: 'Foreign Beat', price: 12.5 } });
+  try {
+    const result = await postJson(loaded.router, '/payments/initialize', {
+      name: 'Customer',
+      email: 'customer@example.test',
+      items: [{ type: 'beat', name: 'Foreign Beat', license: 'basic' }],
+      paymentMethod: 'card',
+      currency: 'KES'
+    });
+    assert.equal(result.status, 400);
+    assert.match(result.body.error, /Unsupported currency "KES"/);
+    assert.equal(loaded.calls.some(call => /INSERT INTO orders/.test(call.query)), false);
+  } finally {
+    loaded.restore();
+  }
+});
+
+test('payment quote returns the authoritative GHS amount and expiry for a cart', async () => {
+  const loaded = loadPaymentsRouter({ beat: { id: 8, title: 'Quote Beat', price: 12.5 } });
+  try {
+    const result = await postJson(loaded.router, '/payments/quote', {
+      items: [{ type: 'beat', name: 'Quote Beat', license: 'basic' }]
+    });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.currency, 'GHS');
+    assert.equal(result.body.amount, 125);
+    assert.equal(result.body.amountGhs, 125);
+    assert.equal(result.body.provider, 'paystack');
+    assert.equal(result.body.source, 'catalog_ghs');
+    assert.ok(Date.parse(result.body.expiresAt) > Date.parse(result.body.quotedAt));
+    assert.deepEqual(result.body.items, [{
+      type: 'beat',
+      productId: 8,
+      name: 'Quote Beat',
+      license: 'basic',
+      amountGhs: 125
+    }]);
+  } finally {
+    loaded.restore();
+  }
+});
+
+test('payment quote blocks foreign currencies until charging is enabled', async () => {
+  const loaded = loadPaymentsRouter({ beat: { id: 8, title: 'Quote Beat', price: 12.5 } });
+  try {
+    const result = await postJson(loaded.router, '/payments/quote', {
+      currency: 'USD',
+      items: [{ type: 'beat', name: 'Quote Beat', license: 'basic' }]
+    });
+    assert.equal(result.status, 409);
+    assert.equal(result.body.code, 'FX_CHARGING_DISABLED');
+  } finally {
+    loaded.restore();
+  }
+});
+
+test('payment quote rejects unsupported currencies and empty carts', async () => {
+  const loaded = loadPaymentsRouter({ beat: { id: 8, title: 'Quote Beat', price: 12.5 } });
+  try {
+    const unsupported = await postJson(loaded.router, '/payments/quote', {
+      currency: 'KES',
+      items: [{ type: 'beat', name: 'Quote Beat', license: 'basic' }]
+    });
+    assert.equal(unsupported.status, 400);
+    assert.equal(unsupported.body.code, 'FX_CURRENCY_UNSUPPORTED');
+
+    const empty = await postJson(loaded.router, '/payments/quote', { items: [] });
+    assert.equal(empty.status, 400);
+    assert.match(empty.body.error, /between 1 and 100 items/);
+  } finally {
     loaded.restore();
   }
 });
@@ -338,9 +574,10 @@ test('Paystack success with an expired booking hold marks the paid order for rev
   }
 });
 
-test('payment initialization, verification, and webhook routes use shared rate limits', () => withRouter(async loaded => {
+test('payment initialization, quote, verification, and webhook routes use shared rate limits', () => withRouter(async loaded => {
   assert.deepEqual(loaded.rateLimitPolicies.map(({ windowMs, max }) => ({ windowMs, max })), [
     { windowMs: 15 * 60 * 1000, max: 20 },
+    { windowMs: 15 * 60 * 1000, max: 120 },
     { windowMs: 60 * 1000, max: 30 },
     { windowMs: 60 * 1000, max: 300 }
   ]);
@@ -465,3 +702,270 @@ test('Paystack refund webhook applies the refund to its referenced order', () =>
     && parameters[0] === 'partially_refunded'
     && parameters[1] === 25));
 }));
+
+test('Flutterwave success webhook re-verifies the charge before settling the order', async () => {
+  const verifiedReferences = [];
+  const loaded = loadPaymentsRouter({
+    flutterwave: {
+      webhookHash: 'flutterwave-webhook-secret',
+      async verifyTransaction(reference) {
+        verifiedReferences.push(reference);
+        return {
+          provider: 'flutterwave',
+          reference: loaded.order.reference,
+          transactionId: 99,
+          status: 'successful',
+          amount: 125,
+          currency: 'GHS',
+          raw: { id: 99, tx_ref: loaded.order.reference, status: 'successful', amount: 125, currency: 'GHS' }
+        };
+      }
+    }
+  });
+  loaded.order.provider = 'flutterwave';
+  try {
+    // The webhook body lies about the amount; only the re-verified transaction may be trusted.
+    const result = await postFlutterwaveWebhook(loaded.router, {
+      event: 'charge.completed',
+      data: {
+        id: 99,
+        tx_ref: loaded.order.reference,
+        status: 'successful',
+        amount: 1,
+        currency: 'GHS'
+      }
+    });
+
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body, { received: true });
+    assert.deepEqual(verifiedReferences, [loaded.order.reference]);
+    assert.ok(loaded.calls.some(({ query, parameters }) =>
+      /UPDATE orders SET status = \?/.test(query) && parameters[0] === 'paid'));
+    const paymentInsert = loaded.calls.find(({ query }) => /INSERT INTO payments/.test(query));
+    assert.equal(paymentInsert.parameters[1], 'flutterwave');
+    assert.equal(paymentInsert.parameters[3], 99);
+    assert.equal(paymentInsert.parameters[5], 125);
+    assert.equal(paymentInsert.parameters[6], 'GHS');
+  } finally {
+    loaded.restore();
+  }
+});
+
+test('Flutterwave webhooks reject a bad verif-hash before verifying the transaction', async () => {
+  let verified = false;
+  const loaded = loadPaymentsRouter({
+    flutterwave: {
+      webhookHash: 'flutterwave-webhook-secret',
+      async verifyTransaction() {
+        verified = true;
+        return null;
+      }
+    }
+  });
+  try {
+    const result = await postFlutterwaveWebhook(loaded.router, {
+      event: 'charge.completed',
+      data: { id: 99, tx_ref: loaded.order.reference, status: 'successful', amount: 125, currency: 'GHS' }
+    }, { hash: 'wrong-hash' });
+
+    assert.equal(result.status, 401);
+    assert.equal(result.body.error, 'Invalid Flutterwave webhook signature.');
+    assert.equal(verified, false);
+  } finally {
+    loaded.restore();
+  }
+});
+
+test('Flutterwave amount mismatches are rejected without settling the order', async () => {
+  const loaded = loadPaymentsRouter({
+    flutterwave: {
+      webhookHash: 'flutterwave-webhook-secret',
+      async verifyTransaction() {
+        return {
+          provider: 'flutterwave',
+          reference: loaded.order.reference,
+          transactionId: 99,
+          status: 'successful',
+          amount: 124.99,
+          currency: 'GHS',
+          raw: { id: 99, tx_ref: loaded.order.reference, status: 'successful', amount: 124.99, currency: 'GHS' }
+        };
+      }
+    }
+  });
+  loaded.order.provider = 'flutterwave';
+  try {
+    const result = await postFlutterwaveWebhook(loaded.router, {
+      event: 'charge.completed',
+      data: { id: 99, tx_ref: loaded.order.reference, status: 'successful', amount: 125, currency: 'GHS' }
+    });
+
+    assert.equal(result.status, 400);
+    assert.equal(result.body.error, 'Payment webhook amount could not be reconciled.');
+    assert.equal(loaded.calls.some(({ query, parameters }) =>
+      /UPDATE orders SET status = \?/.test(query) && parameters[0] === 'paid'), false);
+  } finally {
+    loaded.restore();
+  }
+});
+
+test('a failed Flutterwave charge is recorded as a failed payment', async () => {
+  const loaded = loadPaymentsRouter({
+    flutterwave: {
+      webhookHash: 'flutterwave-webhook-secret',
+      async verifyTransaction() {
+        return {
+          provider: 'flutterwave',
+          reference: loaded.order.reference,
+          transactionId: 99,
+          status: 'failed',
+          amount: 125,
+          currency: 'GHS',
+          raw: { id: 99, tx_ref: loaded.order.reference, status: 'failed', amount: 125, currency: 'GHS' }
+        };
+      }
+    }
+  });
+  loaded.order.provider = 'flutterwave';
+  try {
+    const result = await postFlutterwaveWebhook(loaded.router, {
+      event: 'charge.completed',
+      data: { id: 99, tx_ref: loaded.order.reference, status: 'failed', amount: 125, currency: 'GHS' }
+    });
+
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body, { received: true });
+    assert.ok(loaded.calls.some(({ query, parameters }) =>
+      /UPDATE orders SET status = \?/.test(query) && parameters[0] === 'failed'));
+    const paymentInsert = loaded.calls.find(({ query }) => /INSERT INTO payments/.test(query));
+    assert.equal(paymentInsert.parameters[1], 'flutterwave');
+    assert.equal(paymentInsert.parameters[4], 'failed');
+  } finally {
+    loaded.restore();
+  }
+});
+
+test('unrelated Flutterwave events are acknowledged and ignored', async () => {
+  let verified = false;
+  const loaded = loadPaymentsRouter({
+    flutterwave: {
+      webhookHash: 'flutterwave-webhook-secret',
+      async verifyTransaction() {
+        verified = true;
+        return null;
+      }
+    }
+  });
+  try {
+    const result = await postFlutterwaveWebhook(loaded.router, { event: 'transfer.completed', data: { id: 1 } });
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body, { received: true, ignored: true });
+    assert.equal(verified, false);
+  } finally {
+    loaded.restore();
+  }
+});
+
+test('a Flutterwave refund webhook applies the refund by provider transaction id', async () => {
+  const loaded = loadPaymentsRouter({
+    flutterwave: { webhookHash: 'flutterwave-webhook-secret' },
+    flutterwaveTransactionId: 99
+  });
+  loaded.order.provider = 'flutterwave';
+  loaded.order.status = 'paid';
+  loaded.order.refunded_amount = 0;
+  try {
+    const result = await postFlutterwaveWebhook(loaded.router, {
+      id: 55,
+      AmountRefunded: 25,
+      status: 'completed',
+      TransactionId: 99,
+      destination: 'payment_source'
+    });
+
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body, {
+      received: true,
+      refund: { status: 'partially_refunded', full: false }
+    });
+    assert.ok(loaded.calls.some(({ query, parameters }) =>
+      /UPDATE orders SET status = \?, refunded_amount = \?/.test(query)
+      && parameters[0] === 'partially_refunded'
+      && parameters[1] === 25));
+  } finally {
+    loaded.restore();
+  }
+});
+
+test('Flutterwave verification settles a USD order using the stored charge', async () => {
+  const loaded = loadPaymentsRouter({
+    flutterwave: {
+      async verifyTransaction(reference) {
+        assert.equal(reference, 'UBB-USD-1');
+        return {
+          provider: 'flutterwave',
+          reference,
+          transactionId: 77,
+          status: 'successful',
+          amount: 10.2,
+          currency: 'USD',
+          raw: { id: 77, tx_ref: reference, status: 'successful', amount: 10.2, currency: 'USD' }
+        };
+      }
+    }
+  });
+  Object.assign(loaded.order, {
+    reference: 'UBB-USD-1',
+    provider: 'flutterwave',
+    amount: 10.2,
+    amount_ghs: 127.5,
+    currency: 'USD'
+  });
+  try {
+    const result = await getJson(loaded.router, '/payments/verify/UBB-USD-1');
+    assert.equal(result.status, 200);
+    assert.equal(result.body.status, 'success');
+    assert.equal(result.body.reference, 'UBB-USD-1');
+    const paymentInsert = loaded.calls.find(({ query }) => /INSERT INTO payments/.test(query));
+    assert.equal(paymentInsert.parameters[1], 'flutterwave');
+    assert.equal(paymentInsert.parameters[5], 10.2);
+    assert.equal(paymentInsert.parameters[6], 'USD');
+    assert.equal(paymentInsert.parameters[7], 127.5);
+  } finally {
+    loaded.restore();
+  }
+});
+
+test('Flutterwave verification rejects an amount that does not match the stored charge', async () => {
+  const loaded = loadPaymentsRouter({
+    flutterwave: {
+      async verifyTransaction(reference) {
+        return {
+          provider: 'flutterwave',
+          reference,
+          transactionId: 77,
+          status: 'successful',
+          amount: 10.19,
+          currency: 'USD',
+          raw: { id: 77, tx_ref: reference, status: 'successful', amount: 10.19, currency: 'USD' }
+        };
+      }
+    }
+  });
+  Object.assign(loaded.order, {
+    reference: 'UBB-USD-2',
+    provider: 'flutterwave',
+    amount: 10.2,
+    amount_ghs: 127.5,
+    currency: 'USD'
+  });
+  try {
+    const result = await getJson(loaded.router, '/payments/verify/UBB-USD-2');
+    assert.equal(result.status, 400);
+    assert.equal(result.body.error, 'Payment amount could not be verified.');
+    assert.equal(loaded.calls.some(({ query, parameters }) =>
+      /UPDATE orders SET status = \?/.test(query) && parameters[0] === 'paid'), false);
+  } finally {
+    loaded.restore();
+  }
+});

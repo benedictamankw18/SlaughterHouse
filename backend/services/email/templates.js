@@ -149,12 +149,12 @@ function renderBookingConfirmation(data = {}) {
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0;font-size:14px">
       <tr><td style="padding:6px 0;color:#6b7280">Reference</td><td style="padding:6px 0;text-align:right">${escapeHtml(data.reference)}</td></tr>
       <tr><td style="padding:6px 0;color:#6b7280">Session</td><td style="padding:6px 0;text-align:right">${escapeHtml(slotLines || 'See your account')}</td></tr>
-      <tr><td style="padding:6px 0;color:#6b7280">Fee paid</td><td style="padding:6px 0;text-align:right">${escapeHtml(formatMoney(data.feeGhs, data.currency))}</td></tr>
+      <tr><td style="padding:6px 0;color:#6b7280">Fee paid</td><td style="padding:6px 0;text-align:right">${escapeHtml(formatMoney(data.amount ?? data.feeGhs, data.currency))}</td></tr>
     </table>`;
   return {
     subject: `Booking confirmed - ${data.reference}`,
     html: layout({ preheader: `Your ${data.service || 'studio'} booking is confirmed.`, heading, bodyHtml: body, cta: data.bookingUrl ? { label: 'View your bookings', url: data.bookingUrl } : null }),
-    text: `Hi ${data.name || 'there'},\n\nYour ${data.service || 'studio'} booking is paid and awaiting final studio confirmation.\n\nReference: ${data.reference}\nSession: ${slotLines || 'See your account'}\nFee paid: ${formatMoney(data.feeGhs, data.currency)}\n${data.bookingUrl ? `\n${data.bookingUrl}\n` : ''}`
+    text: `Hi ${data.name || 'there'},\n\nYour ${data.service || 'studio'} booking is paid and awaiting final studio confirmation.\n\nReference: ${data.reference}\nSession: ${slotLines || 'See your account'}\nFee paid: ${formatMoney(data.amount ?? data.feeGhs, data.currency)}\n${data.bookingUrl ? `\n${data.bookingUrl}\n` : ''}`
   };
 }
 
@@ -264,7 +264,7 @@ function renderBookingRequestReceived(data = {}) {
     <table style="width:100%;border-collapse:collapse;margin:16px 0">
       <tr><td style="padding:6px 0;color:#6b7280">Reference</td><td style="padding:6px 0;text-align:right">${escapeHtml(data.reference)}</td></tr>
       <tr><td style="padding:6px 0;color:#6b7280">Session</td><td style="padding:6px 0;text-align:right">${escapeHtml(slotLines || 'See your account')}</td></tr>
-      <tr><td style="padding:6px 0;color:#6b7280">Fee</td><td style="padding:6px 0;text-align:right">${escapeHtml(formatMoney(data.feeGhs, data.currency))}</td></tr>
+      <tr><td style="padding:6px 0;color:#6b7280">Fee</td><td style="padding:6px 0;text-align:right">${escapeHtml(formatMoney(data.amount ?? data.feeGhs, data.currency))}</td></tr>
     </table>
     <p>${Number.isFinite(holdMinutes) && holdMinutes > 0
       ? `Your selected time is held for ${escapeHtml(holdMinutes)} minutes while payment is completed.`
@@ -278,7 +278,7 @@ function renderBookingRequestReceived(data = {}) {
       bodyHtml: body,
       cta: data.accountUrl ? { label: 'View your bookings', url: data.accountUrl } : null
     }),
-    text: `Hi ${data.name || 'there'},\n\nYour ${data.service || 'studio'} booking request has been received. Complete payment to secure your session.\n\nReference: ${data.reference}\nSession: ${slotLines || 'See your account'}\nFee: ${formatMoney(data.feeGhs, data.currency)}\n${Number.isFinite(holdMinutes) && holdMinutes > 0 ? `Your selected time is held for ${holdMinutes} minutes while payment is completed.\n` : ''}\nIf you do not finish payment, the hold is released automatically and the time can be booked by someone else.${data.accountUrl ? `\n\n${data.accountUrl}` : ''}`
+    text: `Hi ${data.name || 'there'},\n\nYour ${data.service || 'studio'} booking request has been received. Complete payment to secure your session.\n\nReference: ${data.reference}\nSession: ${slotLines || 'See your account'}\nFee: ${formatMoney(data.amount ?? data.feeGhs, data.currency)}\n${Number.isFinite(holdMinutes) && holdMinutes > 0 ? `Your selected time is held for ${holdMinutes} minutes while payment is completed.\n` : ''}\nIf you do not finish payment, the hold is released automatically and the time can be booked by someone else.${data.accountUrl ? `\n\n${data.accountUrl}` : ''}`
   };
 }
 

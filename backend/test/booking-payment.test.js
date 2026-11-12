@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const Module = require('node:module');
 const express = require('express');
 
-function loadBookingsRouter({ unavailableTime = null } = {}) {
+function loadBookingsRouter({ unavailableTime = null, chargeQuote = null, flutterwave = null } = {}) {
   const routeId = require.resolve('../routes/bookings');
   const originals = new Map([[routeId, require.cache[routeId]]]);
   const calls = [];
@@ -53,6 +53,21 @@ function loadBookingsRouter({ unavailableTime = null } = {}) {
     '../services/error-messages': { databaseError: () => 'database error' }
   };
 
+  if (chargeQuote) {
+    mocks['../services/fx'] = {
+      QUOTE_TTL_MS: 15 * 60 * 1000,
+      BOOKING_QUOTE_TTL_MS: 30 * 60 * 1000,
+      isSupportedCurrency: currency => ['GHS', 'USD', 'NGN', 'GBP', 'EUR'].includes(String(currency || '').toUpperCase()),
+      getChargeQuote: typeof chargeQuote === 'function' ? chargeQuote : async () => chargeQuote
+    };
+  }
+  if (flutterwave) {
+    mocks['../services/flutterwave'] = {
+      isConfigured: () => flutterwave.configured !== false,
+      createCheckout: flutterwave.createCheckout
+    };
+  }
+
   delete require.cache[routeId];
   for (const [modulePath, exports] of Object.entries(mocks)) {
     const id = require.resolve(modulePath);
@@ -97,7 +112,7 @@ test('booking payment initialization uses a shared rate limit', () => {
   }
 });
 
-async function postBooking(router) {
+async function postBooking(router, overrides = {}) {
   const app = express();
   app.use(express.json());
   app.use('/api', router);
@@ -117,7 +132,8 @@ async function postBooking(router) {
         details: 'Test booking',
         paymentMethod: 'card',
         timezone: 'Africa/Accra',
-        durationMinutes: 140
+        durationMinutes: 140,
+        ...overrides
       })
     });
     return { status: response.status, body: await response.json() };
@@ -214,6 +230,93 @@ test('an uncertain Paystack response retains the hold only until its expiry', as
     assert.equal(loaded.calls.some(call => /SET status = 'available'/.test(call.query)), false);
   } finally {
     global.fetch = originalFetch;
+    loaded.restore();
+  }
+});
+
+test('USD booking checkout holds slots, stores the quoted charge, and uses Flutterwave', async () => {
+  const checkoutRequests = [];
+  const quote = {
+    currency: 'USD',
+    amount: 57.12,
+    amountGhs: 714,
+    midRate: 12.5,
+    markupPercent: 2,
+    decimals: 2,
+    provider: 'flutterwave',
+    source: 'admin_approved:open.er-api.com',
+    quotedAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString()
+  };
+  const loaded = loadBookingsRouter({
+    chargeQuote: quote,
+    flutterwave: {
+      async createCheckout(input) {
+        checkoutRequests.push(input);
+        return {
+          provider: 'flutterwave',
+          providerReference: input.reference,
+          authorizationUrl: 'https://flw.test/pay/booking',
+          payload: { id: 77, link: 'https://flw.test/pay/booking' }
+        };
+      }
+    }
+  });
+  const originalFetch = global.fetch;
+  global.fetch = async (...args) => {
+    if (String(args[0]).startsWith('https://api.paystack.co/')) {
+      throw new Error('Paystack must not be called for a USD booking.');
+    }
+    return originalFetch(...args);
+  };
+
+  try {
+    const result = await postBooking(loaded.router, { currency: 'USD' });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.authorizationUrl, 'https://flw.test/pay/booking');
+    assert.equal(result.body.amount, 57.12);
+    assert.equal(result.body.currency, 'USD');
+
+    assert.equal(checkoutRequests.length, 1);
+    assert.equal(checkoutRequests[0].amount, 57.12);
+    assert.equal(checkoutRequests[0].currency, 'USD');
+    assert.equal(checkoutRequests[0].meta.order_reference, result.body.reference);
+    assert.equal(checkoutRequests[0].meta.booking, true);
+
+    assert.ok(loaded.calls.some(call => /INSERT INTO booking_availability/.test(call.query)));
+    const orderInsert = loaded.calls.find(call => /INSERT INTO orders/.test(call.query));
+    assert.equal(orderInsert.parameters[0], result.body.reference);
+    assert.equal(orderInsert.parameters[3], 57.12);
+    assert.equal(orderInsert.parameters[4], 'USD');
+    assert.equal(orderInsert.parameters[6], 714);
+    assert.equal(Number(orderInsert.parameters[7]), 12.5);
+    assert.equal(Number(orderInsert.parameters[8]), 2);
+    assert.equal(orderInsert.parameters[11], 'flutterwave');
+
+    const paymentInsert = loaded.calls.find(call => /INSERT INTO payments/.test(call.query));
+    assert.equal(paymentInsert.parameters[0], 'flutterwave');
+    assert.equal(paymentInsert.parameters[3], 57.12);
+    assert.equal(paymentInsert.parameters[4], 'USD');
+    assert.equal(paymentInsert.parameters[5], 714);
+  } finally {
+    global.fetch = originalFetch;
+    loaded.restore();
+  }
+});
+
+test('foreign booking checkout is blocked before any hold is taken when charging is disabled', async () => {
+  const loaded = loadBookingsRouter({
+    chargeQuote: async () => {
+      throw Object.assign(new Error('Charging in USD is not enabled yet.'), { code: 'FX_CHARGING_DISABLED' });
+    }
+  });
+  try {
+    const result = await postBooking(loaded.router, { currency: 'USD' });
+    assert.equal(result.status, 409);
+    assert.equal(result.body.code, 'FX_CHARGING_DISABLED');
+    assert.equal(loaded.calls.some(call => /INSERT INTO booking_availability/.test(call.query)), false);
+    assert.equal(loaded.calls.some(call => /INSERT INTO orders/.test(call.query)), false);
+  } finally {
     loaded.restore();
   }
 });
