@@ -95,6 +95,33 @@ function amountToCents(amount) {
   return Math.round(Number(amount) * 100);
 }
 
+// Receipts show the amount actually charged. Line items are stored in GHS, so
+// allocate the charged total proportionally and give the last line the remainder
+// to guarantee the lines always sum to the charged total.
+function allocateReceiptItems(order, items) {
+  const totalCents = amountToCents(order.amount);
+  const weights = items.map(item => {
+    const amount = Number(saleAmount(item));
+    return Number.isFinite(amount) && amount > 0 ? amount : 0;
+  });
+  const weightTotal = weights.reduce((sum, weight) => sum + weight, 0);
+  let allocatedCents = 0;
+  return items.map((item, index) => {
+    const isLast = index === items.length - 1;
+    const cents = isLast
+      ? Math.max(0, totalCents - allocatedCents)
+      : weightTotal > 0
+        ? Math.round(totalCents * weights[index] / weightTotal)
+        : 0;
+    allocatedCents += cents;
+    return {
+      name: item.name,
+      license: item.license,
+      amount: cents / 100
+    };
+  });
+}
+
 function paymentProvider(order) {
   return String(order?.provider || 'paystack').toLowerCase() === 'flutterwave' ? 'flutterwave' : 'paystack';
 }
@@ -289,11 +316,7 @@ async function completePaidOrder(db, order, items, payment) {
       reference: order.reference,
       currency: order.currency,
       total: order.amount,
-      items: items.map(item => ({
-        name: item.name,
-        license: item.license,
-        amount: item.type === 'booking' ? item.feeGhs : saleAmount(item)
-      })),
+      items: allocateReceiptItems(order, items),
       orderUrl: new URL('/', config.frontendOrigin).toString()
     }
   });

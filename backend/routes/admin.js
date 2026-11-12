@@ -157,14 +157,15 @@ router.get('/admin/data', sessions.requireAdmin, (request, response) => {
       ...artist,
       purchases: purchases.filter(purchase => purchase.customer_email.toLowerCase() === artist.email.toLowerCase())
     }));
+    const netRevenueGhs = order => Number(order.amount_ghs ?? order.amount ?? 0) - Number(order.refunded_amount_ghs ?? order.refunded_amount ?? 0);
     const monthlySales = paidOrders.reduce((months, order) => {
       const date = new Date(order.created_at);
       const month = Number.isNaN(date.getTime()) ? 'Unknown' : date.toISOString().slice(0, 7);
-      months[month] = (months[month] || 0) + Number(order.amount || 0) - Number(order.refunded_amount || 0);
+      months[month] = (months[month] || 0) + netRevenueGhs(order);
       return months;
     }, {});
     const analytics = {
-      revenue: paidOrders.reduce((sum, order) => sum + Number(order.amount || 0) - Number(order.refunded_amount || 0), 0),
+      revenue: paidOrders.reduce((sum, order) => sum + netRevenueGhs(order), 0),
       paidOrders: paidOrders.length,
       pendingOrders: orders.filter(order => order.status === 'pending').length,
       beatLicenses: purchases.length,
@@ -788,14 +789,14 @@ router.get('/admin/reports', sessions.requireAdmin, async (request, response) =>
   try {
     const [orders, revenueRows, withdrawalRows, bookings, summaryRows, withdrawalSummaryRows, firstRows] = await Promise.all([
       queryRows(
-        `SELECT reference, customer_name, customer_email, status, amount, currency, refunded_amount, created_at
+        `SELECT reference, customer_name, customer_email, status, amount, currency, amount_ghs, refunded_amount, refunded_amount_ghs, created_at
          FROM orders ${where} ORDER BY created_at DESC LIMIT 5000`,
         parameters
       ),
       queryRows(
         `SELECT TO_CHAR(DATE_TRUNC('${sqlUnit}', created_at), '${format}') AS period,
                 COUNT(*) AS order_count,
-                SUM(amount - COALESCE(refunded_amount, 0)) AS revenue
+                SUM(COALESCE(amount_ghs, amount) - COALESCE(refunded_amount_ghs, refunded_amount, 0)) AS revenue
          FROM orders ${orderWhere}
          GROUP BY 1 ORDER BY 1`,
         parameters
@@ -814,7 +815,9 @@ router.get('/admin/reports', sessions.requireAdmin, async (request, response) =>
       queryRows(
         `SELECT COUNT(*) AS order_count,
                 COUNT(*) FILTER (WHERE status IN ('paid', 'partially_refunded')) AS paid_order_count,
-                SUM(CASE WHEN status IN ('paid', 'partially_refunded') THEN amount - COALESCE(refunded_amount, 0) ELSE 0 END) AS net_revenue
+                SUM(CASE WHEN status IN ('paid', 'partially_refunded')
+                         THEN COALESCE(amount_ghs, amount) - COALESCE(refunded_amount_ghs, refunded_amount, 0)
+                         ELSE 0 END) AS net_revenue
          FROM orders ${where}`,
         parameters
       ),
@@ -883,14 +886,14 @@ router.get('/admin/reports.csv', sessions.requireAdmin, async (request, response
   }
   try {
     const orders = await queryRows(
-      `SELECT reference, customer_name, customer_email, status, amount, currency, refunded_amount, created_at
+      `SELECT reference, customer_name, customer_email, status, amount, currency, amount_ghs, refunded_amount, refunded_amount_ghs, created_at
        FROM orders ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
        ORDER BY created_at DESC LIMIT 5000`,
       parameters
     );
     const rows = [
-      ['Reference', 'Customer', 'Email', 'Status', 'Amount', 'Refunded amount', 'Currency', 'Created at'],
-      ...orders.map(order => [order.reference, order.customer_name, order.customer_email, order.status, order.amount, order.refunded_amount, order.currency, order.created_at])
+      ['Reference', 'Customer', 'Email', 'Status', 'Amount', 'Currency', 'Amount (GHS)', 'Refunded amount', 'Refunded amount (GHS)', 'Created at'],
+      ...orders.map(order => [order.reference, order.customer_name, order.customer_email, order.status, order.amount, order.currency, order.amount_ghs, order.refunded_amount, order.refunded_amount_ghs, order.created_at])
     ];
     response.setHeader('Content-Type', 'text/csv; charset=utf-8');
     response.setHeader('Content-Disposition', 'attachment; filename="ultbigboy-report.csv"');
@@ -902,12 +905,12 @@ router.get('/admin/reports.csv', sessions.requireAdmin, async (request, response
 
 router.get('/admin/orders.csv', sessions.requireAdmin, (request, response) => {
   queryRows(
-    `SELECT reference, customer_name, customer_email, status, amount, currency, created_at
+    `SELECT reference, customer_name, customer_email, status, amount, currency, amount_ghs, created_at
      FROM orders ORDER BY created_at DESC LIMIT 5000`
   ).then(orders => {
     const rows = [
-      ['Reference', 'Customer', 'Email', 'Status', 'Amount', 'Currency', 'Created at'],
-      ...orders.map(order => [order.reference, order.customer_name, order.customer_email, order.status, order.amount, order.currency, order.created_at])
+      ['Reference', 'Customer', 'Email', 'Status', 'Amount', 'Currency', 'Amount (GHS)', 'Created at'],
+      ...orders.map(order => [order.reference, order.customer_name, order.customer_email, order.status, order.amount, order.currency, order.amount_ghs, order.created_at])
     ];
     response.setHeader('Content-Type', 'text/csv; charset=utf-8');
     response.setHeader('Content-Disposition', 'attachment; filename="ultbigboy-orders.csv"');

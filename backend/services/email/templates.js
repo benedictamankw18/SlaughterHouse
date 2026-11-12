@@ -13,7 +13,9 @@ function escapeHtml(value) {
 function formatMoney(amount, currency = DEFAULT_CURRENCY) {
   const numeric = Number(amount);
   if (!Number.isFinite(numeric)) return '';
-  return `${currency} ${numeric.toFixed(2)}`;
+  const code = String(currency || DEFAULT_CURRENCY).toUpperCase();
+  const decimals = code === 'NGN' ? 0 : 2;
+  return `${code} ${numeric.toFixed(decimals)}`;
 }
 
 function validateEmailUrl(value) {

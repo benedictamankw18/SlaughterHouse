@@ -1009,17 +1009,30 @@ let usdToGhsRate = null;
 
 const cartStorageKey = 'ultbigboyCart';
 const pendingCartPaymentsKey = 'ultbigboyPendingCartPayments';
+const currencyStorageKey = 'ultbigboyCurrency';
 let cart = [];
 try {
   const savedCart = JSON.parse(localStorage.getItem(cartStorageKey) || '[]');
   if (Array.isArray(savedCart)) {
     cart = savedCart.filter(item => item && typeof item.name === 'string' && (typeof item.license === 'string' || item.type === 'merchandise') && Number.isFinite(item.price) && typeof item.cover === 'string' && typeof item.selected === 'boolean')
-      .map(item => ({ ...item, priceCurrency: item.priceCurrency === 'GHS' ? 'GHS' : 'USD' }));
+      .map(item => {
+        const code = String(item.priceCurrency || 'USD').toUpperCase();
+        return { ...item, priceCurrency: SUPPORTED_CURRENCIES.includes(code) ? code : 'USD' };
+      });
   }
 } catch {
   cart = [];
 }
-let currentCurrency = currencySelect ? currencySelect.value : 'USD';
+let currentCurrency = null;
+try {
+  const saved = localStorage.getItem(currencyStorageKey);
+  if (saved && SUPPORTED_CURRENCIES.includes(String(saved).toUpperCase())) {
+    currentCurrency = String(saved).toUpperCase();
+  }
+} catch {}
+if (!currentCurrency && currencySelect) currentCurrency = currencySelect.value;
+if (!currentCurrency) currentCurrency = 'USD';
+if (currencySelect) currencySelect.value = currentCurrency;
 
 function createLicenseCode() {
   const purchaseCount = Number(localStorage.getItem('licensePurchaseCount') || 0) + 1;
@@ -1032,11 +1045,27 @@ function createLicenseCode() {
 
 const currencySymbols = {
   GHS: '₵',
-  USD: '$'
+  USD: '$',
+  NGN: '₦',
+  GBP: '£',
+  EUR: '€'
 };
 
+const currencyDecimals = {
+  GHS: 2,
+  USD: 2,
+  NGN: 0,
+  GBP: 2,
+  EUR: 2
+};
+
+const SUPPORTED_CURRENCIES = ['GHS', 'USD', 'NGN', 'GBP', 'EUR'];
+
 function formatCurrency(value, currency) {
-  return `${currencySymbols[currency]}${Number(value).toFixed(2)} ${currency}`;
+  const code = String(currency || 'GHS').toUpperCase();
+  const decimals = currencyDecimals[code] ?? 2;
+  const symbol = currencySymbols[code] || code;
+  return `${symbol}${Number(value).toFixed(decimals)} ${code}`;
 }
 
 function convertCartAmount(value, fromCurrency, toCurrency) {
@@ -1238,7 +1267,7 @@ async function loadProducedReleases() {
 loadProducedReleases();
 
 function addToCart(item) {
-  cart.push(item);
+  cart.push({ ...item, priceCurrency: item.priceCurrency || 'USD' });
   updateCart();
 }
 
@@ -1357,6 +1386,7 @@ window.addEventListener('storage', event => {
 
 function switchCurrency() {
   currentCurrency = currencySelect ? currencySelect.value : currentCurrency;
+  try { localStorage.setItem(currencyStorageKey, currentCurrency); } catch {}
   updateBeatPrices();
   updateCart();
   updateMerchandisePrices();
@@ -1575,6 +1605,17 @@ const cartDrawer = document.getElementById('cart-drawer');
 const cartCloseButton = document.getElementById('cart-close-button');
 const cartCheckoutButton = document.getElementById('cart-checkout-button');
 
+async function fetchChargeQuote(items, currency) {
+  const response = await fetch(`${API}/api/payments/quote`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items, currency })
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Could not prepare the charge quote.');
+  return data;
+}
+
 function openCheckoutForm() {
   const existingPanel = document.getElementById('checkout-form-panel');
   if (existingPanel) {
@@ -1592,6 +1633,9 @@ function openCheckoutForm() {
     <div class="checkout-payment-panel" id="checkout-payment-panel" role="tabpanel" aria-labelledby="checkout-tab-mobile">
       <p class="checkout-method-description checkout-mobile-description">Paystack will collect your Mobile Money network and number securely.</p>
       <p class="checkout-method-description checkout-card-description" hidden>Card number, expiry, and CVV are entered securely on Paystack after you continue.</p>
+    </div>
+    <div class="checkout-charge-preview" role="status" aria-live="polite">
+      <strong>You will be charged:</strong> <span class="checkout-charge-amount">—</span>
     </div>
     <button class="auth-primary-button checkout-submit" type="button">Proceed with Mobile Money</button>
     <div class="checkout-card-brands" aria-label="Accepted cards: Mastercard and Visa" hidden><span class="checkout-mastercard" aria-label="Mastercard"><i></i><i></i><b>mastercard</b></span><span class="checkout-visa" aria-label="Visa">VISA</span></div>
@@ -1633,6 +1677,35 @@ function openCheckoutForm() {
     });
   });
 
+  const chargeAmount = panel.querySelector('.checkout-charge-amount');
+  async function refreshChargePreview() {
+    const selected = cart.filter(item => item.selected);
+    if (!selected.length) {
+      chargeAmount.textContent = '—';
+      return;
+    }
+    chargeAmount.textContent = 'Calculating…';
+    try {
+      const quote = await fetchChargeQuote(selected.map(item => ({
+        type: item.type,
+        productId: item.productId,
+        name: item.name,
+        license: item.license,
+        price: item.price
+      })), currentCurrency);
+      const decimals = currencyDecimals[quote.currency] ?? 2;
+      const symbol = currencySymbols[quote.currency] || quote.currency;
+      chargeAmount.textContent = `${symbol}${Number(quote.amount).toFixed(decimals)} ${quote.currency} (≈ ₵${Number(quote.amountGhs || 0).toFixed(2)} GHS)`;
+    } catch (error) {
+      chargeAmount.textContent = 'Charge preview unavailable';
+      message.textContent = error.message;
+      message.classList.add('error');
+    }
+  }
+  refreshChargePreview();
+
+  currencySelect?.addEventListener('change', refreshChargePreview);
+
   submitButton.addEventListener('click', async () => {
     await customerSessionReady;
     const currentSelectedItems = cart.filter(item => item.selected);
@@ -1652,7 +1725,7 @@ function openCheckoutForm() {
     const stopBusy = window.startActionBusy(submitButton, 'Starting payment…');
     if (!stopBusy) return;
     try {
-      const response = await fetch(`${API}/api/payments/initialize`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: customerUser?.name || 'Guest Customer', email: paymentEmail, items: currentSelectedItems, paymentMethod }) });
+      const response = await fetch(`${API}/api/payments/initialize`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: customerUser?.name || 'Guest Customer', email: paymentEmail, items: currentSelectedItems, paymentMethod, currency: currentCurrency }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not start payment.');
       if (!data.reference || !data.authorizationUrl) throw new Error('Payment could not be started because the response was incomplete.');
