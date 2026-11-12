@@ -59,10 +59,15 @@
       </section>
 
       <section class="admin-section" data-admin-section="analytics">
-        <div class="admin-metrics"><article class="admin-metric"><span>Withdrawals recorded</span><strong id="metric-withdrawals">GHS 0.00</strong></article><article class="admin-metric"><span>Revenue after withdrawals</span><strong id="metric-net-revenue">GHS 0.00</strong></article></div>
+        <div class="admin-metrics"><article class="admin-metric"><span>All-time withdrawals recorded</span><strong id="metric-withdrawals">GHS 0.00</strong></article><article class="admin-metric"><span>All-time revenue after withdrawals</span><strong id="metric-net-revenue">GHS 0.00</strong></article></div>
         <form id="report-filter" class="admin-toggle"><label>From<input name="from" type="date"></label><label>To<input name="to" type="date"></label><button type="submit">Run report</button><button id="export-report" class="admin-secondary-button" type="button">Export filtered CSV</button></form>
+        <div class="analytics-controls">
+          <div class="admin-toggle" role="group" aria-label="Group report by"><button type="button" class="active" data-report-granularity="day">Daily</button><button type="button" data-report-granularity="week">Weekly</button><button type="button" data-report-granularity="month">Monthly</button><button type="button" data-report-granularity="year">Yearly</button></div>
+          <div class="admin-toggle" role="group" aria-label="Chart metric"><button type="button" class="active" data-report-metric="revenue">Revenue</button><button type="button" data-report-metric="withdrawals">Withdrawals</button><button type="button" data-report-metric="both">Both</button></div>
+          <div class="admin-toggle" role="group" aria-label="Chart type"><button type="button" class="active" data-report-chart="line">Line</button><button type="button" data-report-chart="histogram">Histogram</button></div>
+        </div>
         <p id="report-message" class="admin-message" role="status"></p><div id="report-summary" class="admin-metrics"></div><p id="booking-report-summary" class="admin-message"></p>
-        <h2>Paid revenue by day <small>(GHS)</small></h2><div id="analytics-chart" class="analytics-chart"></div>
+        <h2 id="analytics-chart-title">Revenue by day <small>(GHS)</small></h2><div id="analytics-chart" class="analytics-chart"></div>
       </section>
 
       <section class="admin-section" data-admin-section="content">

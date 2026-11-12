@@ -265,7 +265,28 @@ async function mockApi(page, options = {}) {
       if (order) order.fulfillment_review_required = false;
       body = { reference: order?.reference, resolution: data.action === 'assign_slot' ? 'assigned' : 'refund_pending' };
     } else if (path === '/api/admin/reports') {
-      body = { summary: {}, revenueByMonth: [], bookingCounts: [] };
+      const granularity = url.searchParams.get('granularity') || 'day';
+      const periods = granularity === 'year'
+        ? ['2024', '2025', '2026']
+        : granularity === 'month'
+          ? ['2026-10', '2026-11']
+          : granularity === 'week'
+            ? ['2026-11-02', '2026-11-09']
+            : ['2026-11-08', '2026-11-09'];
+      body = {
+        granularity,
+        summary: {
+          orderCount: 2,
+          paidOrderCount: 2,
+          netRevenue: 70,
+          withdrawals: 20,
+          withdrawalCount: 1,
+          netAfterWithdrawals: 50
+        },
+        revenueByPeriod: periods.map((period, index) => ({ period, orderCount: 1, revenue: 40 + index * 10 })),
+        withdrawalsByPeriod: periods.map((period, index) => ({ period, withdrawals: index === 0 ? 20 : 0 })),
+        bookingCounts: []
+      };
     } else if (path === '/api/admin/audit-logs') {
       body = { logs: [] };
     } else if (path.startsWith('/api/admin/reviews/') && method === 'PATCH') {
@@ -865,6 +886,35 @@ test('admin displays saved GHS purchase amounts and exchange-rate freshness', as
   await expect(page.locator('#business-settings-form input[name="booking_ep_album_discount_percent"]')).toHaveValue('20');
   await expect(page.locator('#business-settings-form input[name="beat_request_license_basic_ghs"]')).toHaveValue('500');
   await expect(page.locator('#business-settings-form input[name="beat_default_basic_usd"]')).toHaveValue('25');
+});
+
+test('admin switches analytics granularity, metric, and chart type', async ({ page }) => {
+  const calls = await mockApi(page, { adminLogin: true });
+  await seedAdminSession(page);
+  await page.goto('/admin/admin.html');
+  await expect(page.locator('#admin-dashboard')).toBeVisible();
+  await page.getByRole('button', { name: 'Analytics', exact: true }).click();
+
+  const chart = page.locator('#analytics-chart');
+  await expect(chart.locator('svg')).toBeVisible();
+  await expect(chart.locator('polyline')).toHaveCount(1);
+  await expect(page.locator('#analytics-chart-title')).toContainText('Revenue by day');
+  await expect(page.locator('#report-summary')).toContainText('Withdrawals in range');
+  await expect(page.locator('#report-summary')).toContainText('Net after withdrawals');
+
+  await page.getByRole('button', { name: 'Both', exact: true }).click();
+  await expect(chart.locator('polyline')).toHaveCount(2);
+  await expect(chart.locator('.analytics-legend')).toContainText('Revenue');
+  await expect(chart.locator('.analytics-legend')).toContainText('Withdrawals');
+
+  await page.getByRole('button', { name: 'Histogram', exact: true }).click();
+  await expect(chart.locator('rect.analytics-bar-rect')).toHaveCount(4);
+
+  await page.getByRole('button', { name: 'Yearly', exact: true }).click();
+  await expect.poll(() => calls.some(call => call.path === '/api/admin/reports' && call.search.includes('granularity=year'))).toBe(true);
+  await expect(page.locator('#analytics-chart-title')).toContainText('Revenue and withdrawals by year');
+  await expect(page.locator('#report-filter input[name="from"]')).toHaveValue('');
+  await expect(page.locator('#report-filter input[name="to"]')).not.toHaveValue('');
 });
 
 test('admin views and updates booking availability settings', async ({ page }) => {

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { BUSINESS_SETTINGS, validateDateRange, validateSettingUpdates } = require('../services/admin-controls');
+const { BUSINESS_SETTINGS, validateDateRange, validateSettingUpdates, validateReportGranularity, buildReportPeriods } = require('../services/admin-controls');
 
 test('business settings accepts only known non-negative currency values', () => {
   const result = validateSettingUpdates({
@@ -35,4 +35,21 @@ test('date range accepts valid optional dates and rejects invalid or reversed ra
   assert.equal(validateDateRange('2026-13-01', null).error, 'from must be a valid date in YYYY-MM-DD format.');
   assert.equal(validateDateRange('2026-12-01', '2026-11-30').error, 'The start date must be on or before the end date.');
   assert.equal(validateDateRange('2024-01-01', '2025-01-02').error, 'Date ranges cannot exceed 366 days.');
+  assert.deepEqual(validateDateRange('2024-01-01', '2026-12-31', 36600).value, { from: '2024-01-01', to: '2026-12-31' });
+});
+
+test('report granularity validation accepts only day, week, month, or year', () => {
+  assert.equal(validateReportGranularity(undefined).value, 'day');
+  assert.equal(validateReportGranularity('WEEK').value, 'week');
+  assert.equal(validateReportGranularity('month').value, 'month');
+  assert.equal(validateReportGranularity('year').value, 'year');
+  assert.equal(validateReportGranularity('quarter').error, 'granularity must be one of day, week, month, or year.');
+});
+
+test('report periods are zero-fill ready and sorted for every granularity', () => {
+  assert.deepEqual(buildReportPeriods('2026-11-08', '2026-11-10', 'day'), ['2026-11-08', '2026-11-09', '2026-11-10']);
+  assert.deepEqual(buildReportPeriods('2026-11-04', '2026-11-11', 'week'), ['2026-11-02', '2026-11-09']);
+  assert.deepEqual(buildReportPeriods('2026-09-15', '2026-11-02', 'month'), ['2026-09', '2026-10', '2026-11']);
+  assert.deepEqual(buildReportPeriods('2024-06-01', '2026-01-01', 'year'), ['2024', '2025', '2026']);
+  assert.deepEqual(buildReportPeriods('2026-11-08', '2026-11-10', 'quarter'), []);
 });
