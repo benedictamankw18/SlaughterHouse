@@ -213,6 +213,140 @@ function renderBookingCancelled(data = {}) {
   };
 }
 
+function renderBookingConfirmed(data = {}) {
+  const slots = Array.isArray(data.slots) ? data.slots : [];
+  const slotLines = slots.map(slot => `${slot.date}${slot.time ? ` at ${slot.time}` : ''}`).join(', ');
+  const heading = 'Your booking is confirmed';
+  const body = `<p>Hi ${escapeHtml(data.name || 'there')},</p>
+    <p>Your ${escapeHtml(data.service || 'studio')} booking${data.reference ? ` (<strong>${escapeHtml(data.reference)}</strong>)` : ''} is now <strong>confirmed</strong>.</p>
+    ${slotLines ? `<p>Session: ${escapeHtml(slotLines)}</p>` : ''}
+    <p>Your session is reserved. Please arrive on time.</p>`;
+  return {
+    subject: `Booking confirmed${data.reference ? ` - ${data.reference}` : ''}`,
+    html: layout({ preheader: 'Your studio booking is confirmed.', heading, bodyHtml: body, cta: data.bookingUrl ? { label: 'View your bookings', url: data.bookingUrl } : null }),
+    text: `Hi ${data.name || 'there'},\n\nYour ${data.service || 'studio'} booking${data.reference ? ` (${data.reference})` : ''} is now confirmed.${slotLines ? `\nSession: ${slotLines}` : ''}\nYour session is reserved. Please arrive on time.${data.bookingUrl ? `\n\n${data.bookingUrl}` : ''}`
+  };
+}
+
+function renderBookingCompleted(data = {}) {
+  const slots = Array.isArray(data.slots) ? data.slots : [];
+  const slotLines = slots.map(slot => `${slot.date}${slot.time ? ` at ${slot.time}` : ''}`).join(', ');
+  const heading = 'Your booking is completed';
+  const body = `<p>Hi ${escapeHtml(data.name || 'there')},</p>
+    <p>Your ${escapeHtml(data.service || 'studio')} booking${data.reference ? ` (<strong>${escapeHtml(data.reference)}</strong>)` : ''} is now <strong>completed</strong>.</p>
+    ${slotLines ? `<p>Session: ${escapeHtml(slotLines)}</p>` : ''}
+    <p>Thank you for visiting the studio.</p>`;
+  return {
+    subject: `Booking completed${data.reference ? ` - ${data.reference}` : ''}`,
+    html: layout({ preheader: 'Your studio booking is completed.', heading, bodyHtml: body, cta: data.bookingUrl ? { label: 'View your bookings', url: data.bookingUrl } : null }),
+    text: `Hi ${data.name || 'there'},\n\nYour ${data.service || 'studio'} booking${data.reference ? ` (${data.reference})` : ''} is now completed.${slotLines ? `\nSession: ${slotLines}` : ''}\nThank you for visiting the studio.${data.bookingUrl ? `\n\n${data.bookingUrl}` : ''}`
+  };
+}
+
+function renderBookingPaid(data = {}) {
+  const slots = Array.isArray(data.slots) ? data.slots : [];
+  const slotLines = slots.map(slot => `${slot.date}${slot.time ? ` at ${slot.time}` : ''}`).join(', ');
+  const heading = 'Your booking payment is confirmed';
+  const body = `<p>Hi ${escapeHtml(data.name || 'there')},</p>
+    <p>Your ${escapeHtml(data.service || 'studio')} booking${data.reference ? ` (<strong>${escapeHtml(data.reference)}</strong>)` : ''} payment is confirmed.</p>
+    ${slotLines ? `<p>Session: ${escapeHtml(slotLines)}</p>` : ''}
+    <p>Your session is reserved and ready.</p>`;
+  return {
+    subject: `Booking payment confirmed${data.reference ? ` - ${data.reference}` : ''}`,
+    html: layout({ preheader: 'Your studio booking payment is confirmed.', heading, bodyHtml: body, cta: data.bookingUrl ? { label: 'View your bookings', url: data.bookingUrl } : null }),
+    text: `Hi ${data.name || 'there'},\n\nYour ${data.service || 'studio'} booking${data.reference ? ` (${data.reference})` : ''} payment is confirmed.${slotLines ? `\nSession: ${slotLines}` : ''}\nYour session is reserved and ready.${data.bookingUrl ? `\n\n${data.bookingUrl}` : ''}`
+  };
+}
+
+function renderBookingRescheduled(data = {}) {
+  const slots = Array.isArray(data.slots) ? data.slots : [];
+  const slotLines = slots.map(slot => `${slot.date}${slot.time ? ` at ${slot.time}` : ''}`).join(', ');
+  const heading = 'Your booking has been rescheduled';
+  const body = `<p>Hi ${escapeHtml(data.name || 'there')},</p>
+    <p>Your ${escapeHtml(data.service || 'studio')} booking${data.reference ? ` (<strong>${escapeHtml(data.reference)}</strong>)` : ''} has been <strong>rescheduled</strong>.</p>
+    ${slotLines ? `<p>New session: ${escapeHtml(slotLines)}</p>` : ''}
+    ${data.reason ? `<p>Reason: ${escapeHtml(data.reason)}</p>` : ''}
+    <p>Your new session is reserved.</p>`;
+  return {
+    subject: `Booking rescheduled${data.reference ? ` - ${data.reference}` : ''}`,
+    html: layout({ preheader: 'Your studio booking has been rescheduled.', heading, bodyHtml: body, cta: data.bookingUrl ? { label: 'View your bookings', url: data.bookingUrl } : null }),
+    text: `Hi ${data.name || 'there'},\n\nYour ${data.service || 'studio'} booking${data.reference ? ` (${data.reference})` : ''} has been rescheduled.${slotLines ? `\nNew session: ${slotLines}` : ''}${data.reason ? `\nReason: ${data.reason}` : ''}\nYour new session is reserved.${data.bookingUrl ? `\n\n${data.bookingUrl}` : ''}`
+  };
+}
+
+function renderRequestReviewing(data = {}) {
+  const isBeat = data.requestType === 'beat';
+  const heading = isBeat ? 'Your beat request is under review' : 'Your custom order request is under review';
+  const body = `<p>Hi ${escapeHtml(data.name || 'there')},</p>
+    <p>Your ${isBeat ? 'beat request' : 'custom order request'} for ${escapeHtml(data.productName || 'your item')} is now being reviewed by our team.</p>
+    ${data.reference ? `<p>Reference: <strong>${escapeHtml(data.reference)}</strong></p>` : ''}
+    <p>We will reply to this email address with next steps.</p>`;
+  return {
+    subject: `${isBeat ? 'Beat request' : 'Custom order request'} under review${data.reference ? ` - ${data.reference}` : ''}`,
+    html: layout({ preheader: `Your ${isBeat ? 'beat request' : 'custom order request'} is under review.`, heading, bodyHtml: body, cta: data.accountUrl ? { label: 'View your requests', url: data.accountUrl } : null }),
+    text: `Hi ${data.name || 'there'},\n\nYour ${isBeat ? 'beat request' : 'custom order request'} for ${data.productName || 'your item'} is now being reviewed by our team.${data.reference ? `\nReference: ${data.reference}` : ''}\nWe will reply to this email address with next steps.${data.accountUrl ? `\n\n${data.accountUrl}` : ''}`
+  };
+}
+
+function renderRequestQuoted(data = {}) {
+  const isBeat = data.requestType === 'beat';
+  const heading = isBeat ? 'Your beat request has a quote' : 'Your custom order request has a quote';
+  const amountText = data.licensePrice !== undefined ? formatMoney(data.licensePrice, data.currency) : '';
+  const body = `<p>Hi ${escapeHtml(data.name || 'there')},</p>
+    <p>Our team has reviewed your ${isBeat ? 'beat request' : 'custom order request'} for ${escapeHtml(data.productName || 'your item')} and has a quote for you.</p>
+    ${amountText ? `<p>Quote: <strong>${escapeHtml(amountText)}</strong></p>` : ''}
+    ${data.reference ? `<p>Reference: <strong>${escapeHtml(data.reference)}</strong></p>` : ''}
+    <p>Accept the quote to proceed with payment.</p>`;
+  return {
+    subject: `${isBeat ? 'Beat request' : 'Custom order request'} quote${data.reference ? ` - ${data.reference}` : ''}`,
+    html: layout({ preheader: `Your ${isBeat ? 'beat request' : 'custom order request'} has a quote.`, heading, bodyHtml: body, cta: data.accountUrl ? { label: 'View your requests', url: data.accountUrl } : null }),
+    text: `Hi ${data.name || 'there'},\n\nOur team has reviewed your ${isBeat ? 'beat request' : 'custom order request'} for ${data.productName || 'your item'} and has a quote for you.${amountText ? `\nQuote: ${amountText}` : ''}${data.reference ? `\nReference: ${data.reference}` : ''}\nAccept the quote to proceed with payment.${data.accountUrl ? `\n\n${data.accountUrl}` : ''}`
+  };
+}
+
+function renderRequestAccepted(data = {}) {
+  const isBeat = data.requestType === 'beat';
+  const heading = isBeat ? 'Your beat request is accepted' : 'Your custom order request is accepted';
+  const body = `<p>Hi ${escapeHtml(data.name || 'there')},</p>
+    <p>Great news — your ${isBeat ? 'beat request' : 'custom order request'} for ${escapeHtml(data.productName || 'your item')} is now <strong>accepted</strong>.</p>
+    ${data.reference ? `<p>Reference: <strong>${escapeHtml(data.reference)}</strong></p>` : ''}
+    <p>You can proceed to payment to secure your purchase.</p>`;
+  return {
+    subject: `${isBeat ? 'Beat request' : 'Custom order request'} accepted${data.reference ? ` - ${data.reference}` : ''}`,
+    html: layout({ preheader: `Your ${isBeat ? 'beat request' : 'custom order request'} is accepted.`, heading, bodyHtml: body, cta: data.accountUrl ? { label: 'View your requests', url: data.accountUrl } : null }),
+    text: `Hi ${data.name || 'there'},\n\nGreat news — your ${isBeat ? 'beat request' : 'custom order request'} for ${data.productName || 'your item'} is now accepted.${data.reference ? `\nReference: ${data.reference}` : ''}\nYou can proceed to payment to secure your purchase.${data.accountUrl ? `\n\n${data.accountUrl}` : ''}`
+  };
+}
+
+function renderRequestRejected(data = {}) {
+  const isBeat = data.requestType === 'beat';
+  const heading = isBeat ? 'Your beat request was not accepted' : 'Your custom order request was not accepted';
+  const body = `<p>Hi ${escapeHtml(data.name || 'there')},</p>
+    <p>After review, we are unable to accept your ${isBeat ? 'beat request' : 'custom order request'} for ${escapeHtml(data.productName || 'your item')} at this time.</p>
+    ${data.reason ? `<p>Reason: ${escapeHtml(data.reason)}</p>` : ''}
+    ${data.reference ? `<p>Reference: <strong>${escapeHtml(data.reference)}</strong></p>` : ''}
+    <p>Feel free to submit a new request if you have a different idea.</p>`;
+  return {
+    subject: `${isBeat ? 'Beat request' : 'Custom order request'} not accepted${data.reference ? ` - ${data.reference}` : ''}`,
+    html: layout({ preheader: `Your ${isBeat ? 'beat request' : 'custom order request'} was not accepted.`, heading, bodyHtml: body }),
+    text: `Hi ${data.name || 'there'},\n\nAfter review, we are unable to accept your ${isBeat ? 'beat request' : 'custom order request'} for ${data.productName || 'your item'} at this time.${data.reason ? `\nReason: ${data.reason}` : ''}${data.reference ? `\nReference: ${data.reference}` : ''}\nFeel free to submit a new request if you have a different idea.`
+  };
+}
+
+function renderRequestCompleted(data = {}) {
+  const isBeat = data.requestType === 'beat';
+  const heading = isBeat ? 'Your beat request is completed' : 'Your custom order request is completed';
+  const body = `<p>Hi ${escapeHtml(data.name || 'there')},</p>
+    <p>Your ${isBeat ? 'beat request' : 'custom order request'} for ${escapeHtml(data.productName || 'your item')} is now <strong>completed</strong>.</p>
+    ${data.reference ? `<p>Reference: <strong>${escapeHtml(data.reference)}</strong></p>` : ''}
+    <p>Thank you for working with us.</p>`;
+  return {
+    subject: `${isBeat ? 'Beat request' : 'Custom order request'} completed${data.reference ? ` - ${data.reference}` : ''}`,
+    html: layout({ preheader: `Your ${isBeat ? 'beat request' : 'custom order request'} is completed.`, heading, bodyHtml: body, cta: data.accountUrl ? { label: 'View your requests', url: data.accountUrl } : null }),
+    text: `Hi ${data.name || 'there'},\n\nYour ${isBeat ? 'beat request' : 'custom order request'} for ${data.productName || 'your item'} is now completed.${data.reference ? `\nReference: ${data.reference}` : ''}\nThank you for working with us.${data.accountUrl ? `\n\n${data.accountUrl}` : ''}`
+  };
+}
+
 function renderRequestReceived(data = {}) {
   const isBeat = data.requestType === 'beat';
   const heading = isBeat ? 'Your beat request is in' : 'Your custom order request is in';
@@ -305,6 +439,15 @@ const TEMPLATES = {
   request_received: renderRequestReceived,
   license_issued: renderLicenseIssued,
   booking_cancelled: renderBookingCancelled,
+  booking_confirmed: renderBookingConfirmed,
+  booking_completed: renderBookingCompleted,
+  booking_paid: renderBookingPaid,
+  booking_rescheduled: renderBookingRescheduled,
+  request_reviewing: renderRequestReviewing,
+  request_quoted: renderRequestQuoted,
+  request_accepted: renderRequestAccepted,
+  request_rejected: renderRequestRejected,
+  request_completed: renderRequestCompleted,
   refund_processed: renderRefundProcessed,
   admin_alert: renderAdminAlert
 };

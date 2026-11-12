@@ -34,7 +34,7 @@
       ]
     }
   </script>
-  <link rel="icon" type="image/png" href="Images/Logo 2.png">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='%2322c55e'%3e%3cpath d='M16 2c-3.3 0-6 2.7-6 6v2h-2V8c0-3.3 2.7-6 6-6s6 2.7 6 6v2h-2V8c0-3.3-2.7-6-6-6zM4 26h24v2H4z'/%3e%3c/svg%3e">
   <link rel="preload" as="image" href="Images/Hero1.webp" type="image/webp" fetchpriority="high">
   <link rel="stylesheet" href="style.css">
   <script>
@@ -73,7 +73,7 @@
     <div class="right-controls">
        <div class="header-tools">
   <button class="cart-button cart-fab" id="cart-button" type="button" aria-label="Shopping cart, 0 items" aria-expanded="false">
-    <span aria-hidden="true">&#128722;</span>
+    <svg class="cart-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18c-1.5 0-2.5-.7-2.5-2h3.1l.4-2c.2-.9 1-1.6 1.9-1.6h5.7c.9 0 1.7.7 1.9 1.6l.4 2h2c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v9c0 1.1.9 2 2 2zm4-11h3l1 4H5v-.5c0-.3.2-.5.5-.5zm11 4l-.4-2c-.2-.9-1-1.6-1.9-1.6H9.4c-.6 0-1 .4-1.1 1l-.2 1H3c-.6 0-.9.5-.9 1.1c0 2.3 1.9 4.1 4.1 4.1h12.7c.9 0 1.7-.7 1.9-1.6c.1-.5.1-.9-.1-1.4zm-5.5 0H12v-2h4.5c.3 0 .5-.2.5-.5s-.2-.5-.5-.5H12v-2c0-.3-.2-.5-.5-.5h-5c-.3 0-.5.2-.5.5v5c0 .3.2.5.5.5h5c.3 0 .5-.2.5-.5z"/></svg>
     <span class="cart-count" id="cart-count" aria-hidden="true" hidden>0</span>
   </button>
 
@@ -253,7 +253,7 @@
     <div id="public-review-list" class="public-review-list" aria-live="polite"><p>Loading reviews...</p></div>
     <form id="public-review-form" class="public-review-form">
       <h3>Leave a review</h3>
-      <div class="review-rating-control"><span id="public-review-rating-label">Rating</span><div class="review-stars" role="group" aria-labelledby="public-review-rating-label"><button type="button" data-review-rating="1" aria-label="1 star" aria-pressed="false">&#9733;</button><button type="button" data-review-rating="2" aria-label="2 stars" aria-pressed="false">&#9733;</button><button type="button" data-review-rating="3" aria-label="3 stars" aria-pressed="false">&#9733;</button><button type="button" data-review-rating="4" aria-label="4 stars" aria-pressed="false">&#9733;</button><button type="button" data-review-rating="5" aria-label="5 stars" aria-pressed="false">&#9733;</button></div><input id="public-review-rating" name="rating" type="hidden" value=""></div>
+      <div class="review-rating-control"><span id="public-review-rating-label">Rating</span><div class="review-stars" role="group" aria-labelledby="public-review-rating-label"><button type="button" data-review-rating="1" aria-label="1 star" aria-pressed="false"><svg class="star-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .587l3.668 7.568 8.332 1.151-6.064 5.828 1.48 8.279-4.732-3.95-4.732 3.95 1.48-8.279-6.064-5.828 8.332-1.151z"/></svg></button><button type="button" data-review-rating="2" aria-label="2 stars" aria-pressed="false"><svg class="star-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .587l3.668 7.568 8.332 1.151-6.064 5.828 1.48 8.279-4.732-3.95-4.732 3.95 1.48-8.279-6.064-5.828 8.332-1.151z"/></svg></button><button type="button" data-review-rating="3" aria-label="3 stars" aria-pressed="false"><svg class="star-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .587l3.668 7.568 8.332 1.151-6.064 5.828 1.48 8.279-4.732-3.95-4.732 3.95 1.48-8.279-6.064-5.828 8.332-1.151z"/></svg></button><button type="button" data-review-rating="4" aria-label="4 stars" aria-pressed="false"><svg class="star-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .587l3.668 7.568 8.332 1.151-6.064 5.828 1.48 8.279-4.732-3.95-4.732 3.95 1.48-8.279-6.064-5.828 8.332-1.151z"/></svg></button><button type="button" data-review-rating="5" aria-label="5 stars" aria-pressed="false"><svg class="star-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .587l3.668 7.568 8.332 1.151-6.064 5.828 1.48 8.279-4.732-3.95-4.732 3.95 1.48-8.279-6.064-5.828 8.332-1.151z"/></svg></button></div><input id="public-review-rating" name="rating" type="hidden" value=""></div>
       <label for="public-review-text">Review</label><textarea id="public-review-text" name="review" rows="3" minlength="3" maxlength="2000" required></textarea>
       <div class="review-login-prompt" id="review-login-prompt"><span>Log in to submit a review.</span><button type="button" id="review-login-button">Log in</button></div>
       <button class="auth-primary-button" id="review-submit-button" type="submit" disabled>Submit</button>

@@ -1233,18 +1233,27 @@ router.patch('/admin/bookings/:id/status', sessions.requireAdmin, (request, resp
       database.get('SELECT name, email, service, booking_slots_json, payment_reference FROM bookings WHERE id = ?', [Number(request.params.id)], async (emailError, updatedBooking) => {
         if (emailError) return response.status(500).json({ error: databaseError('Loading the booking customer failed.', emailError) });
         try {
-          if (status === 'cancelled' && booking.status !== 'cancelled') {
-            let slots = [];
-            try {
-              const parsedSlots = JSON.parse(updatedBooking.booking_slots_json || '[]');
-              if (Array.isArray(parsedSlots)) slots = parsedSlots;
-            } catch (error) {
-              logger.error('booking_cancellation_slot_data_invalid', { bookingId: Number(request.params.id) });
-            }
+          let slots = [];
+          try {
+            const parsedSlots = JSON.parse(updatedBooking.booking_slots_json || '[]');
+            if (Array.isArray(parsedSlots)) slots = parsedSlots;
+          } catch (error) {
+            logger.error('booking_slot_data_invalid', { bookingId: Number(request.params.id) });
+          }
+
+          const statusTemplateMap = {
+            cancelled: 'booking_cancelled',
+            confirmed: 'booking_confirmed',
+            completed: 'booking_completed',
+            paid: 'booking_paid',
+            rescheduled: 'booking_rescheduled'
+          };
+          const template = statusTemplateMap[status];
+          if (template && status !== booking.status) {
             await queueEmailSafely(database, {
               to: updatedBooking.email,
-              template: 'booking_cancelled',
-              idempotencyKey: `booking-cancelled:${Number(request.params.id)}`,
+              template,
+              idempotencyKey: `booking-${status}:${Number(request.params.id)}`,
               data: {
                 name: updatedBooking.name,
                 service: updatedBooking.service,
@@ -1254,6 +1263,7 @@ router.patch('/admin/bookings/:id/status', sessions.requireAdmin, (request, resp
               }
             });
           }
+
           const customer = await new Promise((resolve, reject) => database.get("SELECT id FROM users WHERE lower(email) = lower(?) AND role NOT IN ('admin', 'super_admin')", [updatedBooking.email], (lookupError, user) => lookupError ? reject(lookupError) : resolve(user)));
           if (customer) await createNotificationSafely(database, {
             userId: customer.id,
@@ -1449,6 +1459,47 @@ router.patch('/admin/requests/:id/status', sessions.requireAdmin, (request, resp
       title: 'Request status updated',
       message: `${requestRecord.product_name || requestRecord.request_type + ' request'} is now ${status}${quote === null ? '' : ` with a quote of GHS ${quote.toFixed(2)}`}.`
     });
+
+    database.get('SELECT name, email FROM users WHERE id = ?', [requestRecord.user_id], async (userError, userRecord) => {
+      if (userError) {
+        recordAuditSafely(database, {
+          userId: request.admin.id,
+          action: 'request_status_changed',
+          entityType: 'customization_request',
+          entityId: Number(request.params.id),
+          details: { previousStatus: requestRecord.previous_status, status, quoteGhs: quote }
+        });
+        return response.json({ id: Number(request.params.id), status, quoteGhs: quote, notes });
+      }
+      try {
+        const statusTemplateMap = {
+          reviewing: 'request_reviewing',
+          quoted: 'request_quoted',
+          accepted: 'request_accepted',
+          rejected: 'request_rejected',
+          completed: 'request_completed'
+        };
+        const template = statusTemplateMap[status];
+        if (template && status !== requestRecord.previous_status && userRecord) {
+          await queueEmailSafely(database, {
+            to: userRecord.email,
+            template,
+            idempotencyKey: `request-${status}:${Number(request.params.id)}`,
+            data: {
+              name: userRecord.name,
+              productName: requestRecord.product_name,
+              requestType: requestRecord.request_type,
+              reference: String(Number(request.params.id)),
+              licensePrice: quote,
+              currency: 'GHS'
+            }
+          });
+        }
+      } catch (emailError) {
+        logger.error('request_status_email_failed', { requestId: Number(request.params.id), status, code: emailError.code });
+      }
+    });
+
     recordAuditSafely(database, {
       userId: request.admin.id,
       action: 'request_status_changed',
