@@ -307,6 +307,34 @@ test('migration 36 seeds configurable booking availability defaults', () => {
   }
 });
 
+test('migration 37 adds multi-currency snapshots and approved FX rates', () => {
+  const migration = migrations.find(candidate => candidate.version === 37);
+  assert.ok(migration, 'migration 37 must exist');
+  const columns = migration.statements.filter(statement => statement.ensureColumn).map(statement => statement.ensureColumn);
+  for (const [table, column] of [
+    ['orders', 'amount_ghs'],
+    ['orders', 'fx_rate'],
+    ['orders', 'fx_markup_percent'],
+    ['orders', 'fx_source'],
+    ['orders', 'fx_quoted_at'],
+    ['orders', 'refunded_amount_ghs'],
+    ['orders', 'provider'],
+    ['sales', 'currency'],
+    ['sales', 'amount_ghs'],
+    ['payments', 'provider_transaction_id'],
+    ['payments', 'amount_ghs']
+  ]) {
+    assert.ok(columns.some(candidate => candidate.table === table && candidate.column === column), `${table}.${column} must be added`);
+  }
+  const sql = migration.statements.filter(statement => typeof statement === 'string').join('\n');
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS fx_rates/);
+  assert.match(sql, /UPDATE orders SET amount_ghs = amount WHERE amount_ghs IS NULL/);
+  assert.match(sql, /UPDATE orders SET refunded_amount_ghs = COALESCE\(refunded_amount, 0\)/);
+  assert.match(sql, /UPDATE sales SET amount_ghs = amount/);
+  assert.match(sql, /UPDATE payments SET amount_ghs = amount/);
+  assert.match(sql, /usd_to_ghs_rate/);
+});
+
 test('applyMigrations runs every statement once and records each version', async () => {
   const pool = fakePool();
   await applyMigrations(pool);

@@ -691,6 +691,43 @@ const migrations = [
         ('booking_available_from', ''),
         ('booking_available_until', '')`
     ]
+  },
+  {
+    version: 37,
+    statements: [
+      { ensureColumn: { table: 'orders', column: 'amount_ghs', definition: 'DECIMAL(12,2) NULL' } },
+      { ensureColumn: { table: 'orders', column: 'fx_rate', definition: 'DECIMAL(18,8) NULL' } },
+      { ensureColumn: { table: 'orders', column: 'fx_markup_percent', definition: 'DECIMAL(5,2) NULL' } },
+      { ensureColumn: { table: 'orders', column: 'fx_source', definition: 'VARCHAR(64) NULL' } },
+      { ensureColumn: { table: 'orders', column: 'fx_quoted_at', definition: 'TIMESTAMP NULL' } },
+      { ensureColumn: { table: 'orders', column: 'refunded_amount_ghs', definition: 'DECIMAL(12,2) NULL' } },
+      { ensureColumn: { table: 'orders', column: 'provider', definition: "VARCHAR(20) NOT NULL DEFAULT 'paystack'" } },
+      { ensureColumn: { table: 'sales', column: 'currency', definition: "VARCHAR(10) NOT NULL DEFAULT 'GHS'" } },
+      { ensureColumn: { table: 'sales', column: 'amount_ghs', definition: 'DECIMAL(12,2) NULL' } },
+      { ensureColumn: { table: 'payments', column: 'provider_transaction_id', definition: 'VARCHAR(64) NULL' } },
+      { ensureColumn: { table: 'payments', column: 'amount_ghs', definition: 'DECIMAL(12,2) NULL' } },
+      `CREATE TABLE IF NOT EXISTS fx_rates (
+        currency VARCHAR(3) PRIMARY KEY,
+        ghs_per_unit DECIMAL(18,8) NOT NULL,
+        suggested_ghs_per_unit DECIMAL(18,8) NULL,
+        suggested_source VARCHAR(64) NULL,
+        suggested_at TIMESTAMP NULL,
+        approved_by INT NULL,
+        approved_at TIMESTAMP NULL,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+      'CREATE INDEX IF NOT EXISTS idx_orders_currency_created ON orders (currency, created_at)',
+      'UPDATE orders SET amount_ghs = amount WHERE amount_ghs IS NULL',
+      'UPDATE orders SET refunded_amount_ghs = COALESCE(refunded_amount, 0) WHERE refunded_amount_ghs IS NULL',
+      'UPDATE sales SET amount_ghs = amount WHERE amount_ghs IS NULL',
+      'UPDATE payments SET amount_ghs = amount WHERE amount_ghs IS NULL',
+      `INSERT INTO fx_rates (currency, ghs_per_unit, approved_at, updated_at)
+       SELECT 'USD', setting_value::DECIMAL(18,8), updated_at, COALESCE(updated_at, CURRENT_TIMESTAMP)
+       FROM settings
+       WHERE setting_key = 'usd_to_ghs_rate'
+         AND setting_value ~ '^[0-9]+(\\.[0-9]+)?$'
+       ON CONFLICT (currency) DO NOTHING`
+    ]
   }
 ];
 

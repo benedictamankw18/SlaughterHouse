@@ -19,6 +19,17 @@ const { LICENSE_TYPES, loadLicenseRights, loadLicenseDefinitions, saveLicenseRig
 const { FULFILLMENT_STATUSES, updateFulfillmentStatus } = require('../services/fulfillment');
 const { BUSINESS_SETTINGS, REPORT_GRANULARITIES, validateDateRange, validateSettingUpdates, validateReportGranularity, buildReportPeriods } = require('../services/admin-controls');
 const { isUsdGhsRateFresh } = require('../services/pricing');
+const {
+  SUPPORTED_CURRENCIES,
+  FOREIGN_CURRENCIES,
+  FX_MARKUP_SETTING_KEY,
+  FX_CHARGE_ENABLED_SETTING_KEY,
+  getFxSettings,
+  listFxRates,
+  validateApprovedRate,
+  validateMarkupPercent,
+  fetchSuggestedRates
+} = require('../services/fx');
 const logger = require('../services/logger');
 const monitoring = require('../services/monitoring');
 const { checkReadiness } = require('../services/health');
@@ -309,6 +320,19 @@ router.put('/admin/settings', sessions.requirePermission('admin:manage_settings'
           [key, value]
         );
       }
+      const usdRate = validation.value.find(([key]) => key === 'usd_to_ghs_rate');
+      if (usdRate) {
+        await tx.run(
+          `INSERT INTO fx_rates (currency, ghs_per_unit, approved_by, approved_at, updated_at)
+           VALUES ('USD', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+           ON CONFLICT (currency) DO UPDATE SET
+             ghs_per_unit = EXCLUDED.ghs_per_unit,
+             approved_by = EXCLUDED.approved_by,
+             approved_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP`,
+          [usdRate[1], request.admin.id]
+        );
+      }
     });
     recordAuditSafely(database, {
       userId: request.admin.id,
@@ -320,6 +344,106 @@ router.put('/admin/settings', sessions.requirePermission('admin:manage_settings'
     response.json({ settings: validation.value.map(([key, value]) => ({ key, value })) });
   } catch (error) {
     response.status(500).json({ error: databaseError('Updating business settings failed.', error) });
+  }
+});
+
+router.get('/admin/fx-rates', sessions.requireAdmin, async (request, response) => {
+  try {
+    const [settings, rates] = await Promise.all([getFxSettings(database), listFxRates(database)]);
+    response.json({
+      settings,
+      rates,
+      supportedCurrencies: SUPPORTED_CURRENCIES,
+      editableCurrencies: FOREIGN_CURRENCIES,
+      canEdit: request.role === 'super_admin'
+    });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Loading exchange rates failed.', error) });
+  }
+});
+
+router.get('/admin/fx-rates/suggestions', sessions.requireAdmin, async (request, response) => {
+  try {
+    const suggestion = await fetchSuggestedRates({ force: String(request.query.force || '') === '1' });
+    await database.transaction(async transaction => {
+      for (const [currency, rate] of Object.entries(suggestion.rates)) {
+        await transaction.run(
+          'UPDATE fx_rates SET suggested_ghs_per_unit = ?, suggested_source = ?, suggested_at = CURRENT_TIMESTAMP WHERE currency = ?',
+          [rate, suggestion.source, currency]
+        );
+      }
+    });
+    response.json(suggestion);
+  } catch (error) {
+    response.status(503).json({ error: databaseError('Loading suggested exchange rates failed.', error) });
+  }
+});
+
+router.put('/admin/fx-rates', sessions.requirePermission('admin:manage_settings'), async (request, response) => {
+  const body = request.body || {};
+  const settingsUpdates = [];
+  const rateUpdates = [];
+  const markup = body.settings?.markupPercent;
+  if (markup !== undefined) {
+    const validation = validateMarkupPercent(markup);
+    if (validation.error) return response.status(400).json({ error: validation.error });
+    settingsUpdates.push([FX_MARKUP_SETTING_KEY, validation.value]);
+  }
+  const chargeEnabled = body.settings?.chargeEnabled;
+  if (chargeEnabled !== undefined) {
+    if (typeof chargeEnabled !== 'boolean') return response.status(400).json({ error: 'chargeEnabled must be true or false.' });
+    settingsUpdates.push([FX_CHARGE_ENABLED_SETTING_KEY, chargeEnabled ? '1' : '0']);
+  }
+  if (body.rates !== undefined) {
+    if (!body.rates || typeof body.rates !== 'object' || Array.isArray(body.rates)) {
+      return response.status(400).json({ error: 'rates must be an object keyed by currency.' });
+    }
+    for (const [currency, value] of Object.entries(body.rates)) {
+      const validation = validateApprovedRate(currency, value);
+      if (validation.error) return response.status(400).json({ error: validation.error });
+      rateUpdates.push([String(currency).toUpperCase(), validation.value]);
+    }
+  }
+  const approvedUsd = rateUpdates.find(([currency]) => currency === 'USD');
+  if (approvedUsd) settingsUpdates.push(['usd_to_ghs_rate', Number(approvedUsd[1]).toFixed(6)]);
+  if (!settingsUpdates.length && !rateUpdates.length) {
+    return response.status(400).json({ error: 'Provide at least one exchange rate or FX setting to update.' });
+  }
+  try {
+    await database.transaction(async transaction => {
+      for (const [key, value] of settingsUpdates) {
+        await transaction.run(
+          'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = CURRENT_TIMESTAMP',
+          [key, value]
+        );
+      }
+      for (const [currency, value] of rateUpdates) {
+        await transaction.run(
+          `INSERT INTO fx_rates (currency, ghs_per_unit, approved_by, approved_at, updated_at)
+           VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+           ON CONFLICT (currency) DO UPDATE SET
+             ghs_per_unit = EXCLUDED.ghs_per_unit,
+             approved_by = EXCLUDED.approved_by,
+             approved_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP`,
+          [currency, value, request.admin.id]
+        );
+      }
+    });
+    recordAuditSafely(database, {
+      userId: request.admin.id,
+      action: 'fx_rates_updated',
+      entityType: 'settings',
+      details: {
+        settings: Object.fromEntries(settingsUpdates),
+        rates: Object.fromEntries(rateUpdates)
+      },
+      ipAddress: request.ip
+    });
+    const [settings, rates] = await Promise.all([getFxSettings(database), listFxRates(database)]);
+    response.json({ settings, rates });
+  } catch (error) {
+    response.status(500).json({ error: databaseError('Updating exchange rates failed.', error) });
   }
 });
 
