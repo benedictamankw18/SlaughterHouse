@@ -28,6 +28,24 @@ function vercelPolicies() {
   }));
 }
 
+function htmlPagePaths(directory) {
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+    const fullPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) return htmlPagePaths(fullPath);
+    return entry.name.endsWith('.html') ? [fullPath] : [];
+  });
+}
+
+function nginxPolicyFor(nginxMap, pageName) {
+  const requestPath = `/${pageName}`;
+  for (const line of nginxMap.split(/\r?\n/)) {
+    const match = line.match(/^\s*(\S+)\s+"([^"]+)"\s*;$/);
+    if (!match || !match[1].startsWith('~')) continue;
+    if (new RegExp(match[1].slice(1)).test(requestPath)) return match[2];
+  }
+  return null;
+}
+
 test('production CSP limits application inline scripts to reviewed hashes', () => {
   const nginx = fs.readFileSync(path.join(frontendDirectory, 'nginx.conf'), 'utf8');
   const nginxMap = nginx.match(/map \$uri \$script_sources \{([\s\S]*?)\n\}/)?.[1];
@@ -35,7 +53,7 @@ test('production CSP limits application inline scripts to reviewed hashes', () =
   assert.match(nginxMap, /default "'self'";/);
   assert.ok(nginxMap.includes(legacyNginxRule));
   assert.match(nginx, /connect-src 'self';/);
-  assert.match(nginx, /\/ "'self' 'sha256-swhcD21i\+Yugv5RvOuNuZhfYMxoZaHhWixlammmsKWw='";/);
+  assert.ok(nginxMap.includes(`/ "'self' 'sha256-XL78bdzNaXSWc4jvroFmjWfuAuS+6z4mV9+Zt+6nvoc='";`), 'nginx root policy must allow the reviewed index.html hash');
 
   const policies = vercelPolicies();
   const globalPolicy = policies.get('/(.*)');
@@ -43,32 +61,27 @@ test('production CSP limits application inline scripts to reviewed hashes', () =
   assert.match(globalPolicy, /connect-src 'self';/);
   assert.doesNotMatch(globalPolicy, /connect-src[^;]*(?:https:|wss:)/);
 
-  const pageNames = fs.readdirSync(frontendDirectory).filter(name => name.endsWith('.html'));
-  for (const pageName of pageNames) {
-    const hashes = inlineScriptHashes(fs.readFileSync(path.join(frontendDirectory, pageName), 'utf8'));
-    const nginxPagePolicyLine = nginxMap.split(/\r?\n/).find(line => line.includes(`/${pageName.replace(/\./g, '\\.')}$`));
-    const nginxPagePolicy = nginxPagePolicyLine?.match(/"([^"]+)"/);
-
+  for (const pagePath of htmlPagePaths(frontendDirectory)) {
+    const pageName = path.relative(frontendDirectory, pagePath).split(path.sep).join('/');
     if (legacyInlinePages.has(pageName)) {
       assert.ok(nginxMap.includes(legacyNginxRule));
       continue;
     }
 
+    const hashes = inlineScriptHashes(fs.readFileSync(pagePath, 'utf8'));
     const routePolicy = policies.get(`/${pageName}`);
     assert.ok(routePolicy, `Vercel must apply a page-specific script policy to ${pageName}`);
     const vercelScriptSource = scriptSource(routePolicy);
     assert.ok(vercelScriptSource, `Vercel policy for ${pageName} must set script-src`);
+    const nginxScriptSource = nginxPolicyFor(nginxMap, pageName) || "'self'";
     if (hashes.length) {
       for (const hash of hashes) {
         assert.ok(vercelScriptSource.includes(`'${hash}'`), `Vercel policy for ${pageName} must allow its exact inline script hash`);
+        assert.ok(nginxScriptSource.includes(`'${hash}'`), `nginx policy for ${pageName} must allow its exact inline script hash`);
       }
     } else {
       assert.equal(vercelScriptSource, "'self'", `Vercel policy for ${pageName} must disallow inline scripts`);
-    }
-
-    const nginxScriptSource = nginxPagePolicy?.[1] || "'self'";
-    for (const hash of hashes) {
-      assert.ok(nginxScriptSource.includes(`'${hash}'`), `nginx policy for ${pageName} must allow its exact inline script hash`);
+      assert.equal(nginxScriptSource, "'self'", `nginx policy for ${pageName} must disallow inline scripts`);
     }
   }
 });

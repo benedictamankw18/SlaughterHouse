@@ -43,13 +43,13 @@
     {
       "source": "/",
       "headers": [
-        { "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-swhcD21i+Yugv5RvOuNuZhfYMxoZaHhWixlammmsKWw='" }
+        { "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-XL78bdzNaXSWc4jvroFmjWfuAuS+6z4mV9+Zt+6nvoc='" }
       ]
     },
     {
       "source": "/index.html",
       "headers": [
-        { "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-swhcD21i+Yugv5RvOuNuZhfYMxoZaHhWixlammmsKWw='" }
+        { "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-XL78bdzNaXSWc4jvroFmjWfuAuS+6z4mV9+Zt+6nvoc='" }
       ]
     },
     {
@@ -67,7 +67,7 @@
     {
       "source": "/merchandise.html",
       "headers": [
-        { "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-UjBeeDfOq49Yuuk5xvl8E68pYlsz7JX8xdCCDnGq03k='" }
+        { "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-vcO73O9Qp6gg9HeVbXRgI+0cU8/+E5eXyA2AOJybbj0='" }
       ]
     },
     {
@@ -85,7 +85,7 @@
     {
       "source": "/payment-success.html",
       "headers": [
-        { "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-MXdw84/FCBeYLnkDNOulNWziCfetaoZgYNnuUbDYo0k='" }
+        { "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-DmbzTK4TxvPdo8MNNaWYaeUs5XWrpzkm34J/u1LOsRo='" }
       ]
     },
     {
@@ -166,7 +166,7 @@
     },
     {
       "source": "/user/merchandise.html",
-      "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-UjBeeDfOq49Yuuk5xvl8E68pYlsz7JX8xdCCDnGq03k='" }]
+      "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-vcO73O9Qp6gg9HeVbXRgI+0cU8/+E5eXyA2AOJybbj0='" }]
     },
     {
       "source": "/user/produced.html",
@@ -174,7 +174,7 @@
     },
     {
       "source": "/user/payment-success.html",
-      "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-MXdw84/FCBeYLnkDNOulNWziCfetaoZgYNnuUbDYo0k='" }]
+      "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-DmbzTK4TxvPdo8MNNaWYaeUs5XWrpzkm34J/u1LOsRo='" }]
     },
     {
       "source": "/user/certificate.html",
