@@ -327,6 +327,9 @@ function renderArtistsGrid(artists) {
   }
   container.innerHTML = artists.map(artist => {
     const initials = String(artist.artist_name || artist.name || 'A').split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase();
+    const purchases = artist.purchases || [];
+    const totalGhs = purchases.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const firstRate = purchases.length ? purchases[0].exchange_rate : null;
     return `<article class="admin-card admin-artist-card" data-artist-id="${Number(artist.id)}">
       <div class="admin-artist-avatar">${escapeHtml(initials)}</div>
       <div class="admin-artist-card-content">
@@ -335,7 +338,7 @@ function renderArtistsGrid(artists) {
           <span class="admin-beat-status">${escapeHtml(artist.role)}</span>
         </div>
         <p class="admin-beat-summary">${escapeHtml(artist.email)}</p>
-        <p class="admin-beat-summary">${artist.purchases.length} license purchase${artist.purchases.length === 1 ? '' : 's'}</p>
+        <p class="admin-beat-summary">${purchases.length} license purchase${purchases.length === 1 ? '' : 's'}${totalGhs > 0 ? ` · GHS ${totalGhs.toFixed(2)}` : ''}${firstRate ? ` · USD/GHS ${firstRate}` : ''}</p>
         <div class="admin-review-actions admin-artist-actions">
           <button type="button" data-view-artist-purchases="${Number(artist.id)}">View purchases</button>
         </div>

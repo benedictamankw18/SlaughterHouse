@@ -2597,6 +2597,18 @@ button.is-busy { cursor: progress; opacity: 0.85; }
   background: rgba(34, 197, 94, .12);
 }
 
+/* MERCHANDISE HIDDEN (public storefront only - home page) */
+#merchandise,
+#home-merchandise-list,
+#merchandise .storefront-merchandise-item,
+#merchandise .merchandise-submit-button,
+.customize-request-card,
+nav a[href*="merchandise"],
+.dropdown a[href*="merchandise"],
+.hero-buttons a[href*="merchandise"] {
+  display: none !important;
+}
+
 .beat-cart-button.is-in-cart small {
   font-size: .68rem;
   font-weight: 700;
