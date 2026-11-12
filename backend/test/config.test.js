@@ -75,6 +75,7 @@ test('Vercel derives same-origin API and frontend URLs and trusts its proxy', ()
       ...process.env,
       ...validSecrets,
       VERCEL: '1',
+      TRUST_PROXY: '',
       VERCEL_URL: 'store.example.test',
       API_PUBLIC_URL: '',
       STORAGE_DRIVER: 's3',

@@ -33,6 +33,7 @@ services:
       PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY:-}
       DOWNLOAD_SIGNING_SECRET: ${DOWNLOAD_SIGNING_SECRET:?Set DOWNLOAD_SIGNING_SECRET in .env}
       CERTIFICATE_SIGNING_SECRET: ${CERTIFICATE_SIGNING_SECRET:?Set CERTIFICATE_SIGNING_SECRET in .env}
+      ADMIN_MFA_ENCRYPTION_KEY: ${ADMIN_MFA_ENCRYPTION_KEY:?Set ADMIN_MFA_ENCRYPTION_KEY in .env}
       EMAIL_API_KEY: ${EMAIL_API_KEY:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
       TRUST_PROXY: ${TRUST_PROXY:-1}
@@ -80,7 +81,7 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${FRONTEND_PORT:-5500}:80"
+      - "127.0.0.1:${FRONTEND_PORT:-8080}:80"
     depends_on:
       backend:
         condition: service_healthy
