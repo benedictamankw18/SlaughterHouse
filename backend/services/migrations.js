@@ -754,6 +754,49 @@ const migrations = [
       "ALTER TABLE payments ADD CONSTRAINT payments_provider_allowed CHECK (provider IN ('paystack', 'flutterwave'))",
       "ALTER TABLE orders ADD CONSTRAINT orders_provider_allowed CHECK (provider IN ('paystack', 'flutterwave'))"
     ]
+  },
+  {
+    // Shopping carts stored in the database instead of localStorage. Authenticated
+    // users are keyed by user_id; guests are keyed by a client-generated cart_id.
+    version: 41,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS carts (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        user_id INT NULL,
+        cart_id VARCHAR(64) NULL,
+        items_json JSON NOT NULL DEFAULT '[]',
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_carts_user_id (user_id),
+        INDEX idx_carts_cart_id (cart_id),
+        CONSTRAINT fk_carts_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )`
+    ]
+  },
+  {
+    // Pending payment references awaiting webhook confirmation, tied to cart items.
+    version: 42,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS cart_pending_payments (
+        reference VARCHAR(64) PRIMARY KEY,
+        items_json JSON NOT NULL DEFAULT '[]',
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        status VARCHAR(50) NOT NULL DEFAULT 'pending',
+        INDEX idx_cart_pending_status (status)
+      )`
+    ]
+  },
+  {
+    // Monotonically increasing counter for generating license purchase codes.
+    version: 43,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS license_purchase_counter (
+        id INT PRIMARY KEY DEFAULT 1,
+        count INT NOT NULL DEFAULT 0,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        CONSTRAINT license_purchase_counter_single_row CHECK (id = 1)
+      )`,
+      `INSERT IGNORE INTO license_purchase_counter (id, count) VALUES (1, 0)`
+    ]
   }
 ];
 

@@ -18,7 +18,7 @@ app.use(securityHeaders);
 app.use(cors({
   credentials: true,
   methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'X-CSRF-Token', 'X-Request-ID'],
+  allowedHeaders: ['Content-Type', 'X-CSRF-Token', 'X-Request-ID', 'X-Cart-Id'],
   exposedHeaders: ['X-Request-ID', 'Retry-After'],
   maxAge: 600,
   origin(origin, callback) {
@@ -38,6 +38,7 @@ app.use('/api', require('./routes/admin'));
 app.use('/api', require('./routes/requests'));
 app.use('/api', require('./routes/bookings'));
 app.use('/api', require('./routes/payments'));
+app.use('/api', require('./routes/cart'));
 app.use('/api', require('./routes/downloads'));
 app.use('/api', require('./routes/certificates'));
 

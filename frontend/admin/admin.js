@@ -9,7 +9,7 @@ let reportRequestId = 0;
 const activeAdminSectionKey = 'adminActiveSection';
 const adminCsrfHeaders = method => {
   if (['GET', 'HEAD', 'OPTIONS'].includes(String(method || 'GET').toUpperCase())) return {};
-  const token = localStorage.getItem('adminCsrfToken') || '';
+  const token = sessionStorage.getItem('adminCsrfToken') || '';
   return token ? { 'X-CSRF-Token': token } : {};
 };
 
@@ -1099,7 +1099,7 @@ function showDashboard() {
   loadDashboard().catch(error => {
     if (error.code === 'ADMIN_MFA_REQUIRED') {
       sessionStorage.removeItem('adminToken');
-      localStorage.removeItem('adminCsrfToken');
+      sessionStorage.removeItem('adminCsrfToken');
       $('#admin-dashboard').hidden = true;
       $('#admin-login').hidden = false;
       message('admin-login-message', 'Administrator MFA setup is required. Sign in again to enroll.', true);
@@ -1124,7 +1124,7 @@ restoreAdminSession();
 
 function showAdminMfaChallenge(data) {
   sessionStorage.removeItem('adminToken');
-  localStorage.removeItem('adminCsrfToken');
+  sessionStorage.removeItem('adminCsrfToken');
   adminMfaChallengeToken = data.challengeToken;
   adminMfaEnrollment = Boolean(data.mfaEnrollmentRequired);
   $('#admin-login').hidden = true;
@@ -1221,7 +1221,7 @@ $('#admin-logout').addEventListener('click', async event => {
     console.warn('Admin session could not be invalidated remotely:', error.message);
   }).finally(() => {
     sessionStorage.removeItem('adminToken');
-    localStorage.removeItem('adminCsrfToken');
+    sessionStorage.removeItem('adminCsrfToken');
     sessionStorage.removeItem(activeAdminSectionKey);
     stopBusy();
     location.href = '/index.html';
