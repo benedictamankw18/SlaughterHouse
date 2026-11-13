@@ -126,6 +126,24 @@ function paymentProvider(order) {
   return String(order?.provider || 'paystack').toLowerCase() === 'flutterwave' ? 'flutterwave' : 'paystack';
 }
 
+// One provider transaction may only ever settle one order. The unique index on
+// (provider, provider_transaction_id) is the hard guarantee; this returns a
+// clear conflict instead of a database error when a reference is replayed.
+async function findReusedTransaction(db, payment, reference) {
+  const transactionId = payment?.transactionId;
+  if (transactionId === null || transactionId === undefined || transactionId === '') return null;
+  return db.get(
+    `SELECT id, order_id, provider_reference FROM payments
+     WHERE provider = ? AND provider_transaction_id = ? AND provider_reference <> ?
+     LIMIT 1`,
+    [payment.provider, String(transactionId), reference]
+  );
+}
+
+function isUniqueViolation(error) {
+  return error?.code === '23505' || error?.code === 'ER_DUP_ENTRY';
+}
+
 // Canonical charge shape shared by both providers: amounts are major units.
 function normalizePaystackPayment(data = {}) {
   return {
@@ -498,6 +516,7 @@ router.post('/payments/webhook', paymentWebhookRateLimit, async (request, respon
           order = await tx.get('SELECT * FROM orders WHERE reference = ? FOR UPDATE', [refund.reference]);
           if (!order) rejectWebhook(404, { error: `No order was found for refund reference ${refund.reference}.` });
         }
+        if (paymentProvider(order) !== provider) rejectWebhook(400, { error: 'Payment provider does not match the order provider.' });
         const refundCompleted = flutterwaveRefund
           ? ['completed', 'successful'].includes(String(refund.status || '').toLowerCase())
           : eventType === 'refund.processed';
@@ -521,6 +540,7 @@ router.post('/payments/webhook', paymentWebhookRateLimit, async (request, respon
         return { processed: true, orderId: order.id, refund: result, eventType };
       }
       const order = await tx.get('SELECT * FROM orders WHERE reference = ? FOR UPDATE', [eventReference]);
+      if (order && paymentProvider(order) !== provider) rejectWebhook(400, { error: 'Payment provider does not match the order provider.' });
       if (eventType !== 'charge.success' || payment.status !== 'success') {
         await recordNonSuccessPayment(tx, order, {
           reference: eventReference,
@@ -536,8 +556,9 @@ router.post('/payments/webhook', paymentWebhookRateLimit, async (request, respon
         orderId: order.id,
         conflict: { reason: 'order_already_refunded', reference: eventReference }
       };
-      if (paymentProvider(order) !== provider) rejectWebhook(400, { error: 'Payment provider does not match the order provider.' });
       if (!chargeMatchesOrder(order, payment)) rejectWebhook(400, { error: 'Payment webhook amount could not be reconciled.' });
+      const reusedPayment = await findReusedTransaction(tx, payment, order.reference);
+      if (reusedPayment) rejectWebhook(409, { error: 'This payment transaction has already been recorded for another order.' });
       const orderItems = parseOrderItems(order.items_json);
       if (!orderItems) rejectWebhook(500, { error: 'Order data is invalid.' });
       let items;
@@ -619,6 +640,9 @@ router.post('/payments/webhook', paymentWebhookRateLimit, async (request, respon
   } catch (error) {
     if (error?.webhookResponse) {
       return response.status(error.webhookResponse.httpStatus).json(error.webhookResponse.body);
+    }
+    if (isUniqueViolation(error)) {
+      return response.status(409).json({ error: 'This payment transaction has already been recorded for another order.' });
     }
     response.status(500).json({ error: databaseError('Payment webhook processing failed.', error) });
   }
@@ -811,6 +835,9 @@ router.get('/payments/verify/:reference', paymentVerificationRateLimit, async (r
       if (lockedOrder.status === 'paid' || lockedOrder.status === 'partially_refunded') return success();
       if (lockedOrder.status === 'refunded') return { httpStatus: 409, body: { error: 'This order was refunded and cannot be marked paid again.' } };
       if (!chargeMatchesOrder(lockedOrder, payment)) return { httpStatus: 400, body: { error: 'Payment amount could not be verified.' } };
+      if (await findReusedTransaction(tx, payment, lockedOrder.reference)) {
+        return { httpStatus: 409, body: { error: 'This payment transaction has already been recorded for another order.' } };
+      }
       await lockExclusiveBeats(tx, items);
       const conflictingBeatId = await hasConflictingExclusiveSale(tx, items, lockedOrder.reference);
       if (conflictingBeatId) return { httpStatus: 409, body: { error: `The exclusive license for beat ${conflictingBeatId} has already been sold. Payment cannot unlock this order.` } };
@@ -840,6 +867,7 @@ router.get('/payments/verify/:reference', paymentVerificationRateLimit, async (r
     return response.status(outcome.httpStatus).json(outcome.body);
   } catch (error) {
     logger.error('payment_verification_failed', { code: error.code });
+    if (error.code === '23505') return response.status(409).json({ error: 'This payment transaction has already been recorded for another order.' });
     if (error.code === 'ER_DUP_ENTRY') return response.status(409).json({ error: 'This booking could not be completed because one or more selected slots were reserved by another customer.' });
     response.status(502).json({ error: error.code ? databaseError('Payment verification failed.', error) : `Payment verification failed: ${error.message}` });
   }

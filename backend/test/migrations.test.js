@@ -345,6 +345,14 @@ test('migration 38 adds booking submission and checkout replay columns', () => {
   assert.match(migration.statements[2], /CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_submission ON orders \(submission_id\)/);
 });
 
+test('migration 39 enforces unique provider transaction ids', () => {
+  const migration = migrations.find(candidate => candidate.version === 39);
+  assert.ok(migration, 'migration 39 must exist');
+  assert.deepEqual(migration.statements, [
+    'CREATE UNIQUE INDEX IF NOT EXISTS uq_payments_provider_transaction ON payments (provider, provider_transaction_id)'
+  ]);
+});
+
 test('applyMigrations runs every statement once and records each version', async () => {
   const pool = fakePool();
   await applyMigrations(pool);

@@ -736,6 +736,14 @@ const migrations = [
       { ensureColumn: { table: 'orders', column: 'checkout_url', definition: 'TEXT NULL' } },
       'CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_submission ON orders (submission_id)'
     ]
+  },
+  {
+    // A provider transaction id identifies one charge. NULLs stay distinct in both
+    // PostgreSQL and MySQL, so rows without a transaction id are unaffected.
+    version: 39,
+    statements: [
+      'CREATE UNIQUE INDEX IF NOT EXISTS uq_payments_provider_transaction ON payments (provider, provider_transaction_id)'
+    ]
   }
 ];
 

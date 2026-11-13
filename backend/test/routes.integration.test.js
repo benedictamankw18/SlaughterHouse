@@ -756,7 +756,7 @@ test('all registered API route methods execute against an isolated PostgreSQL te
       event: 'charge.success',
       data: { reference, status: 'success', amount: 2500, currency: 'GHS' }
     }, config.paystackSecretKey)));
-    assert.ok(inventoryResults.every(result => result.status === 200), 'Both inventory webhook deliveries are acknowledged.');
+    assert.ok(inventoryResults.every(result => result.status === 200), `Both inventory webhook deliveries are acknowledged: ${JSON.stringify(inventoryResults)}`);
     assert.equal(inventoryResults.filter(result => result.body.conflict === 'merchandise_out_of_stock').length, 1);
     assert.equal(inventoryResults.filter(result => result.body.received === true && !result.body.conflict).length, 1);
     const [inventoryRows] = await promisePool.execute(
@@ -767,9 +767,58 @@ test('all registered API route methods execute against an isolated PostgreSQL te
     );
     assert.equal(Number(inventoryRows[0].stock_quantity), 0, 'Concurrent purchases must not oversell inventory.');
     assert.equal(Number(inventoryRows[0].paid_orders), 2, 'Both paid orders are recorded as paid; the second is flagged for fulfillment review.');
+    const [reviewOrders] = await promisePool.execute(
+      `SELECT reference, status, fulfillment_review_reason FROM orders
+       WHERE reference IN (?, ?) AND fulfillment_review_required = TRUE`,
+      inventoryReferences
+    );
+    assert.equal(reviewOrders.length, 1, 'Exactly one concurrent order needs fulfillment review.');
+    const reviewReference = reviewOrders[0].reference;
+    assert.equal(reviewOrders[0].status, 'paid', 'The order that could not be fulfilled is still recorded as paid.');
+    assert.equal(reviewOrders[0].fulfillment_review_reason, 'merchandise_out_of_stock');
+    const [adminNotifications] = await promisePool.execute(
+      'SELECT id FROM notifications WHERE dedupe_key LIKE ?',
+      [`payment-reconciliation:${reviewReference}:merchandise_out_of_stock:%`]
+    );
+    assert.ok(adminNotifications.length >= 1, 'Administrators are notified about the paid order that needs review.');
+    const [customerNotifications] = await promisePool.execute(
+      `SELECT n.id FROM notifications n JOIN users u ON u.id = n.user_id
+       WHERE u.email = ? AND n.type = ?`,
+      ['integration-customer@example.test', 'merchandise_payment_review']
+    );
+    assert.ok(customerNotifications.length >= 1, 'The customer is told their paid order needs follow-up.');
   } finally {
     if (server?.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     loaded?.restore();
+    await pool.end();
+  }
+});
+
+test('PostgreSQL rejects duplicate provider transaction ids', {
+  skip: !testDatabaseUrl && 'Set TEST_DATABASE_URL to the dedicated local slaughterhouse_route_test database.'
+}, async () => {
+  assertSafeTestDatabase(testDatabaseUrl);
+  const pool = new Pool({ connectionString: testDatabaseUrl });
+  const transactionId = `itx-${crypto.randomUUID()}`;
+  const insertPayment = reference => pool.query(
+    `INSERT INTO payments (provider, provider_reference, provider_transaction_id, status, amount, currency)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    ['paystack', reference, transactionId, 'failed', 1, 'GHS']
+  );
+  try {
+    await applyMigrations(pool);
+    await insertPayment(`UBB-PAYMENT-UNIQUE-A-${transactionId}`);
+    await assert.rejects(
+      insertPayment(`UBB-PAYMENT-UNIQUE-B-${transactionId}`),
+      error => error.code === '23505'
+    );
+    const { rows } = await pool.query(
+      'SELECT COUNT(*)::int AS total FROM payments WHERE provider = $1 AND provider_transaction_id = $2',
+      ['paystack', transactionId]
+    );
+    assert.equal(rows[0].total, 1, 'Only one payment row may own a provider transaction id.');
+  } finally {
+    await pool.query('DELETE FROM payments WHERE provider = $1 AND provider_transaction_id = $2', ['paystack', transactionId]).catch(() => {});
     await pool.end();
   }
 });
