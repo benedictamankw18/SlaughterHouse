@@ -793,6 +793,51 @@ test('webhook rejects a provider transaction id already recorded for another ord
   }
 });
 
+test('webhook rejects an order whose stored provider is not recognized', () => withRouter(async loaded => {
+  loaded.order.provider = 'stripe';
+  const result = await postWebhook(loaded.router, {
+    event: 'charge.success',
+    data: {
+      id: 55,
+      reference: loaded.order.reference,
+      status: 'success',
+      amount: 12500,
+      currency: 'GHS'
+    }
+  });
+
+  assert.equal(result.status, 400);
+  assert.equal(result.body.error, 'Payment provider does not match the order provider.');
+  assert.ok(!loaded.calls.some(({ query, parameters }) =>
+    /UPDATE orders SET status = \?/.test(query) && parameters[0] === 'paid'));
+  assert.ok(!loaded.calls.some(({ query }) => /INSERT INTO payments/.test(query)));
+}));
+
+test('verification rejects an order whose stored provider is not recognized', async () => {
+  const loaded = loadPaymentsRouter();
+  loaded.order.provider = 'stripe';
+  const originalFetch = global.fetch;
+  let providerCalled = false;
+  global.fetch = async (url, ...args) => {
+    if (String(url).startsWith('https://api.paystack.co/')) {
+      providerCalled = true;
+      throw new Error('No payment provider may be called for an unrecognized order provider.');
+    }
+    return originalFetch(url, ...args);
+  };
+  try {
+    const result = await getJson(loaded.router, `/payments/verify/${loaded.order.reference}`);
+
+    assert.equal(result.status, 500);
+    assert.equal(result.body.error, 'This order has an unsupported payment provider.');
+    assert.equal(providerCalled, false);
+    assert.ok(!loaded.calls.some(({ query }) => /INSERT INTO payments/.test(query)));
+  } finally {
+    global.fetch = originalFetch;
+    loaded.restore();
+  }
+});
+
 test('Paystack refund webhook applies the refund to its referenced order', () => withRouter(async loaded => {
   loaded.order.status = 'paid';
   loaded.order.refunded_amount = 0;

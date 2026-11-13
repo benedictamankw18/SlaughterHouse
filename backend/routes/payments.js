@@ -23,6 +23,7 @@ const { refundEventDetails, refundEventKey, flutterwaveRefundDetails, flutterwav
 const { paymentFailureStatus, isRefundEvent, recordNonSuccessPayment } = require('../services/payment-events');
 const { queueEmailSafely } = require('../services/email/outbox');
 const { fulfillPaidBooking } = require('../services/booking-fulfillment');
+const { paymentProvider } = require('../services/payment-providers');
 const { rateLimit } = require('../services/rate-limit');
 const logger = require('../services/logger');
 
@@ -120,10 +121,6 @@ function allocateReceiptItems(order, items) {
       amount: cents / 100
     };
   });
-}
-
-function paymentProvider(order) {
-  return String(order?.provider || 'paystack').toLowerCase() === 'flutterwave' ? 'flutterwave' : 'paystack';
 }
 
 // One provider transaction may only ever settle one order. The unique index on
@@ -768,6 +765,7 @@ router.get('/payments/verify/:reference', paymentVerificationRateLimit, async (r
   if (!order) return response.status(404).json({ error: `No order was found for payment reference ${reference}.` });
 
   const provider = paymentProvider(order);
+  if (!provider) return response.status(500).json({ error: 'This order has an unsupported payment provider.' });
   let payment;
   try {
     if (provider === 'flutterwave') {
