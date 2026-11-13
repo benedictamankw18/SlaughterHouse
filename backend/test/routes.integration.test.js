@@ -787,6 +787,53 @@ test('all registered API route methods execute against an isolated PostgreSQL te
       ['integration-customer@example.test', 'merchandise_payment_review']
     );
     assert.ok(customerNotifications.length >= 1, 'The customer is told their paid order needs follow-up.');
+
+    const [conflictInventory] = await promisePool.execute(
+      `INSERT INTO merchandise (title, description, price, stock_quantity, catalog_status)
+       VALUES (?, ?, ?, ?, 'published')`,
+      ['Reference conflict item', 'Integration-only inventory', 25, 5]
+    );
+    const conflictItem = {
+      type: 'merchandise',
+      productId: conflictInventory.insertId,
+      name: 'Reference conflict item',
+      priceGhs: 25
+    };
+    const conflictReferenceA = `UBB-CONFLICT-REF-OWNER-${crypto.randomUUID()}`;
+    const conflictReferenceB = `UBB-CONFLICT-REF-SETTLE-${crypto.randomUUID()}`;
+    await insertPaidOrderCandidate(promisePool, { reference: conflictReferenceA, amount: 25, item: conflictItem });
+    await insertPaidOrderCandidate(promisePool, { reference: conflictReferenceB, amount: 25, item: conflictItem });
+    const [conflictOrders] = await promisePool.execute(
+      'SELECT id, reference FROM orders WHERE reference IN (?, ?)',
+      [conflictReferenceA, conflictReferenceB]
+    );
+    const ownerOrderId = conflictOrders.find(order => order.reference === conflictReferenceA).id;
+    await promisePool.execute(
+      'INSERT INTO payments (order_id, provider, provider_reference, status, amount, currency) VALUES (?, ?, ?, ?, ?, ?)',
+      [ownerOrderId, 'paystack', conflictReferenceB, 'pending', 25, 'GHS']
+    );
+    const conflictWebhook = await postSignedWebhook(baseUrl, {
+      event: 'charge.success',
+      data: { id: 7101, reference: conflictReferenceB, status: 'success', amount: 2500, currency: 'GHS' }
+    }, config.paystackSecretKey);
+    assert.equal(conflictWebhook.status, 409, 'A conflicting payment reference is rejected.');
+    assert.equal(conflictWebhook.body.error, 'This payment reference is already recorded for another order.');
+    const [settledOrder] = await promisePool.execute('SELECT status FROM orders WHERE reference = ?', [conflictReferenceB]);
+    assert.equal(settledOrder[0].status, 'pending', 'A reference conflict leaves the order unpaid.');
+    const [conflictPayments] = await promisePool.execute(
+      'SELECT order_id, provider FROM payments WHERE provider_reference = ?',
+      [conflictReferenceB]
+    );
+    assert.equal(conflictPayments.length, 1);
+    assert.equal(Number(conflictPayments[0].order_id), Number(ownerOrderId), 'A payment reference is never reassigned.');
+    assert.equal(conflictPayments[0].provider, 'paystack');
+    const [conflictStock] = await promisePool.execute('SELECT stock_quantity FROM merchandise WHERE id = ?', [conflictInventory.insertId]);
+    assert.equal(Number(conflictStock[0].stock_quantity), 5, 'Stock changes roll back with the rejected payment.');
+    const [conflictNotifications] = await promisePool.execute(
+      'SELECT id FROM notifications WHERE dedupe_key LIKE ?',
+      [`payment-reference-conflict:${conflictReferenceB}:%`]
+    );
+    assert.equal(conflictNotifications.length, 1, 'Administrators are told to reconcile the conflicting payment.');
   } finally {
     if (server?.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     loaded?.restore();
@@ -819,6 +866,62 @@ test('PostgreSQL rejects duplicate provider transaction ids', {
     assert.equal(rows[0].total, 1, 'Only one payment row may own a provider transaction id.');
   } finally {
     await pool.query('DELETE FROM payments WHERE provider = $1 AND provider_transaction_id = $2', ['paystack', transactionId]).catch(() => {});
+    await pool.end();
+  }
+});
+
+test('PostgreSQL never reassigns a payment reference to another order or provider', {
+  skip: !testDatabaseUrl && 'Set TEST_DATABASE_URL to the dedicated local slaughterhouse_route_test database.'
+}, async () => {
+  assertSafeTestDatabase(testDatabaseUrl);
+  const { recordPayment } = require('../services/payment-records');
+  const pool = new Pool({ connectionString: testDatabaseUrl });
+  const reference = `UBB-PAYMENT-OWNER-${crypto.randomUUID()}`;
+  const otherReference = `UBB-PAYMENT-OTHER-${crypto.randomUUID()}`;
+  const orderIds = [];
+  const run = async (query, parameters = []) => {
+    const result = await pool.query(toPostgresQuery(query), parameters);
+    return { changes: result.rowCount };
+  };
+  const insertOrder = async orderReference => {
+    const { rows } = await pool.query(
+      `INSERT INTO orders (reference, customer_name, customer_email, amount, currency, items_json)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [orderReference, 'Integration Customer', 'integration-customer@example.test', 25, 'GHS', '[]']
+    );
+    orderIds.push(rows[0].id);
+    return rows[0].id;
+  };
+  try {
+    await applyMigrations(pool);
+    const ownerId = await insertOrder(reference);
+    const otherId = await insertOrder(otherReference);
+    const payment = { status: 'pending', amount: 25, currency: 'GHS', amountGhs: 25 };
+    await recordPayment(run, { ...payment, orderId: ownerId, provider: 'paystack', reference });
+
+    await assert.rejects(
+      recordPayment(run, { ...payment, orderId: otherId, provider: 'paystack', reference }),
+      error => error.code === 'PAYMENT_REFERENCE_CONFLICT'
+    );
+    await assert.rejects(
+      recordPayment(run, { ...payment, orderId: otherId, provider: 'flutterwave', reference }),
+      error => error.code === 'PAYMENT_REFERENCE_CONFLICT'
+    );
+
+    await recordPayment(run, { ...payment, orderId: ownerId, provider: 'paystack', reference, status: 'paid', verified: true });
+    const { rows } = await pool.query(
+      'SELECT order_id, provider, status FROM payments WHERE provider_reference = $1',
+      [reference]
+    );
+    assert.equal(rows.length, 1, 'A payment reference keeps a single owning row.');
+    assert.equal(Number(rows[0].order_id), Number(ownerId), 'The owning order is never replaced.');
+    assert.equal(rows[0].provider, 'paystack', 'The owning provider is never replaced.');
+    assert.equal(rows[0].status, 'paid', 'The owning order may still update its own payment.');
+  } finally {
+    if (orderIds.length) {
+      await pool.query('DELETE FROM payments WHERE order_id = ANY($1::int[])', [orderIds]).catch(() => {});
+      await pool.query('DELETE FROM orders WHERE id = ANY($1::int[])', [orderIds]).catch(() => {});
+    }
     await pool.end();
   }
 });

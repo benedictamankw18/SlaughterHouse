@@ -40,7 +40,7 @@ function loadBookingsRouter({ unavailableTime = null, chargeQuote = null, flutte
     },
     run(query, parameters = [], callback) {
       calls.push({ query, parameters, transaction: false });
-      callback?.(null);
+      callback?.call({ lastID: 1, changes: 1 }, null);
       return Promise.resolve({ changes: 1 });
     }
   };
@@ -308,10 +308,10 @@ test('USD booking checkout holds slots, stores the quoted charge, and uses Flutt
     assert.equal(orderInsert.parameters[11], 'flutterwave');
 
     const paymentInsert = loaded.calls.find(call => /INSERT INTO payments/.test(call.query));
-    assert.equal(paymentInsert.parameters[0], 'flutterwave');
-    assert.equal(paymentInsert.parameters[3], 57.12);
-    assert.equal(paymentInsert.parameters[4], 'USD');
-    assert.equal(paymentInsert.parameters[5], 714);
+    assert.equal(paymentInsert.parameters[1], 'flutterwave');
+    assert.equal(paymentInsert.parameters[5], 57.12);
+    assert.equal(paymentInsert.parameters[6], 'USD');
+    assert.equal(paymentInsert.parameters[7], 714);
   } finally {
     global.fetch = originalFetch;
     loaded.restore();

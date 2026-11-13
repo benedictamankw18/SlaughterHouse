@@ -196,6 +196,33 @@ HAVING COUNT(*) > 1;
 
 Resolve any rows manually, keeping the transaction id on the row tied to the settled order and clearing it on the others; the original provider payload remains in `provider_payload`. Then rerun the migration.
 
+## Payment reference immutability
+
+`payments.provider_reference` mirrors the order reference for both Paystack and Flutterwave. Once a payment row exists, its `order_id` and `provider` never change: a webhook, verification, or refund that resolves to a reference already owned by another order or provider is rejected with HTTP 409 (`PAYMENT_REFERENCE_CONFLICT`) instead of overwriting the row. The order stays unpaid, stock and sales writes from that request roll back, and administrators receive a `payment_reconciliation` notification keyed `payment-reference-conflict:<reference>`.
+
+This is distinct from transaction reuse: a reused `provider_transaction_id` returns the "already recorded for another order" conflict, while a reference conflict means the payment reference itself is already attached elsewhere.
+
+Inspect a conflicting reference in the provider dashboard and in the database before fulfilling either order:
+
+```sql
+SELECT p.id, p.order_id, o.reference AS order_reference, p.provider,
+       p.provider_reference, p.provider_transaction_id, p.status, p.created_at
+FROM payments p
+LEFT JOIN orders o ON o.id = p.order_id
+WHERE p.provider_reference = '<reference>';
+```
+
+Settled orders with no payment row are the fingerprint of a payment that was reassigned before this guard existed. Run this periodically after deploying the guard:
+
+```sql
+SELECT o.reference, o.status, COUNT(p.id) AS payment_rows
+FROM orders o
+LEFT JOIN payments p ON p.order_id = o.id
+WHERE o.status IN ('paid', 'partially_refunded', 'refunded')
+GROUP BY o.reference, o.status
+HAVING COUNT(p.id) = 0;
+```
+
 ## Migration recovery
 
 Database migrations are forward-only. Do not edit or remove an applied migration to roll it back. For a failed deployment, stop writes if necessary, restore the latest verified backup into a separate database, and use a reviewed forward migration to reconcile schema or data. Promote a restored database only after application-level validation and an explicit operational approval. Preserve the failed database and logs for investigation.

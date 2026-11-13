@@ -27,6 +27,7 @@ const {
 } = require('../services/booking-reservations');
 const { queueEmailSafely } = require('../services/email/outbox');
 const { rateLimit } = require('../services/rate-limit');
+const { recordPayment, PAYMENT_REFERENCE_CONFLICT } = require('../services/payment-records');
 
 const router = express.Router();
 const { bookingServiceLabels, paystackSecretKey, paymentCallbackUrl, frontendOrigin } = config;
@@ -231,6 +232,7 @@ router.post('/bookings/initialize-payment', bookingPaymentRateLimit, async (requ
   if (quote.provider === 'flutterwave' && !isFlutterwaveConfigured()) return response.status(503).json({ error: 'Booking payments in this currency are unavailable because FLUTTERWAVE_SECRET_KEY is not configured. Choose GHS to continue.' });
   let reference;
   let holdAcquired = false;
+  let orderId;
   try {
     reference = `UBB-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     const foreign = quote.provider === 'flutterwave';
@@ -264,6 +266,7 @@ router.post('/bookings/initialize-payment', bookingPaymentRateLimit, async (requ
       if (submission.id && insertResult.changes === 0) {
         throw Object.assign(new Error('This booking payment was already started.'), { code: 'BOOKING_DUPLICATE_SUBMISSION' });
       }
+      orderId = insertResult.lastID;
     });
     holdAcquired = true;
     let checkout;
@@ -303,14 +306,16 @@ router.post('/bookings/initialize-payment', bookingPaymentRateLimit, async (requ
       }
       throw error;
     }
-    await run(
-      `INSERT INTO payments (order_id, provider, provider_reference, status, amount, currency, amount_ghs, provider_payload)
-       SELECT id, ?, ?, ?, ?, ?, ?, ? FROM orders WHERE reference = ?
-       ON CONFLICT (provider_reference) DO UPDATE SET order_id = EXCLUDED.order_id, status = EXCLUDED.status,
-         amount = EXCLUDED.amount, currency = EXCLUDED.currency, amount_ghs = EXCLUDED.amount_ghs,
-         provider_payload = EXCLUDED.provider_payload`,
-      [quote.provider, checkout.providerReference, 'pending', quote.amount, quote.currency, quote.amountGhs, JSON.stringify(checkout.payload), reference]
-    );
+    await recordPayment(run, {
+      orderId,
+      provider: quote.provider,
+      reference: checkout.providerReference,
+      status: 'pending',
+      amount: quote.amount,
+      currency: quote.currency,
+      amountGhs: quote.amountGhs,
+      payload: checkout.payload
+    });
     await run('UPDATE orders SET checkout_url = ? WHERE reference = ?', [checkout.authorizationUrl, reference]).catch(() => {});
     await queueEmailSafely(database, {
       to: normalizedEmail,
@@ -344,6 +349,13 @@ router.post('/bookings/initialize-payment', bookingPaymentRateLimit, async (requ
         conflict: 'booking_slot_unavailable',
         unavailableSlots: error.unavailableSlots || []
       });
+    }
+    if (error.code === PAYMENT_REFERENCE_CONFLICT) {
+      await database.transaction(async transaction => {
+        await transaction.run('UPDATE orders SET status = ? WHERE reference = ? AND status = ?', ['failed', reference, 'pending']);
+        await releaseBookingHold(transaction, reference);
+      }).catch(() => {});
+      return response.status(409).json({ error: error.message, code: error.code });
     }
     if (holdAcquired) return response.status(502).json({ error: `Payment initialization could not be confirmed. The selected slot will be released automatically after ${HOLD_DURATION_MINUTES} minutes.` });
     response.status(500).json({ error: databaseError('Reserving booking slots failed.', error) });
