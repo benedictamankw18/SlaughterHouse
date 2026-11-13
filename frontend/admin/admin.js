@@ -528,8 +528,45 @@ function renderReport(report) {
 function renderBusinessSettings(settings, canEdit, suggestedUsdToGhsRate, suggestedUsdToNgnRate, suggestedUsdToGbpRate, suggestedUsdToEurRate) {
   const form = $('#business-settings-form');
   const rateEditEnabled = localStorage.getItem('ultbigboyRateEditEnabled') !== 'false';
+  const byKey = new Map(settings.map(setting => [setting.key, setting]));
   const editable = canEdit && rateEditEnabled;
-  form.innerHTML = `<div class="admin-settings-grid">${settings.map(setting => {
+
+  const sections = [
+    {
+      heading: 'Booking fees',
+      keys: [
+        'booking_fee_mixtape_ghs',
+        'booking_fee_full_production_ghs',
+        'booking_fee_beat_production_ghs',
+        'booking_fee_adverts_promos_ghs',
+        'booking_ep_album_discount_percent'
+      ]
+    },
+    {
+      heading: 'Beat request license prices',
+      keys: [
+        'beat_request_license_basic_ghs',
+        'beat_request_license_premium_ghs',
+        'beat_request_license_unlimited_ghs',
+        'beat_request_license_exclusive_ghs'
+      ]
+    },
+    {
+      heading: 'Default beat prices',
+      keys: [
+        'beat_default_basic_usd',
+        'beat_default_premium_usd',
+        'beat_default_unlimited_usd',
+        'beat_default_exclusive_usd'
+      ]
+    },
+    {
+      heading: 'Exchange rates',
+      keys: ['usd_to_ghs_rate', 'usd_to_ngn_rate', 'usd_to_gbp_rate', 'usd_to_eur_rate']
+    }
+  ];
+
+  const renderSetting = setting => {
     const isGhsRate = setting.key === 'usd_to_ghs_rate';
     const isNgnRate = setting.key === 'usd_to_ngn_rate';
     const isGbpRate = setting.key === 'usd_to_gbp_rate';
@@ -552,13 +589,17 @@ function renderBusinessSettings(settings, canEdit, suggestedUsdToGhsRate, sugges
       const toggle = canEdit
         ? `<label class="rate-edit-toggle"><input type="checkbox" name="rateEditEnabled" ${rateEditEnabled ? 'checked' : ''}><span class="toggle-slider"></span><span>Allow editing rate</span></label>`
         : '';
-      rateStatus = `${updatedAt ? `<small>Configured ${unit} rate updated ${escapeHtml(updatedAt)}. ${setting.fresh ? 'Current.' : 'STALE — beat checkout is disabled until refreshed.'} Rates expire after 24 hours.</small>` : `<small>No ${unit} exchange rate is configured. Beat checkout is unavailable until one is saved.</small>`} ${suggestedHtml} ${refreshBtn} ${useSuggestedBtn} ${toggle}`;
+      rateStatus = `${updatedAt ? `<small>Configured ${unit} rate updated ${escapeHtml(updatedAt)}. ${setting.fresh ? 'Current.' : 'STALE \u2014 beat checkout is disabled until refreshed.'} Rates expire after 24 hours.</small>` : `<small>No ${unit} exchange rate is configured. Beat checkout is unavailable until one is saved.</small>`} ${suggestedHtml} ${refreshBtn} ${useSuggestedBtn} ${toggle}`;
     }
     const inputDisabled = exchangeRate && !editable;
     return `<label>${escapeHtml(setting.label)}<input name="${escapeHtml(setting.key)}" type="number" min="${exchangeRate ? '0.000001' : '0'}" max="${exchangeRate ? '999999.999999' : '100000000'}" step="${exchangeRate ? '0.000001' : '0.01'}" value="${escapeHtml(setting.value)}" ${canEdit ? 'required' : 'disabled'}${inputDisabled ? ' disabled' : ''}>${rateStatus}</label>`;
-  }).join('')}</div>${canEdit ? '<button class="auth-primary-button" type="submit">Save business settings</button>' : '<p>Only a super-admin can edit business settings.</p>'}`;
-}
+  };
 
+  form.innerHTML = `${sections.map(section => {
+    const labels = section.keys.map(key => byKey.get(key)).filter(Boolean).map(renderSetting).join('');
+    return `<h3 class="admin-settings-section">${escapeHtml(section.heading)}</h3><div class="admin-settings-grid">${labels}</div>`;
+  }).join('')}${canEdit ? '<button class="auth-primary-button" type="submit">Save business settings</button>' : '<p>Only a super-admin can edit business settings.</p>'}`;
+}
 function renderBookingSettings(settings, canEdit) {
   const form = $('#booking-settings-form');
   if (!form) return;
