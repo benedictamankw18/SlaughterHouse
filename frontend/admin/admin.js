@@ -525,16 +525,38 @@ function renderReport(report) {
   chart.innerHTML = `${reportState.chart === 'histogram' ? renderHistogramChart(periods, series) : renderLineChart(periods, series)}${renderAnalyticsLegend(series)}`;
 }
 
-function renderBusinessSettings(settings, canEdit) {
+function renderBusinessSettings(settings, canEdit, suggestedUsdToGhsRate, suggestedUsdToNgnRate, suggestedUsdToGbpRate, suggestedUsdToEurRate) {
   const form = $('#business-settings-form');
-  form.innerHTML = `${settings.map(setting => {
-    const exchangeRate = setting.key === 'usd_to_ghs_rate';
+  const rateEditEnabled = localStorage.getItem('ultbigboyRateEditEnabled') !== 'false';
+  const editable = canEdit && rateEditEnabled;
+  form.innerHTML = `<div class="admin-settings-grid">${settings.map(setting => {
+    const isGhsRate = setting.key === 'usd_to_ghs_rate';
+    const isNgnRate = setting.key === 'usd_to_ngn_rate';
+    const isGbpRate = setting.key === 'usd_to_gbp_rate';
+    const isEurRate = setting.key === 'usd_to_eur_rate';
+    const exchangeRate = isGhsRate || isNgnRate || isGbpRate || isEurRate;
     const updatedAt = setting.updatedAt ? new Date(setting.updatedAt).toLocaleString() : null;
-    const rateStatus = exchangeRate
-      ? `<small>${!updatedAt ? 'No exchange rate is configured. Beat checkout is unavailable until one is saved.' : setting.fresh ? `Current rate updated ${escapeHtml(updatedAt)}.` : `STALE: last updated ${escapeHtml(updatedAt)}. Beat checkout is disabled until refreshed.`} Rates expire after 24 hours.</small>`
-      : '';
-    return `<label>${escapeHtml(setting.label)}<input name="${escapeHtml(setting.key)}" type="number" min="${exchangeRate ? '0.000001' : '0'}" max="${exchangeRate ? '999999.999999' : '100000000'}" step="${exchangeRate ? '0.000001' : '0.01'}" value="${escapeHtml(setting.value)}" ${canEdit ? 'required' : 'disabled'}>${rateStatus}</label>`;
-  }).join('')}${canEdit ? '<button class="auth-primary-button" type="submit">Save business settings</button>' : '<p>Only a super-admin can edit business settings.</p>'}`;
+    let rateStatus = '';
+    if (exchangeRate) {
+      const suggested = isGhsRate ? suggestedUsdToGhsRate : isNgnRate ? suggestedUsdToNgnRate : isGbpRate ? suggestedUsdToGbpRate : suggestedUsdToEurRate;
+      const unit = isGhsRate ? 'GHS' : isNgnRate ? 'NGN' : isGbpRate ? 'GBP' : 'EUR';
+      const suggestedHtml = suggested != null
+        ? `<small class="rate-suggested">Suggested (online): ${escapeHtml(suggested.toFixed(6))} ${unit} per USD</small>`
+        : `<small class="rate-suggested">Suggested ${unit} rate unavailable right now.</small>`;
+      const refreshBtn = canEdit
+        ? `<button type="button" class="rate-refresh-btn" data-rate="${setting.key}" title="Refresh ${unit} rate from online service">↻ Refresh from online</button>`
+        : '';
+      const useSuggestedBtn = suggested != null && canEdit
+        ? `<button type="button" class="rate-use-suggested" data-rate="${setting.key}" data-suggested="${escapeHtml(suggested.toFixed(6))}" title="Use the suggested online ${unit} rate in the field above">Use suggested</button>`
+        : '';
+      const toggle = canEdit
+        ? `<label class="rate-edit-toggle"><input type="checkbox" name="rateEditEnabled" ${rateEditEnabled ? 'checked' : ''}><span class="toggle-slider"></span><span>Allow editing rate</span></label>`
+        : '';
+      rateStatus = `${updatedAt ? `<small>Configured ${unit} rate updated ${escapeHtml(updatedAt)}. ${setting.fresh ? 'Current.' : 'STALE — beat checkout is disabled until refreshed.'} Rates expire after 24 hours.</small>` : `<small>No ${unit} exchange rate is configured. Beat checkout is unavailable until one is saved.</small>`} ${suggestedHtml} ${refreshBtn} ${useSuggestedBtn} ${toggle}`;
+    }
+    const inputDisabled = exchangeRate && !editable;
+    return `<label>${escapeHtml(setting.label)}<input name="${escapeHtml(setting.key)}" type="number" min="${exchangeRate ? '0.000001' : '0'}" max="${exchangeRate ? '999999.999999' : '100000000'}" step="${exchangeRate ? '0.000001' : '0.01'}" value="${escapeHtml(setting.value)}" ${canEdit ? 'required' : 'disabled'}${inputDisabled ? ' disabled' : ''}>${rateStatus}</label>`;
+  }).join('')}</div>${canEdit ? '<button class="auth-primary-button" type="submit">Save business settings</button>' : '<p>Only a super-admin can edit business settings.</p>'}`;
 }
 
 function renderBookingSettings(settings, canEdit) {
@@ -933,7 +955,7 @@ async function loadAuditLogs() {
 async function loadBusinessSettings() {
   try {
     const data = await api('/api/admin/settings');
-    renderBusinessSettings(data.settings || [], Boolean(data.canEdit));
+    renderBusinessSettings(data.settings || [], Boolean(data.canEdit), data.suggestedUsdToGhsRate ?? null, data.suggestedUsdToNgnRate ?? null, data.suggestedUsdToGbpRate ?? null, data.suggestedUsdToEurRate ?? null);
     $('#business-settings-message').textContent = '';
   } catch (error) {
     message('business-settings-message', error.message || 'Could not load business settings.', true);
@@ -1246,6 +1268,55 @@ $('#business-settings-form').addEventListener('submit', async event => {
     message('business-settings-message', error.message || 'Could not save business settings.', true);
   } finally {
     stopBusy();
+  }
+});
+
+$('#business-settings-form').addEventListener('click', async event => {
+  const button = event.target.closest('button');
+  if (!button) return;
+
+  // Allow editing rate toggle
+  const toggle = event.target.closest('.rate-edit-toggle');
+  if (toggle) {
+    const checkbox = toggle.querySelector('input[type="checkbox"]');
+    localStorage.setItem('ultbigboyRateEditEnabled', checkbox.checked);
+    await loadBusinessSettings();
+    return;
+  }
+
+  // Refresh rate from online service
+  if (button.classList.contains('rate-refresh-btn')) {
+    event.preventDefault();
+    const stopBusy = startButtonBusy(button, 'Refreshing…');
+    if (!stopBusy) return;
+    try {
+      const result = await api('/api/admin/settings/refresh-rate', { method: 'POST' });
+      const parts = [`Rate refreshed from online: ${result.setting.value} GHS per USD.`];
+      if (result.ngnSetting) {
+        parts.push(`NGN: ${result.ngnSetting.value} per USD.`);
+      }
+      message('business-settings-message', parts.join(' '));
+      await loadBusinessSettings();
+    } catch (error) {
+      message('business-settings-message', error.message || 'Could not refresh the rate from online.', true);
+    } finally {
+      stopBusy();
+    }
+    return;
+  }
+
+  // Use suggested rate
+  if (button.classList.contains('rate-use-suggested')) {
+    event.preventDefault();
+    const rateKey = button.getAttribute('data-rate');
+    const suggested = button.getAttribute('data-suggested');
+    if (!suggested || !rateKey) return;
+    const input = document.querySelector(`#business-settings-form input[name="${rateKey}"]`);
+    if (input) {
+      input.value = suggested;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    message('business-settings-message', `Suggested rate ${suggested} applied to ${rateKey}. Save to apply.`);
   }
 });
 

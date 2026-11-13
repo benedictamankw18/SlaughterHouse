@@ -297,6 +297,28 @@ router.get('/admin/settings', sessions.requireAdmin, async (request, response) =
       keys
     );
     const values = Object.fromEntries(rows.map(row => [row.setting_key, row.setting_value]));
+    let suggestedUsdToGhsRate = null;
+    let suggestedUsdToNgnRate = null;
+    let suggestedUsdToGbpRate = null;
+    let suggestedUsdToEurRate = null;
+    try {
+      const suggestions = await fetchSuggestedRates();
+      if (suggestions?.rates?.USD) {
+        suggestedUsdToGhsRate = Number(suggestions.rates.USD);
+      }
+      if (suggestedUsdToGhsRate && suggestions?.rates?.NGN) {
+        suggestedUsdToNgnRate = suggestedUsdToGhsRate / Number(suggestions.rates.NGN);
+      }
+      if (suggestedUsdToGhsRate && suggestions?.rates?.GBP) {
+        suggestedUsdToGbpRate = suggestedUsdToGhsRate / Number(suggestions.rates.GBP);
+      }
+      if (suggestedUsdToGhsRate && suggestions?.rates?.EUR) {
+        suggestedUsdToEurRate = suggestedUsdToGhsRate / Number(suggestions.rates.EUR);
+      }
+    } catch {
+      // Suggested rate unavailable — continue without it.
+    }
+
     response.json({
       settings: keys.map(key => {
         const row = rows.find(candidate => candidate.setting_key === key);
@@ -308,10 +330,103 @@ router.get('/admin/settings', sessions.requireAdmin, async (request, response) =
           fresh: key === 'usd_to_ghs_rate' && row ? isUsdGhsRateFresh(row.updated_at) : false
         };
       }),
-      canEdit: request.role === 'super_admin'
+      canEdit: request.role === 'super_admin',
+      suggestedUsdToGhsRate,
+      suggestedUsdToNgnRate,
+      suggestedUsdToGbpRate,
+      suggestedUsdToEurRate
     });
   } catch (error) {
     response.status(500).json({ error: databaseError('Loading business settings failed.', error) });
+  }
+});
+
+router.post('/admin/settings/refresh-rate', sessions.requirePermission('admin:manage_settings'), async (request, response) => {
+  try {
+    const suggestions = await fetchSuggestedRates({ force: true });
+    const ghsRate = suggestions?.rates?.USD;
+    if (!ghsRate || !Number.isFinite(ghsRate) || ghsRate <= 0 || ghsRate >= 1000000) {
+      return response.status(502).json({ error: 'The online exchange-rate service did not return a valid USD to GHS rate.' });
+    }
+    const ghsValue = ghsRate.toFixed(6);
+
+    // USD to NGN rate: NGN per USD = (GHS per USD) / (GHS per NGN)
+    const ngnPerGhs = suggestions?.rates?.NGN;
+    let ngnValue = null;
+    if (ngnPerGhs && Number.isFinite(ngnPerGhs) && ngnPerGhs > 0) {
+      ngnValue = (ghsRate / ngnPerGhs).toFixed(6);
+    }
+
+    // USD to GBP rate: GBP per USD = (GHS per USD) / (GHS per GBP)
+    const gbpPerGhs = suggestions?.rates?.GBP;
+    let gbpValue = null;
+    if (gbpPerGhs && Number.isFinite(gbpPerGhs) && gbpPerGhs > 0) {
+      gbpValue = (ghsRate / gbpPerGhs).toFixed(6);
+    }
+
+    // USD to EUR rate: EUR per USD = (GHS per USD) / (GHS per EUR)
+    const eurPerGhs = suggestions?.rates?.EUR;
+    let eurValue = null;
+    if (eurPerGhs && Number.isFinite(eurPerGhs) && eurPerGhs > 0) {
+      eurValue = (ghsRate / eurPerGhs).toFixed(6);
+    }
+
+    await database.transaction(async tx => {
+      await tx.run(
+        'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = CURRENT_TIMESTAMP',
+        ['usd_to_ghs_rate', ghsValue]
+      );
+      if (ngnValue) {
+        await tx.run(
+          'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = CURRENT_TIMESTAMP',
+          ['usd_to_ngn_rate', ngnValue]
+        );
+      }
+      if (gbpValue) {
+        await tx.run(
+          'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = CURRENT_TIMESTAMP',
+          ['usd_to_gbp_rate', gbpValue]
+        );
+      }
+      if (eurValue) {
+        await tx.run(
+          'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = CURRENT_TIMESTAMP',
+          ['usd_to_eur_rate', eurValue]
+        );
+      }
+      await tx.run(
+        `INSERT INTO fx_rates (currency, ghs_per_unit, approved_by, approved_at, updated_at)
+         VALUES ('USD', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         ON CONFLICT (currency) DO UPDATE SET
+           ghs_per_unit = EXCLUDED.ghs_per_unit,
+           approved_by = EXCLUDED.approved_by,
+           approved_at = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP`,
+        [ghsValue, request.admin.id]
+      );
+    });
+    recordAuditSafely(database, {
+      userId: request.admin.id,
+      action: 'exchange_rate_refreshed_online',
+      entityType: 'settings',
+      details: { rate: ghsValue, ngnRate: ngnValue, gbpRate: gbpValue, eurRate: eurValue, source: suggestions.source },
+      ipAddress: request.ip
+    });
+    response.json({
+      setting: { key: 'usd_to_ghs_rate', value: ghsValue },
+      ngnSetting: ngnValue ? { key: 'usd_to_ngn_rate', value: ngnValue } : null,
+      gbpSetting: gbpValue ? { key: 'usd_to_gbp_rate', value: gbpValue } : null,
+      eurSetting: eurValue ? { key: 'usd_to_eur_rate', value: eurValue } : null,
+      suggestedUsdToGhsRate: ghsRate,
+      suggestedUsdToNgnRate: ngnValue ? Number(ngnValue) : null,
+      suggestedUsdToGbpRate: gbpValue ? Number(gbpValue) : null,
+      suggestedUsdToEurRate: eurValue ? Number(eurValue) : null
+    });
+  } catch (error) {
+    if (error.code === 'FX_SUGGESTION_UNAVAILABLE') {
+      return response.status(502).json({ error: error.message });
+    }
+    response.status(500).json({ error: databaseError('Refreshing the exchange rate failed.', error) });
   }
 });
 
