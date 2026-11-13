@@ -5,7 +5,7 @@ const Module = require('node:module');
 const express = require('express');
 const { configureRequestBodyParsing } = require('../middleware/request-body');
 
-function loadPaymentsRouter({ bookingSlotUnavailable = false, exchangeRate = { rate: 10 }, beat = null, chargeQuote = null, flutterwave = null, flutterwaveTransactionId = 99 } = {}) {
+function loadPaymentsRouter({ bookingSlotUnavailable = false, exchangeRate = { rate: 10 }, beat = null, chargeQuote = null, flutterwave = null, flutterwaveTransactionId = 99, transactionConflict = null } = {}) {
   const routeId = require.resolve('../routes/payments');
   const refundsId = require.resolve('../services/refunds');
   const orderPricingId = require.resolve('../services/order-pricing');
@@ -54,6 +54,9 @@ function loadPaymentsRouter({ bookingSlotUnavailable = false, exchangeRate = { r
             return parameters[0] === order.provider && String(parameters[1]) === String(flutterwaveTransactionId)
               ? { ...order }
               : null;
+          }
+          if (/provider_transaction_id = \? AND provider_reference <> \?/.test(query)) {
+            return transactionConflict;
           }
           return null;
         },
@@ -676,6 +679,119 @@ test('duplicate Paystack webhook delivery is acknowledged without reprocessing',
   assert.deepEqual(duplicate.body, { received: true, duplicate: true });
   assert.equal(loaded.calls.length, callsAfterFirstDelivery + 1);
 }));
+
+test('Paystack success webhook rejects an order created for Flutterwave', () => withRouter(async loaded => {
+  loaded.order.provider = 'flutterwave';
+  const result = await postWebhook(loaded.router, {
+    event: 'charge.success',
+    data: {
+      id: 55,
+      reference: loaded.order.reference,
+      status: 'success',
+      amount: 12500,
+      currency: 'GHS'
+    }
+  });
+
+  assert.equal(result.status, 400);
+  assert.equal(result.body.error, 'Payment provider does not match the order provider.');
+  assert.ok(!loaded.calls.some(({ query, parameters }) =>
+    /UPDATE orders SET status = \?/.test(query) && parameters[0] === 'paid'));
+  assert.ok(!loaded.calls.some(({ query }) => /INSERT INTO payments/.test(query)));
+}));
+
+test('Flutterwave success webhook rejects an order created for Paystack', async () => {
+  const loaded = loadPaymentsRouter({
+    flutterwave: {
+      webhookHash: 'flutterwave-webhook-secret',
+      async verifyTransaction() {
+        return {
+          provider: 'flutterwave',
+          reference: loaded.order.reference,
+          transactionId: 99,
+          status: 'successful',
+          amount: 125,
+          currency: 'GHS',
+          raw: { id: 99, tx_ref: loaded.order.reference, status: 'successful', amount: 125, currency: 'GHS' }
+        };
+      }
+    }
+  });
+  try {
+    const result = await postFlutterwaveWebhook(loaded.router, {
+      event: 'charge.completed',
+      data: { id: 99, tx_ref: loaded.order.reference, status: 'successful', amount: 125, currency: 'GHS' }
+    });
+
+    assert.equal(result.status, 400);
+    assert.equal(result.body.error, 'Payment provider does not match the order provider.');
+    assert.ok(!loaded.calls.some(({ query, parameters }) =>
+      /UPDATE orders SET status = \?/.test(query) && parameters[0] === 'paid'));
+  } finally {
+    loaded.restore();
+  }
+});
+
+test('Paystack failure webhook rejects an order created for Flutterwave', () => withRouter(async loaded => {
+  loaded.order.provider = 'flutterwave';
+  const result = await postWebhook(loaded.router, {
+    event: 'charge.failed',
+    data: {
+      id: 56,
+      reference: loaded.order.reference,
+      status: 'failed',
+      amount: 12500,
+      currency: 'GHS'
+    }
+  });
+
+  assert.equal(result.status, 400);
+  assert.equal(result.body.error, 'Payment provider does not match the order provider.');
+  assert.ok(!loaded.calls.some(({ query }) => /INSERT INTO payments/.test(query)));
+}));
+
+test('Paystack refund webhook rejects an order created for Flutterwave', () => withRouter(async loaded => {
+  loaded.order.provider = 'flutterwave';
+  const result = await postWebhook(loaded.router, {
+    event: 'refund.processed',
+    data: {
+      id: 96,
+      transaction: { reference: loaded.order.reference },
+      amount: 2500,
+      currency: 'GHS',
+      reason: 'Customer request'
+    }
+  });
+
+  assert.equal(result.status, 400);
+  assert.equal(result.body.error, 'Payment provider does not match the order provider.');
+  assert.ok(!loaded.calls.some(({ query }) => /UPDATE orders SET status = \?, refunded_amount/.test(query)));
+}));
+
+test('webhook rejects a provider transaction id already recorded for another order', async () => {
+  const loaded = loadPaymentsRouter({
+    transactionConflict: { id: 7, order_id: 99, provider_reference: 'UBB-OTHER-ORDER' }
+  });
+  try {
+    const result = await postWebhook(loaded.router, {
+      event: 'charge.success',
+      data: {
+        id: 55,
+        reference: loaded.order.reference,
+        status: 'success',
+        amount: 12500,
+        currency: 'GHS'
+      }
+    });
+
+    assert.equal(result.status, 409);
+    assert.equal(result.body.error, 'This payment transaction has already been recorded for another order.');
+    assert.ok(!loaded.calls.some(({ query, parameters }) =>
+      /UPDATE orders SET status = \?/.test(query) && parameters[0] === 'paid'));
+  } finally {
+    loaded.restore();
+  }
+});
 
 test('Paystack refund webhook applies the refund to its referenced order', () => withRouter(async loaded => {
   loaded.order.status = 'paid';
