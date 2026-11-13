@@ -1092,9 +1092,19 @@ function formatCurrency(value, currency) {
 function convertCartAmount(value, fromCurrency, toCurrency) {
   if (fromCurrency === toCurrency) return Number(value);
   if (!Number.isFinite(usdToGhsRate) || usdToGhsRate <= 0) return null;
-  return fromCurrency === 'USD'
-    ? Number(value) * usdToGhsRate
-    : Number(value) / usdToGhsRate;
+  const fromCurrencyUpper = String(fromCurrency || 'USD').toUpperCase();
+  const toCurrencyUpper = String(toCurrency || 'USD').toUpperCase();
+  // Catalog prices are stored in USD. We only have the USD->GHS rate on the
+  // frontend, so we can accurately convert USD<->GHS only. For EUR/GBP/NGN the
+  // frontend lacks the foreign rate; show the USD price with a note instead of
+  // inventing a wrong cross-rate.
+  if (fromCurrencyUpper === 'USD' && toCurrencyUpper === 'GHS') {
+    return Number(value) * usdToGhsRate;
+  }
+  if (fromCurrencyUpper === 'GHS' && toCurrencyUpper === 'USD') {
+    return Number(value) / usdToGhsRate;
+  }
+  return null;
 }
 
 function updateBeatPrices() {

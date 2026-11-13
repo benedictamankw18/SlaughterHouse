@@ -1159,7 +1159,7 @@ $('#admin-logout').addEventListener('click', async event => {
     localStorage.removeItem('adminCsrfToken');
     sessionStorage.removeItem(activeAdminSectionKey);
     stopBusy();
-    location.reload();
+    location.href = '/index.html';
   });
 });
 
