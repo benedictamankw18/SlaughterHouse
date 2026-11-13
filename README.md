@@ -2,8 +2,8 @@
 # SlaughterHouse
 
 SlaughterHouse is a music production and beat marketplace with customer
-accounts, bookings, Paystack checkout, licensing, downloads, merchandise, and
-an administrator dashboard.
+accounts, bookings, Paystack and Flutterwave checkout, licensing, downloads,
+merchandise, and an administrator dashboard.
 
 ## Architecture
 
@@ -12,6 +12,7 @@ flowchart LR
   Browser[Browser storefront and admin] -->|same-origin /api| API[Express API]
   API --> DB[(PostgreSQL)]
   API --> Paystack[Paystack]
+  API --> Flutterwave[Flutterwave]
   API --> Storage[S3-compatible media storage]
   API --> Outbox[Email outbox]
   Worker[Email worker] --> Outbox
@@ -50,7 +51,8 @@ After migrations are applied, a super-admin must set the USD-to-GHS exchange
 rate in **Admin > Settings**. The rate must be updated every 24 hours; beat
 checkout is disabled when it is missing or stale. Orders retain the rate and
 rounded GHS amount used at checkout, so later rate changes do not alter
-historical orders.
+historical orders. GHS is paid through Paystack; USD, NGN, GBP, and EUR are
+paid through Flutterwave with an admin-approved FX rate plus a 2% markup.
 
 ## Configuration reference
 
@@ -66,7 +68,9 @@ local `backend\.env`; never commit credentials.
 | `NODE_ENV`, `PORT` | Runtime environment and local API port. |
 | `FRONTEND_ORIGIN`, `FRONTEND_ORIGINS` | Trusted browser origins. |
 | `API_PUBLIC_URL`, `PAYMENT_CALLBACK_URL`, `TRUST_PROXY` | Public API URL, payment return URL, and trusted proxy configuration. |
-| `PAYSTACK_SECRET_KEY` | Paystack API and webhook verification secret. |
+| `PAYSTACK_SECRET_KEY` | Paystack API and webhook verification secret (GHS checkout). |
+| `FLUTTERWAVE_SECRET_KEY` | Flutterwave API secret key (USD, NGN, GBP, EUR checkout). |
+| `FLUTTERWAVE_WEBHOOK_HASH` | Flutterwave webhook verification hash. |
 | `DOWNLOAD_SIGNING_SECRET`, `CERTIFICATE_SIGNING_SECRET` | Distinct, stable signing secrets of at least 32 bytes in production. |
 | `ADMIN_MFA_ENCRYPTION_KEY` | Independent, stable secret of at least 32 bytes used to encrypt administrator TOTP credentials. |
 | `STORAGE_DRIVER` | Use `s3` for durable production storage. |
@@ -97,8 +101,9 @@ checks on pull requests and pushes to `main`.
 ## Deployment
 
 Vercel serves `frontend\` and routes `/api` to the serverless Express handlers.
-Configure a pooled `DATABASE_URL`, stable signing secrets, Paystack and email
-credentials, and S3-compatible storage in the Vercel project. Run database
+Configure a pooled `DATABASE_URL`, stable signing secrets, Paystack and
+Flutterwave credentials, email credentials, and S3-compatible storage in the
+Vercel project. Run database
 migrations as a deployment step before directing traffic to a release. Run
 `npm run email:worker --prefix backend` in a persistent worker service. Review
 backup and restore procedures in [docs/operations.md](./docs/operations.md)

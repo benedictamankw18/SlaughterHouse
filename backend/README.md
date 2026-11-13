@@ -383,28 +383,30 @@ status history. Administrators update merchandise fulfillment through
 `PATCH /api/admin/orders/:reference/fulfillment`; changes and actor IDs are
 recorded transactionally in `order_fulfillment_history` (migration 18).
 
-Paystack `POST /api/payments/webhook` validates the `x-paystack-signature`
-HMAC, records webhook deliveries idempotently, and reconciles successful
-non-booking orders. Booking payments use an atomic slot reservation from
-initialization through verification. A booking slot is reserved with its pending
-order before Paystack initialization, and each reservation expires after 30 minutes.
-Failed or abandoned payments release their holds immediately; timed-out holds
-are released when availability is checked or another booking attempts the slot.
+`POST /api/payments/webhook` validates provider signatures (Paystack
+`x-paystack-signature` HMAC, Flutterwave `verif-hash`), records webhook
+deliveries idempotently, and reconciles successful non-booking orders. Booking
+payments use an atomic slot reservation from initialization through verification.
+A booking slot is reserved with its pending order before provider
+initialization, and each reservation expires after 30 minutes. Failed or
+abandoned payments release their holds immediately; timed-out holds are
+released when availability is checked or another booking attempts the slot.
 Successful payment consumes the matching hold. Pending provider payments are
 recorded during initialization, and non-success webhook events update
-payment/order status without unlocking paid entitlements. Successful orders write one sales row per order line, keyed by
-`order_reference` and `line_index`, so retried verifications or webhook
-deliveries cannot double-count revenue.
+payment/order status without unlocking paid entitlements. Successful orders
+write one sales row per order line, keyed by `order_reference` and
+`line_index`, so retried verifications or webhook deliveries cannot
+double-count revenue.
 
-The server initializes Paystack transactions from database-validated catalog
-items and verifies completion directly with Paystack before changing order,
-license, booking, stock, sales, or notification state. Failed and abandoned
-events mark eligible orders accordingly and notify customers with registered
-accounts and administrators. Processed refund events and reversed charges
-update refund totals; full refunds/reversals revoke licenses, restore stock only
-for unfulfilled merchandise, and free booking slots. Partial refunds retain
-entitlements. Late success events cannot re-settle refunded or already-settled
-orders.
+GHS orders are initialized through Paystack; USD, NGN, GBP, and EUR orders are
+initialized through Flutterwave. The server validates completion directly with
+the responsible provider before changing order, license, booking, stock, sales,
+or notification state. Failed and abandoned events mark eligible orders
+accordingly and notify customers with registered accounts and administrators.
+Processed refund events and reversed charges update refund totals; full
+refunds/reversals revoke licenses, restore stock only for unfulfilled
+merchandise, and free booking slots. Partial refunds retain entitlements. Late
+success events cannot re-settle refunded or already-settled orders.
 
 `POST /api/payments/quote` validates the same catalog items as initialization
 without creating an order. It returns the server-authoritative GHS total and,
@@ -484,9 +486,12 @@ super-admin role. The plaintext password is never printed or stored.
 
 - Never put production secret values in source control, support tickets, or logs.
   Update the deployment's secret store and restart the API after each change.
-- **Paystack:** create or rotate the API key in Paystack, update
+- **Paystack (GHS):** create or rotate the API key in Paystack, update
   `PAYSTACK_SECRET_KEY`, verify a test transaction and webhook, then revoke the
   old key.
+- **Flutterwave (USD, NGN, GBP, EUR):** create or rotate the API key in
+  Flutterwave, update `FLUTTERWAVE_SECRET_KEY` and `FLUTTERWAVE_WEBHOOK_HASH`,
+  verify a test transaction and webhook, then revoke the old key.
 - **Email:** create a replacement provider API key, update `EMAIL_API_KEY`, send
   a test transactional email, then revoke the old key. Update `EMAIL_FROM` only
   when the verified sender changes.

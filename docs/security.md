@@ -16,8 +16,8 @@ commands are in [`../backend/README.md`](../backend/README.md).
 - Cookie-authenticated unsafe methods require `X-CSRF-Token` matching the
   hash stored for the session. Login responses return the token; the browser
   stores it in session storage. Bearer-authenticated requests do not rely on
-  ambient cookies and do not require this header. Paystack webhooks are
-  authenticated by their HMAC signature.
+  ambient cookies and do not require this header. Paystack and Flutterwave
+  webhooks are authenticated by their HMAC signature.
 - JSON request bodies are limited to 256 KB by default, 150 MB for administrator
   catalog uploads, 20 MB for custom requests, and 1 MB for the raw payment
   webhook. URL-encoded bodies are not enabled. HTTP request and header timeouts

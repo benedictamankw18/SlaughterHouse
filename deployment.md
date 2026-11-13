@@ -61,10 +61,11 @@ current code, migrations, tests, or backup scripts.
   server or newer.
 - An S3-compatible bucket (Cloudflare R2, AWS S3, Backblaze B2, MinIO, or
   Supabase Storage) for any deployment with ephemeral disks.
-- A Paystack account and secret key.
+- A Paystack account and secret key (GHS checkout).
+- A Flutterwave account and secret key (USD, NGN, GBP, EUR checkout).
 - An email provider API key and verified sender address.
 - A stable HTTPS hostname for staging and production. Preview URLs change and
-  break Paystack callbacks and webhooks.
+  break payment callbacks and webhooks.
 - Docker Engine with the Compose plugin (Option A only).
 
 ---
@@ -88,7 +89,9 @@ file. Never commit them.
 | `PAYMENT_CALLBACK_URL` | Public success page, for example `https://example.com/payment-success.html`. |
 | `STORAGE_DRIVER` | `s3` in production. |
 | `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Bucket and scoped credentials. |
-| `PAYSTACK_SECRET_KEY` | Paystack live key in production; test key in staging. |
+| `PAYSTACK_SECRET_KEY` | Paystack live key in production; test key in staging (GHS checkout). |
+| `FLUTTERWAVE_SECRET_KEY` | Flutterwave live key in production; test key in staging (USD, NGN, GBP, EUR checkout). |
+| `FLUTTERWAVE_WEBHOOK_HASH` | Flutterwave webhook verification hash. |
 | `EMAIL_API_KEY`, `EMAIL_FROM` | Required for transactional email and the worker. |
 
 Production startup fails when the signing secrets are missing, shorter than 32
@@ -560,7 +563,8 @@ suite.
 
 ### Payments
 
-- [ ] Beat checkout with a Paystack test card.
+- [ ] Beat checkout with a Paystack test card (GHS).
+- [ ] Beat checkout with a Flutterwave test card (USD, NGN, GBP, EUR).
 - [ ] Merchandise checkout.
 - [ ] Booking checkout with slot hold.
 - [ ] Successful, failed, abandoned, refunded, and reversed payments.
@@ -736,10 +740,11 @@ falls back to its own scheme.
 Confirm `EMAIL_API_KEY`, `EMAIL_FROM`, and that the worker is running. Check the
 outbox for pending or failed rows and retry.
 
-### Paystack callback lands on the wrong page
+### Payment callback lands on the wrong page
 
 `PAYMENT_CALLBACK_URL` must be the public, stable success page URL, for example
-`https://example.com/payment-success.html`.
+`https://example.com/payment-success.html`. This applies to both Paystack and
+Flutterwave callbacks.
 
 ---
 

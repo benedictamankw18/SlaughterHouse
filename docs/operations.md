@@ -135,8 +135,8 @@ The rate-limit table is also shared through PostgreSQL. Expired buckets are
 pruned opportunistically in batches by API requests. Monitor table growth and
 schedule a cleanup task if deployment traffic is too low to regularly trigger
 pruning. Signup, login, password-reset, booking-payment initialization,
-payment initialization, verification, and signed Paystack webhook endpoints
-use shared database-backed request limits.
+payment initialization, verification, and signed Paystack and Flutterwave
+webhook endpoints use shared database-backed request limits.
 
 All administrator accounts must enroll an authenticator app at their next
 login. TOTP secrets are encrypted using the stable
@@ -153,8 +153,8 @@ claim the slot. A successful payment converts only its own unexpired hold into
 a booked slot. If a payment arrives after the hold expires, the order is marked
 paid and flagged for reconciliation in Admin > Orders even if the slot has not
 yet been claimed by another customer. An administrator can reserve and assign
-replacement sessions or request a full Paystack refund. Refund requests stay
-pending until Paystack confirms them; the confirmed full refund clears the
+replacement sessions or request a full refund. Refund requests stay pending
+until the provider confirms them; the confirmed full refund clears the
 reconciliation flag. Both resolution paths are audited and notify the customer.
 
 Booking availability is managed by a super-admin in Admin > Settings. The form
@@ -187,7 +187,7 @@ Database migrations are forward-only. Do not edit or remove an applied migration
 ## Staging and production promotion
 
 Use a separate staging database, object-storage bucket or key prefix, signing
-secrets, Paystack key, email sender, and stable HTTPS hostname. Do not use a
+secrets, Paystack and Flutterwave keys, email sender, and stable HTTPS hostname. Do not use a
 Neon production branch or a shared bucket for staging tests, and do not run the
 integration suite against staging or production.
 
@@ -201,7 +201,7 @@ integration suite against staging or production.
    configure the USD-to-GHS rate, booking services, license definitions, and
    business settings.
 5. Run the acceptance checks against the deployed host, including a real
-   administrator upload, a paid download, a Paystack test checkout and webhook
+   administrator upload, a paid download, a test checkout and webhook
    retry, and the email outbox worker.
 6. Create a staging backup, restore it into an empty scratch database, and run
    `verify:backup` before treating backups as recoverable.
