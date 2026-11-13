@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="description" content="Shop original UltBigBoy beats. Browse the beat vault, filter by genre, mood, key, and BPM, and secure your license.">
+  <meta property="og:title" content="UltBigBoy | Beats Store">
+  <meta property="og:description" content="Original beats for sale. Filter by genre, mood, key, and BPM. Secure basic, premium, unlimited, or exclusive licenses.">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="Images/Hero1.png">
+  <meta property="og:site_name" content="UltBigBoy">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="UltBigBoy | Beats Store">
+  <meta name="twitter:description" content="Original beats for sale. Filter by genre, mood, key, and BPM.">
+  <meta name="twitter:image" content="Images/Hero1.png">
+  <meta name="theme-color" content="#080808">
+  <title>UltBigBoy | Beats Store</title>
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Organization",
+          "name": "UltBigBoy",
+          "logo": "Images/Logo 2.png",
+          "description": "Music production studio offering original beats, beat licenses, studio sessions, and artist services."
+        },
+        {
+          "@type": "WebSite",
+          "name": "UltBigBoy",
+          "description": "Premium beats, licenses, studio sessions, and artist services from UltBigBoy.",
+          "url": "https://ultbigboy.com/"
+        }
+      ]
+    }
+  </script>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='%2322c55e'%3e%3cpath d='M16 2c-3.3 0-6 2.7-6 6v2h-2V8c0-3.3 2.7-6 6-6s6 2.7 6 6v2h-2V8c0-3.3-2.7-6 6-6zM4 26h24v2H4z'/%3e%3c/svg%3e">
+  <link rel="preload" as="image" href="Images/Hero1.webp" type="image/webp" fetchpriority="high">
+  <link rel="stylesheet" href="style.css">
+  <script>
+    if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+    window.addEventListener('pageshow', () => {
+      if (!window.location.hash) window.scrollTo(0, 0);
+    });
+  </script>
+</head>
+<body id="top">
+  <header>
+    <!-- Logo -->
+    <div class="logo">
+      <img src="Images/Logo 2.png" alt="UltBigBoy Logo">
+    </div>
+
+    <a class="home-button" href="index.html" aria-label="Home">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1V10Z"/>
+      </svg>
+    </a>
+
+    <div class="header-nav">
+      <form class="search-form" role="search">
+        <label class="sr-only" for="site-search">Search</label>
+        <input id="site-search" type="search" placeholder="Search" autocomplete="off">
+        <button type="submit" class="search-button" aria-label="Search">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m21 21-4.35-4.35m2.1-5.4a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z"/>
+          </svg>
+        </button>
+      </form>
+    </div>
+
+    <!-- Right controls -->
+    <div class="right-controls">
+       <div class="header-tools">
+  <button class="cart-button cart-fab" id="cart-button" type="button" aria-label="Shopping cart, 0 items" aria-expanded="false">
+    <svg class="cart-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18c-1.5 0-2.5-.7-2.5-2h3.1l.4-2c.2-.9 1-1.6 1.9-1.6h5.7c.9 0 1.7.7 1.9 1.6l.4 2h2c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v9c0 1.1.9 2 2 2zm4-11h3l1 4H5v-.5c0-.3.2-.5.5-.5zm11 4l-.4-2c-.2-.9-1-1.6-1.9-1.6H9.4c-.6 0-1 .4-1.1 1l-.2 1H3c-.6 0-.9.5-.9 1.1c0 2.3 1.9 4.1 4.1 4.1h12.7c.9 0 1.7-.7 1.9-1.6c.1-.5.1-.9-.1-1.4zm-5.5 0H12v-2h4.5c.3 0 .5-.2.5-.5s-.2-.5-.5-.5H12v-2c0-.3-.2-.5-.5-.5h-5c-.3 0-.5.2-.5.5v5c0 .3.2.5.5.5h5c.3 0 .5-.2.5-.5z"/></svg>
+    <span class="cart-count" id="cart-count" aria-hidden="true" hidden>0</span>
+  </button>
+
+  <!-- Menu Icon -->
+  <div class="menu-icon" id="menuIcon" role="button" aria-label="Open menu" tabindex="0">
+    <div></div>
+    <div></div>
+    <div></div>
+  </div>
+
+  <button class="login-button" type="button">Login</button>
+
+  <!-- Currency Switcher -->
+  <div class="currency-switcher">
+    <img id="flagIcon" src="https://flagcdn.com/20x15/gh.png" alt="Currency flag">
+    <select id="currency" aria-label="Display currency">
+      <option value="GHS" data-flag="https://flagcdn.com/20x15/gh.png">GHS (₵)</option>
+      <option value="USD" data-flag="https://flagcdn.com/20x15/us.png">USD ($)</option>
+      <option value="NGN" data-flag="https://flagcdn.com/20x15/ng.png">NGN (₦)</option>
+      <option value="GBP" data-flag="https://flagcdn.com/20x15/gb.png">GBP (£)</option>
+      <option value="EUR" data-flag="https://flagcdn.com/20x15/eu.png">EUR (€)</option>
+    </select>
+  </div>
+</div>
+      <aside class="cart-drawer" id="cart-drawer" aria-labelledby="cart-title" aria-hidden="true">
+        <div class="cart-drawer-header">
+          <h2 id="cart-title">Your cart</h2>
+          <button class="cart-close-button" id="cart-close-button" type="button" aria-label="Close cart">&#10005;</button>
+        </div>
+        <ul class="cart-items" id="cart-items"></ul>
+        <p class="cart-empty" id="cart-empty">Your cart is empty.</p>
+        <div class="cart-summary"><span>Total Amount</span><strong id="cart-total">$0.00 USD</strong></div>
+        <button class="cart-checkout-button" id="cart-checkout-button" type="button" disabled>Proceed Payment</button>
+      </aside>
+  </div>
+  </header>
+  <!-- Dropdown Menu -->
+  <nav class="dropdown" id="dropdownMenu">
+    <ul>
+      <li><a href="beats.html">BEAT</a></li>
+      <li><a href="merchandise.html">MERCHANDISE</a></li>
+      <li><a href="booking.html">BOOK SESSIONS</a></li>
+      <li><a href="produced.html">STREAM</a></li>
+    </ul>
+  </nav>
+
+<main>
+<!-- Beat Vault -->
+<section class="beat-filter-bar" aria-label="Beat filters">
+  <div class="filter-row">
+    <div class="filter-field bpm-field">
+      <label>BPM range</label>
+      <div class="bpm-range">
+        <input id="bpm-min" type="number" placeholder="Min" min="60" max="220" aria-label="Minimum BPM" />
+        <span aria-hidden="true">-</span>
+        <input id="bpm-max" type="number" placeholder="Max" min="60" max="220" aria-label="Maximum BPM" />
+      </div>
+    </div>
+
+    <div class="filter-field genre-field">
+      <label for="genre">Genre</label>
+      <select id="genre">
+        <option value="">Select Genre</option>
+        <option value="afrobeat">Afrobeat</option>
+        <option value="amapiano">Amapiano</option>
+        <option value="trap">Trap</option>
+        <option value="hiphop">Hip Hop</option>
+        <option value="highlife">Highlife</option>
+        <option value="rnb">R&B</option>
+        <option value="dancehall">Dancehall</option>
+        <option value="reggae">Reggae</option>
+        <option value="asakaa">Asakaa</option>
+      </select>
+    </div>
+
+    <div class="filter-field key-field">
+      <label>Key</label>
+      <div class="key-picker" id="key-picker">
+        <button type="button" class="key-trigger" id="key-trigger" aria-haspopup="true" aria-expanded="false">
+          <span id="key-value">Select Key</span>
+          <span class="key-chevron" aria-hidden="true">&#8964;</span>
+        </button>
+        <div class="key-dropdown" id="key-dropdown" role="dialog" aria-label="Choose key">
+          <div class="key-mode-switch" role="group" aria-label="Key mode">
+            <button type="button" class="key-mode active" data-mode="major" aria-pressed="true">Maj</button>
+            <button type="button" class="key-mode" data-mode="minor" aria-pressed="false">Min</button>
+          </div>
+          <div class="key-notes" role="group" aria-label="Key note">
+            <button type="button" class="key-note active" data-note="">All</button>
+            <button type="button" class="key-note" data-note="c">C</button>
+            <button type="button" class="key-note" data-note="c#">C#</button>
+            <button type="button" class="key-note" data-note="d">D</button>
+            <button type="button" class="key-note" data-note="d#">Eb</button>
+            <button type="button" class="key-note" data-note="e">E</button>
+            <button type="button" class="key-note" data-note="f">F</button>
+            <button type="button" class="key-note" data-note="f#">F#</button>
+            <button type="button" class="key-note" data-note="g">G</button>
+            <button type="button" class="key-note" data-note="g#">Ab</button>
+            <button type="button" class="key-note" data-note="a">A</button>
+            <button type="button" class="key-note" data-note="a#">Bb</button>
+            <button type="button" class="key-note" data-note="b">B</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="filter-field mood-field">
+      <label for="mood">Mood / Type</label>
+      <select id="mood">
+        <option value="">Select Mood</option>
+        <option value="emotional">Emotional</option>
+        <option value="sad">Sad</option>
+        <option value="happy">Happy</option>
+        <option value="energetic">Energetic</option>
+        <option value="romantic">Romantic</option>
+        <option value="dark">Dark</option>
+        <option value="chill">Chill</option>
+        <option value="uplifting">Uplifting</option>
+        <option value="storytelling">Storytelling</option>
+        <option value="dance">Dance</option>
+        <option value="other">Other</option>
+      </select>
+    </div>
+
+    <button type="button" class="browse-btn" id="preview-browse-btn">Browse</button>
+  </div>
+</section>
+
+<section class="beat-listing vault-section" id="beat-listing" aria-labelledby="beat-listing-title">
+  <div class="beat-listing-heading">
+    <p class="section-kicker">THE BEAT VAULT</p>
+    <h2 id="beat-listing-title">LATEST BEATS</h2>
+  </div>
+
+  <div class="beat-list" id="beat-list">
+    <p class="filter-empty-state">Loading latest beats...</p>
+  </div>
+
+  <a class="browse-more-beats" href="beats.html">Browse more beats <span aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3L5 6.9L6.4 8.3L11 3.7L11 13H13L11 8.3L12.4 6.9L8.4 3H12V1H5V3H9Z"/></svg></span></a>
+</section>
+
+<div class="cart-toast" id="cart-toast" role="status" aria-live="polite"></div>
+
+</main>
+
+<footer class="site-footer">
+  <div class="site-footer-inner">
+    <div class="site-footer-brand"><a href="index.html"><img src="Images/Logo 2.png" alt="UltBigBoy home"><span>UltBigBoy</span></a><p>Explore original beats and licenses, shop merchandise, stream music, book studio sessions, send custom requests, and share reviews.</p></div>
+    <div class="site-footer-content">
+      <section class="site-footer-services"><h2>SERVICES</h2><nav class="site-footer-links" aria-label="Footer navigation"><a href="index.html">Home</a><a href="beats.html">Beats</a><a href="merchandise.html">Merchandise</a><a href="booking.html">Book Session</a><a href="produced.html">Stream</a></nav></section>
+      <section class="site-footer-store"><h2>BEATS STORE</h2><nav class="site-footer-genres" aria-label="Shop beats by genre"><a href="beats.html#beat-listing">All</a><a href="beats.html?genre=amapiano#beat-listing">Amapiano</a><a href="beats.html?genre=trap#beat-listing">Trap</a><a href="beats.html?genre=rap#beat-listing">Rap</a><a href="beats.html?genre=afrobeat#beat-listing">Afrobeat</a></nav></section>
+      <address class="site-footer-contact"><h2>CONTACT</h2><a href="mailto:derryakyene99@gmail.com"><svg class="site-footer-contact-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg><span>derryakyene99@gmail.com</span></a><a href="mailto:sallywaves28@gmail.com"><svg class="site-footer-contact-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg><span>sallywaves28@gmail.com</span></a><a href="tel:+233244531198"><svg class="site-footer-contact-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h3l2 5-2 1.5a13 13 0 0 0 6.5 6.5L16 14l5 2v3c0 1-1 2-2 2C10 21 3 14 3 5c0-1 1-2 2-2z"/></svg><span>+233 24 453 1198</span></a><span class="site-footer-location"><svg class="site-footer-contact-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg><span>Ghana</span></span></address>
+    </div>
+  </div>
+  <div class="site-footer-bottom"><span>&copy; UltBigBoy</span><a href="#top">Back to top</a></div>
+</footer>
+
+  <script src="footer.js"></script>
+  <script src="api-config.js"></script><script src="script.js"></script>
+</body>
+</html>
