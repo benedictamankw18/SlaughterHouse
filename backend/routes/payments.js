@@ -24,6 +24,7 @@ const { paymentFailureStatus, isRefundEvent, recordNonSuccessPayment } = require
 const { queueEmailSafely } = require('../services/email/outbox');
 const { fulfillPaidBooking } = require('../services/booking-fulfillment');
 const { paymentProvider } = require('../services/payment-providers');
+const { recordPayment, PAYMENT_REFERENCE_CONFLICT } = require('../services/payment-records');
 const { rateLimit } = require('../services/rate-limit');
 const logger = require('../services/logger');
 
@@ -53,7 +54,8 @@ const FX_HTTP_STATUS = Object.freeze({
   FLW_AMOUNT_INVALID: 400,
   FLW_VERIFY_FAILED: 502,
   FLW_REFUND_INVALID: 400,
-  FLW_REFUND_FAILED: 502
+  FLW_REFUND_FAILED: 502,
+  PAYMENT_REFERENCE_CONFLICT: 409
 });
 
 function quoteErrorStatus(code) {
@@ -245,25 +247,18 @@ async function normalizePaidOrder(db, order, items, payment) {
     );
   }
 
-  await db.run(
-    `INSERT INTO payments (order_id, provider, provider_reference, provider_transaction_id, status, amount, currency, amount_ghs, provider_payload, verified_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-     ON CONFLICT (provider_reference) DO UPDATE SET order_id = EXCLUDED.order_id, status = EXCLUDED.status,
-       amount = EXCLUDED.amount, currency = EXCLUDED.currency, amount_ghs = EXCLUDED.amount_ghs,
-       provider_transaction_id = EXCLUDED.provider_transaction_id,
-       provider_payload = EXCLUDED.provider_payload, verified_at = EXCLUDED.verified_at`,
-    [
-      order.id,
-      payment.provider,
-      payment.reference,
-      payment.transactionId ?? null,
-      'paid',
-      payment.amount,
-      payment.currency,
-      orderAmountGhs(order, payment.amount),
-      JSON.stringify(payment.raw ?? payment)
-    ]
-  );
+  await recordPayment(db.run.bind(db), {
+    orderId: order.id,
+    provider: payment.provider,
+    reference: payment.reference,
+    transactionId: payment.transactionId ?? null,
+    status: 'paid',
+    amount: payment.amount,
+    currency: payment.currency,
+    amountGhs: orderAmountGhs(order, payment.amount),
+    payload: payment.raw ?? payment,
+    verified: true
+  });
 
   const customer = await db.get("SELECT id FROM users WHERE lower(email) = lower(?) AND role NOT IN ('admin', 'super_admin')", [order.customer_email]);
   if (!customer) return;
@@ -346,25 +341,18 @@ async function markOrderForReview(db, order, items, payment, reason) {
     'UPDATE orders SET status = ?, items_json = ?, fulfillment_review_required = TRUE, fulfillment_review_reason = ? WHERE id = ?',
     ['paid', JSON.stringify(items), reason, order.id]
   );
-  await db.run(
-    `INSERT INTO payments (order_id, provider, provider_reference, provider_transaction_id, status, amount, currency, amount_ghs, provider_payload, verified_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-     ON CONFLICT (provider_reference) DO UPDATE SET order_id = EXCLUDED.order_id, status = EXCLUDED.status,
-       amount = EXCLUDED.amount, currency = EXCLUDED.currency, amount_ghs = EXCLUDED.amount_ghs,
-       provider_transaction_id = EXCLUDED.provider_transaction_id,
-       provider_payload = EXCLUDED.provider_payload, verified_at = EXCLUDED.verified_at`,
-    [
-      order.id,
-      payment.provider,
-      payment.reference,
-      payment.transactionId ?? null,
-      'paid',
-      payment.amount,
-      payment.currency,
-      orderAmountGhs(order, payment.amount),
-      JSON.stringify(payment.raw ?? payment)
-    ]
-  );
+  await recordPayment(db.run.bind(db), {
+    orderId: order.id,
+    provider: payment.provider,
+    reference: payment.reference,
+    transactionId: payment.transactionId ?? null,
+    status: 'paid',
+    amount: payment.amount,
+    currency: payment.currency,
+    amountGhs: orderAmountGhs(order, payment.amount),
+    payload: payment.raw ?? payment,
+    verified: true
+  });
   await recordOrderSales(db, order, items);
 }
 
@@ -638,6 +626,16 @@ router.post('/payments/webhook', paymentWebhookRateLimit, async (request, respon
     if (error?.webhookResponse) {
       return response.status(error.webhookResponse.httpStatus).json(error.webhookResponse.body);
     }
+    if (error?.code === PAYMENT_REFERENCE_CONFLICT) {
+      recordAuditSafely(database, { action: 'payment_reference_conflict', entityType: 'order', entityId: error.orderId, details: { reference: error.reference, provider } });
+      await notifyAdminsSafely(database, {
+        type: 'payment_reconciliation',
+        title: 'Payment reference conflict',
+        message: `A ${provider} payment for order ${error.reference} was not applied because that reference is already recorded for another order. Reconcile the payment in the provider dashboard before fulfilling either order.`,
+        dedupeKey: `payment-reference-conflict:${error.reference}`
+      });
+      return response.status(409).json({ error: error.message });
+    }
     if (isUniqueViolation(error)) {
       return response.status(409).json({ error: 'This payment transaction has already been recorded for another order.' });
     }
@@ -697,7 +695,7 @@ router.post('/payments/initialize', paymentInitializationRateLimit, async (reque
     }
     const reference = `UBB-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     const foreign = quote.provider === 'flutterwave';
-    await run(
+    const orderInsert = await run(
       `INSERT INTO orders (reference, customer_name, customer_email, amount, currency, items_json, amount_ghs, fx_rate, fx_markup_percent, fx_source, fx_quoted_at, provider)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
@@ -735,16 +733,26 @@ router.post('/payments/initialize', paymentInitializationRateLimit, async (reque
         payload: payment.data
       };
     }
-    await run(
-      `INSERT INTO payments (order_id, provider, provider_reference, status, amount, currency, amount_ghs, provider_payload)
-       SELECT id, ?, ?, ?, ?, ?, ?, ? FROM orders WHERE reference = ?
-       ON CONFLICT (provider_reference) DO UPDATE SET order_id = EXCLUDED.order_id, status = EXCLUDED.status,
-         amount = EXCLUDED.amount, currency = EXCLUDED.currency, amount_ghs = EXCLUDED.amount_ghs,
-         provider_payload = EXCLUDED.provider_payload`,
-      [quote.provider, checkout.providerReference, 'pending', quote.amount, quote.currency, quote.amountGhs, JSON.stringify(checkout.payload), reference]
-    );
+    await recordPayment(run, {
+      orderId: orderInsert.lastID,
+      provider: quote.provider,
+      reference: checkout.providerReference,
+      status: 'pending',
+      amount: quote.amount,
+      currency: quote.currency,
+      amountGhs: quote.amountGhs,
+      payload: checkout.payload
+    });
     response.json({ authorizationUrl: checkout.authorizationUrl, reference, amount: quote.amount, currency: quote.currency });
   } catch (error) {
+    if (error.code === PAYMENT_REFERENCE_CONFLICT) {
+      await notifyAdminsSafely(database, {
+        type: 'payment_reconciliation',
+        title: 'Payment reference conflict',
+        message: `Checkout was not started because the provider reused a payment reference that is already recorded for another order (${error.reference}). Review the provider dashboard before retrying.`,
+        dedupeKey: `payment-reference-conflict:${error.reference}`
+      });
+    }
     const status = quoteErrorStatus(error.code) || 400;
     response.status(status).json({
       error: error.message || 'Store payment initialization failed because the order could not be prepared.',
@@ -865,6 +873,16 @@ router.get('/payments/verify/:reference', paymentVerificationRateLimit, async (r
     return response.status(outcome.httpStatus).json(outcome.body);
   } catch (error) {
     logger.error('payment_verification_failed', { code: error.code });
+    if (error.code === PAYMENT_REFERENCE_CONFLICT) {
+      recordAuditSafely(database, { action: 'payment_reference_conflict', entityType: 'order', entityId: error.orderId, details: { reference: error.reference, provider } });
+      await notifyAdminsSafely(database, {
+        type: 'payment_reconciliation',
+        title: 'Payment reference conflict',
+        message: `A ${provider} payment for order ${error.reference} was not applied because that reference is already recorded for another order. Reconcile the payment in the provider dashboard before fulfilling either order.`,
+        dedupeKey: `payment-reference-conflict:${error.reference}`
+      });
+      return response.status(409).json({ error: error.message });
+    }
     if (error.code === '23505') return response.status(409).json({ error: 'This payment transaction has already been recorded for another order.' });
     if (error.code === 'ER_DUP_ENTRY') return response.status(409).json({ error: 'This booking could not be completed because one or more selected slots were reserved by another customer.' });
     response.status(502).json({ error: error.code ? databaseError('Payment verification failed.', error) : `Payment verification failed: ${error.message}` });

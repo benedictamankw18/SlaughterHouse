@@ -1,5 +1,6 @@
 const { createNotificationSafely, notifyAdminsSafely } = require('./notifications');
 const { releaseBookingHold } = require('./booking-reservations');
+const { recordPayment } = require('./payment-records');
 
 function paymentFailureStatus(eventType, paymentStatus) {
   const event = String(eventType || '').toLowerCase();
@@ -28,25 +29,17 @@ async function recordNonSuccessPayment(db, order, { reference, status, paymentDa
       : 0;
   const currency = payment?.currency || paymentData?.currency || order.currency || 'GHS';
   const amountGhs = Number(order.amount_ghs ?? amount);
-  await db.run(
-    `INSERT INTO payments (order_id, provider, provider_reference, provider_transaction_id, status, amount, currency, amount_ghs, provider_payload)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT (provider_reference) DO UPDATE SET order_id = EXCLUDED.order_id, status = EXCLUDED.status,
-       amount = EXCLUDED.amount, currency = EXCLUDED.currency, amount_ghs = EXCLUDED.amount_ghs,
-       provider_transaction_id = EXCLUDED.provider_transaction_id,
-       provider_payload = EXCLUDED.provider_payload`,
-    [
-      order.id,
-      provider,
-      reference,
-      payment?.transactionId ?? null,
-      status,
-      amount,
-      currency,
-      Number.isFinite(amountGhs) && amountGhs > 0 ? amountGhs : amount,
-      JSON.stringify(payment?.raw ?? paymentData ?? {})
-    ]
-  );
+  await recordPayment(db.run.bind(db), {
+    orderId: order.id,
+    provider,
+    reference,
+    transactionId: payment?.transactionId ?? null,
+    status,
+    amount,
+    currency,
+    amountGhs: Number.isFinite(amountGhs) && amountGhs > 0 ? amountGhs : amount,
+    payload: payment?.raw ?? paymentData ?? {}
+  });
   if (status !== 'failed' && status !== 'abandoned') return;
   await db.run(
     'UPDATE orders SET status = ? WHERE id = ? AND status IN (?, ?, ?)',

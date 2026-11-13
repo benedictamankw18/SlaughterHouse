@@ -744,6 +744,16 @@ const migrations = [
     statements: [
       'CREATE UNIQUE INDEX IF NOT EXISTS uq_payments_provider_transaction ON payments (provider, provider_transaction_id)'
     ]
+  },
+  {
+    // Only the supported gateways may own a payment or an order. Application code
+    // already fails closed on unknown providers; this keeps bad values out even
+    // when a future code path forgets to validate.
+    version: 40,
+    statements: [
+      "ALTER TABLE payments ADD CONSTRAINT payments_provider_allowed CHECK (provider IN ('paystack', 'flutterwave'))",
+      "ALTER TABLE orders ADD CONSTRAINT orders_provider_allowed CHECK (provider IN ('paystack', 'flutterwave'))"
+    ]
   }
 ];
 

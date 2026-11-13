@@ -5,7 +5,7 @@ const Module = require('node:module');
 const express = require('express');
 const { configureRequestBodyParsing } = require('../middleware/request-body');
 
-function loadPaymentsRouter({ bookingSlotUnavailable = false, exchangeRate = { rate: 10 }, beat = null, chargeQuote = null, flutterwave = null, flutterwaveTransactionId = 99, transactionConflict = null } = {}) {
+function loadPaymentsRouter({ bookingSlotUnavailable = false, exchangeRate = { rate: 10 }, beat = null, chargeQuote = null, flutterwave = null, flutterwaveTransactionId = 99, transactionConflict = null, paymentRecordConflict = false } = {}) {
   const routeId = require.resolve('../routes/payments');
   const refundsId = require.resolve('../services/refunds');
   const orderPricingId = require.resolve('../services/order-pricing');
@@ -18,6 +18,7 @@ function loadPaymentsRouter({ bookingSlotUnavailable = false, exchangeRate = { r
   const calls = [];
   const rateLimitPolicies = [];
   const webhookEvents = new Set();
+  const adminNotifications = [];
   const order = {
     id: 21,
     reference: 'UBB-PAYSTACK-21',
@@ -36,6 +37,7 @@ function loadPaymentsRouter({ bookingSlotUnavailable = false, exchangeRate = { r
       const tx = {
         async run(query, parameters = []) {
           calls.push({ query, parameters });
+          if (paymentRecordConflict && /INSERT INTO payments/.test(query)) return { lastID: undefined, changes: 0 };
           if (bookingSlotUnavailable && /SET status = 'booked'/.test(query)) return { lastID: 1, changes: 0 };
           return { lastID: 1, changes: 1 };
         },
@@ -85,8 +87,11 @@ function loadPaymentsRouter({ bookingSlotUnavailable = false, exchangeRate = { r
     },
     run(query, parameters, callback) {
       calls.push({ query, parameters });
-      callback?.call({ lastID: 1, changes: 1 }, null);
-      return Promise.resolve({ lastID: 1, changes: 1 });
+      const summary = paymentRecordConflict && /INSERT INTO payments/.test(query)
+        ? { lastID: undefined, changes: 0 }
+        : { lastID: 1, changes: 1 };
+      callback?.call(summary, null);
+      return Promise.resolve(summary);
     }
   };
 
@@ -115,7 +120,7 @@ function loadPaymentsRouter({ bookingSlotUnavailable = false, exchangeRate = { r
     '../services/audit': { recordAuditSafely: async () => {} },
     '../services/notifications': {
       createNotificationSafely: async () => {},
-      notifyAdminsSafely: async () => {}
+      notifyAdminsSafely: async (database, notification) => { adminNotifications.push(notification); }
     },
     '../services/license-rights': { loadLicenseRights: async () => ({}), rightsFor: () => ({}) },
     '../services/license-certificates': { issueCertificateRecord: async () => {} },
@@ -172,6 +177,7 @@ function loadPaymentsRouter({ bookingSlotUnavailable = false, exchangeRate = { r
     order,
     calls,
     rateLimitPolicies,
+    adminNotifications,
     restore() {
       delete require.cache[routeId];
       if (originalRoute) require.cache[routeId] = originalRoute;
@@ -397,11 +403,11 @@ test('USD cart checkout stores the quoted charge and uses Flutterwave', async ()
     assert.equal(orderInsert.parameters[11], 'flutterwave');
 
     const paymentInsert = loaded.calls.find(call => /INSERT INTO payments/.test(call.query));
-    assert.equal(paymentInsert.parameters[0], 'flutterwave');
-    assert.equal(paymentInsert.parameters[2], 'pending');
-    assert.equal(paymentInsert.parameters[3], 10.2);
-    assert.equal(paymentInsert.parameters[4], 'USD');
-    assert.equal(paymentInsert.parameters[5], 127.5);
+    assert.equal(paymentInsert.parameters[1], 'flutterwave');
+    assert.equal(paymentInsert.parameters[4], 'pending');
+    assert.equal(paymentInsert.parameters[5], 10.2);
+    assert.equal(paymentInsert.parameters[6], 'USD');
+    assert.equal(paymentInsert.parameters[7], 127.5);
   } finally {
     loaded.restore();
   }
@@ -832,6 +838,96 @@ test('verification rejects an order whose stored provider is not recognized', as
     assert.equal(result.body.error, 'This order has an unsupported payment provider.');
     assert.equal(providerCalled, false);
     assert.ok(!loaded.calls.some(({ query }) => /INSERT INTO payments/.test(query)));
+  } finally {
+    global.fetch = originalFetch;
+    loaded.restore();
+  }
+});
+
+test('webhook refuses a payment reference that already belongs to another order', async () => {
+  const loaded = loadPaymentsRouter({ paymentRecordConflict: true });
+  try {
+    const result = await postWebhook(loaded.router, {
+      event: 'charge.success',
+      data: {
+        id: 55,
+        reference: loaded.order.reference,
+        status: 'success',
+        amount: 12500,
+        currency: 'GHS'
+      }
+    });
+
+    assert.equal(result.status, 409);
+    assert.equal(result.body.error, 'This payment reference is already recorded for another order.');
+    assert.equal(loaded.adminNotifications.length, 1);
+    assert.equal(loaded.adminNotifications[0].type, 'payment_reconciliation');
+    assert.equal(loaded.adminNotifications[0].dedupeKey, `payment-reference-conflict:${loaded.order.reference}`);
+  } finally {
+    loaded.restore();
+  }
+});
+
+test('verification refuses a payment reference that already belongs to another order', async () => {
+  const loaded = loadPaymentsRouter({ paymentRecordConflict: true });
+  const originalFetch = global.fetch;
+  global.fetch = async (url, ...args) => {
+    if (String(url).includes('/transaction/verify/')) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            status: true,
+            data: { id: 55, reference: loaded.order.reference, status: 'success', amount: 12500, currency: 'GHS' }
+          };
+        }
+      };
+    }
+    return originalFetch(url, ...args);
+  };
+  try {
+    const result = await getJson(loaded.router, `/payments/verify/${loaded.order.reference}`);
+
+    assert.equal(result.status, 409);
+    assert.equal(result.body.error, 'This payment reference is already recorded for another order.');
+    assert.equal(loaded.adminNotifications.length, 1);
+    assert.equal(loaded.adminNotifications[0].dedupeKey, `payment-reference-conflict:${loaded.order.reference}`);
+  } finally {
+    global.fetch = originalFetch;
+    loaded.restore();
+  }
+});
+
+test('checkout initialization refuses a payment reference that already belongs to another order', async () => {
+  const loaded = loadPaymentsRouter({
+    beat: { id: 8, title: 'Conflict Beat', price: 12.5 },
+    paymentRecordConflict: true
+  });
+  const originalFetch = global.fetch;
+  global.fetch = async (url, options) => {
+    if (String(url).startsWith('http://127.0.0.1:')) return originalFetch(url, options);
+    return {
+      ok: true,
+      async json() {
+        return {
+          status: true,
+          data: { reference: 'paystack-conflict-1', authorization_url: 'https://paystack.test/authorize' }
+        };
+      }
+    };
+  };
+  try {
+    const result = await postJson(loaded.router, '/payments/initialize', {
+      name: 'Customer',
+      email: 'customer@example.test',
+      items: [{ type: 'beat', name: 'Conflict Beat', license: 'basic' }],
+      paymentMethod: 'card'
+    });
+
+    assert.equal(result.status, 409);
+    assert.equal(result.body.code, 'PAYMENT_REFERENCE_CONFLICT');
+    assert.equal(result.body.error, 'This payment reference is already recorded for another order.');
+    assert.equal(loaded.adminNotifications.length, 1);
   } finally {
     global.fetch = originalFetch;
     loaded.restore();

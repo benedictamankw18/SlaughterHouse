@@ -4,6 +4,7 @@ const config = require('../config');
 const logger = require('./logger');
 const { releaseBookingHold } = require('./booking-reservations');
 const { parseOrderItems } = require('./order-items');
+const { recordPayment } = require('./payment-records');
 
 const FULL_REFUND_TOLERANCE = 0.005;
 
@@ -196,25 +197,18 @@ async function applyPaymentReversal(db, order, { reference, paymentData, payment
       ? (provider === 'paystack' ? legacyAmount / 100 : legacyAmount)
       : Number(order.amount);
   const amountGhs = Number(order.amount_ghs ?? amount);
-  await db.run(
-    `INSERT INTO payments (order_id, provider, provider_reference, provider_transaction_id, status, amount, currency, amount_ghs, provider_payload, verified_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-     ON CONFLICT (provider_reference) DO UPDATE SET order_id = EXCLUDED.order_id, status = EXCLUDED.status,
-       amount = EXCLUDED.amount, currency = EXCLUDED.currency, amount_ghs = EXCLUDED.amount_ghs,
-       provider_transaction_id = EXCLUDED.provider_transaction_id,
-       provider_payload = EXCLUDED.provider_payload, verified_at = EXCLUDED.verified_at`,
-    [
-      order.id,
-      provider,
-      reference,
-      payment?.transactionId ?? null,
-      'reversed',
-      amount,
-      payment?.currency || paymentData?.currency || order.currency,
-      Number.isFinite(amountGhs) && amountGhs > 0 ? amountGhs : amount,
-      JSON.stringify(payment?.raw ?? paymentData ?? {})
-    ]
-  );
+  await recordPayment(db.run.bind(db), {
+    orderId: order.id,
+    provider,
+    reference,
+    transactionId: payment?.transactionId ?? null,
+    status: 'reversed',
+    amount,
+    currency: payment?.currency || paymentData?.currency || order.currency,
+    amountGhs: Number.isFinite(amountGhs) && amountGhs > 0 ? amountGhs : amount,
+    payload: payment?.raw ?? paymentData ?? {},
+    verified: true
+  });
   if (['paid', 'partially_refunded'].includes(String(order.status || ''))) {
     return applyRefund(db, order, {
       amountGhs: amount,
