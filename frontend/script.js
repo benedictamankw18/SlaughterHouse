@@ -462,8 +462,15 @@ if (loginButton) {
       content.innerHTML = `<p class="auth-message error">${escapeHTML(error.message)}</p>`;
     }
   };
+  const accountTabPages = {
+    purchases: '/user/purchases.html',
+    licenses: '/user/licenses.html',
+    bookings: '/user/bookings.html',
+    notifications: '/user/alerts.html'
+  };
   authPanel.querySelectorAll('[data-account-tab]').forEach(button => button.addEventListener('click', () => {
-    loadAccountHistory(button.dataset.accountTab);
+    const page = accountTabPages[button.dataset.accountTab];
+    if (page) location.href = page;
   }));
   authPanel.addEventListener('click', event => {
     const toggle = event.target.closest('.auth-password-toggle');
