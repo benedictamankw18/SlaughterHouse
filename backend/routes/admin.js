@@ -17,6 +17,7 @@ const { fulfillPaidBooking } = require('../services/booking-fulfillment');
 const { reserveBookingSlots } = require('../services/booking-reservations');
 const { LICENSE_TYPES, loadLicenseRights, loadLicenseDefinitions, saveLicenseRights } = require('../services/license-rights');
 const { FULFILLMENT_STATUSES, updateFulfillmentStatus } = require('../services/fulfillment');
+const { normalizePaymentProvider } = require('../services/payment-providers');
 const { BUSINESS_SETTINGS, REPORT_GRANULARITIES, validateDateRange, validateSettingUpdates, validateReportGranularity, buildReportPeriods } = require('../services/admin-controls');
 const { isUsdGhsRateFresh } = require('../services/pricing');
 const {
@@ -1359,7 +1360,8 @@ router.post('/admin/orders/:reference/booking-resolution', sessions.requireAdmin
         [order.id, 'paid']
       );
       if (!payment?.provider_reference) return { status: 409, error: 'A confirmed payment transaction could not be found for this order.' };
-      const provider = String(payment.provider || order.provider || 'paystack').toLowerCase() === 'flutterwave' ? 'flutterwave' : 'paystack';
+      const provider = normalizePaymentProvider(payment.provider || order.provider);
+      if (!provider) return { status: 409, error: 'This order has an unsupported payment provider and cannot be refunded.' };
       if (provider === 'paystack' && !config.paystackSecretKey) return { status: 503, error: 'Refund processing is unavailable because PAYSTACK_SECRET_KEY is not configured.' };
       if (provider === 'flutterwave' && !isFlutterwaveConfigured()) return { status: 503, error: 'Refund processing is unavailable because FLUTTERWAVE_SECRET_KEY is not configured.' };
       if (provider === 'flutterwave' && !payment.provider_transaction_id) return { status: 409, error: 'A confirmed Flutterwave transaction id could not be found for this order.' };
