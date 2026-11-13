@@ -536,6 +536,7 @@ router.post('/payments/webhook', paymentWebhookRateLimit, async (request, respon
         orderId: order.id,
         conflict: { reason: 'order_already_refunded', reference: eventReference }
       };
+      if (paymentProvider(order) !== provider) rejectWebhook(400, { error: 'Payment provider does not match the order provider.' });
       if (!chargeMatchesOrder(order, payment)) rejectWebhook(400, { error: 'Payment webhook amount could not be reconciled.' });
       const orderItems = parseOrderItems(order.items_json);
       if (!orderItems) rejectWebhook(500, { error: 'Order data is invalid.' });
