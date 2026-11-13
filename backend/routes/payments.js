@@ -578,6 +578,7 @@ router.post('/payments/webhook', paymentWebhookRateLimit, async (request, respon
         return {
           processed: true,
           orderId: order.id,
+          order,
           reviewRequired: true,
           conflict: { reason: 'merchandise_out_of_stock', reference: eventReference }
         };

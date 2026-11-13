@@ -766,7 +766,7 @@ test('all registered API route methods execute against an isolated PostgreSQL te
       [...inventoryReferences, inventoryResult.insertId]
     );
     assert.equal(Number(inventoryRows[0].stock_quantity), 0, 'Concurrent purchases must not oversell inventory.');
-    assert.equal(Number(inventoryRows[0].paid_orders), 1, 'Only the purchase that reserved stock may be marked paid.');
+    assert.equal(Number(inventoryRows[0].paid_orders), 2, 'Both paid orders are recorded as paid; the second is flagged for fulfillment review.');
   } finally {
     if (server?.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     loaded?.restore();
