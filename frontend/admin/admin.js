@@ -527,9 +527,9 @@ function renderReport(report) {
 
 function renderBusinessSettings(settings, canEdit, suggestedUsdToGhsRate, suggestedUsdToNgnRate, suggestedUsdToGbpRate, suggestedUsdToEurRate) {
   const form = $('#business-settings-form');
-  const rateEditEnabled = localStorage.getItem('ultbigboyRateEditEnabled') !== 'false';
   const byKey = new Map(settings.map(setting => [setting.key, setting]));
-  const editable = canEdit && rateEditEnabled;
+
+  const isRateEditEnabled = key => localStorage.getItem(key) === 'true';
 
   const sections = [
     {
@@ -586,12 +586,14 @@ function renderBusinessSettings(settings, canEdit, suggestedUsdToGhsRate, sugges
       const useSuggestedBtn = suggested != null && canEdit
         ? `<button type="button" class="rate-use-suggested" data-rate="${setting.key}" data-suggested="${escapeHtml(suggested.toFixed(6))}" title="Use the suggested online ${unit} rate in the field above">Use suggested</button>`
         : '';
+      const rateKey = `ultbigboyRateEditEnabled:${setting.key}`;
+      const rateEditEnabled = canEdit && isRateEditEnabled(rateKey);
       const toggle = canEdit
-        ? `<label class="rate-edit-toggle"><input type="checkbox" name="rateEditEnabled" ${rateEditEnabled ? 'checked' : ''}><span class="toggle-slider"></span><span>Allow editing rate</span></label>`
+        ? `<label class="rate-edit-toggle"><input type="checkbox" name="rateEditEnabled" data-rate="${setting.key}" ${rateEditEnabled ? 'checked' : ''}><span class="toggle-slider"></span><span>Allow editing rate</span></label>`
         : '';
       rateStatus = `${updatedAt ? `<small>Configured ${unit} rate updated ${escapeHtml(updatedAt)}. ${setting.fresh ? 'Current.' : 'STALE \u2014 beat checkout is disabled until refreshed.'} Rates expire after 24 hours.</small>` : `<small>No ${unit} exchange rate is configured. Beat checkout is unavailable until one is saved.</small>`} ${suggestedHtml} ${refreshBtn} ${useSuggestedBtn} ${toggle}`;
     }
-    const inputDisabled = exchangeRate && !editable;
+    const inputDisabled = exchangeRate && !(canEdit && isRateEditEnabled(`ultbigboyRateEditEnabled:${setting.key}`));
     return `<label>${escapeHtml(setting.label)}<input name="${escapeHtml(setting.key)}" type="number" min="${exchangeRate ? '0.000001' : '0'}" max="${exchangeRate ? '999999.999999' : '100000000'}" step="${exchangeRate ? '0.000001' : '0.01'}" value="${escapeHtml(setting.value)}" ${canEdit ? 'required' : 'disabled'}${inputDisabled ? ' disabled' : ''}>${rateStatus}</label>`;
   };
 
@@ -1317,7 +1319,8 @@ $('#business-settings-form').addEventListener('click', async event => {
   const toggle = event.target.closest('.rate-edit-toggle');
   if (toggle) {
     const checkbox = toggle.querySelector('input[type="checkbox"]');
-    localStorage.setItem('ultbigboyRateEditEnabled', checkbox.checked);
+    const rateKey = checkbox.getAttribute('data-rate');
+    localStorage.setItem(`ultbigboyRateEditEnabled:${rateKey}`, checkbox.checked);
     await loadBusinessSettings();
     return;
   }
