@@ -180,6 +180,22 @@ Back up the bucket (or the local media directories when the local driver is
 used) separately from the PostgreSQL backups. The database stores only file
 names, so a database restore cannot recreate missing media.
 
+## Payment transaction uniqueness
+
+Migration 39 adds a unique index on `payments (provider, provider_transaction_id)`. A provider transaction may settle only one order, and the webhook rejects a reused transaction id with HTTP 409. Rows without a transaction id are unaffected because unique indexes treat nulls as distinct.
+
+Before applying migration 39 to an existing database, confirm there are no duplicate non-null transaction ids. If the index cannot be created, the migration stops and no schema change is recorded:
+
+```sql
+SELECT provider, provider_transaction_id, COUNT(*) AS rows
+FROM payments
+WHERE provider_transaction_id IS NOT NULL
+GROUP BY provider, provider_transaction_id
+HAVING COUNT(*) > 1;
+```
+
+Resolve any rows manually, keeping the transaction id on the row tied to the settled order and clearing it on the others; the original provider payload remains in `provider_payload`. Then rerun the migration.
+
 ## Migration recovery
 
 Database migrations are forward-only. Do not edit or remove an applied migration to roll it back. For a failed deployment, stop writes if necessary, restore the latest verified backup into a separate database, and use a reviewed forward migration to reconcile schema or data. Promote a restored database only after application-level validation and an explicit operational approval. Preserve the failed database and logs for investigation.
