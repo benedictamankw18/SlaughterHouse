@@ -323,6 +323,10 @@ async function completePaidOrder(db, order, items, payment) {
 }
 
 async function markBookingForReview(db, order, items, payment, reason = 'booking_slot_unavailable') {
+  await markOrderForReview(db, order, items, payment, reason);
+}
+
+async function markOrderForReview(db, order, items, payment, reason) {
   await db.run(
     'UPDATE orders SET status = ?, items_json = ?, fulfillment_review_required = TRUE, fulfillment_review_reason = ? WHERE id = ?',
     ['paid', JSON.stringify(items), reason, order.id]
@@ -350,21 +354,25 @@ async function markBookingForReview(db, order, items, payment, reason = 'booking
 }
 
 async function notifyBookingNeedsReview(db, order, reason) {
+  await notifyOrderNeedsReview(db, order, reason, 'booking');
+}
+
+async function notifyOrderNeedsReview(db, order, reason, type = 'booking') {
   await notifyAdminsSafely(db, {
     type: 'payment_reconciliation',
-    title: 'Paid booking needs fulfillment review',
-    message: `Order ${order.reference} was paid but its booking could not be fulfilled automatically (${reason}). Assign another slot or request a refund.`,
+    title: `Paid ${type} needs fulfillment review`,
+    message: `Order ${order.reference} was paid but its ${type} could not be fulfilled automatically (${reason}). Review the order and arrange fulfillment or refund.`,
     dedupeKey: `payment-reconciliation:${order.reference}:${reason}`
   });
   const customer = await db.get("SELECT id FROM users WHERE lower(email) = lower(?) AND role NOT IN ('admin', 'super_admin')", [order.customer_email]);
   if (customer?.id) await createNotificationSafely(db, {
     userId: customer.id,
-    type: 'booking_payment_review',
-    title: 'Your paid booking needs follow-up',
-    message: 'We received your payment, but your selected time is no longer available. Our team will contact you to arrange another time or a refund.'
+    type: `${type}_payment_review`,
+    title: 'Your paid order needs follow-up',
+    message: 'We received your payment, but your order could not be fulfilled automatically. Our team will contact you to arrange fulfillment or a refund.'
   });
   await recordAuditSafely(database, {
-    action: 'booking_payment_reconciliation_required',
+    action: `${type}_payment_reconciliation_required`,
     entityType: 'order',
     entityId: order.id,
     details: { reference: order.reference, reason }
@@ -566,9 +574,11 @@ router.post('/payments/webhook', paymentWebhookRateLimit, async (request, respon
         await completePaidOrder(tx, order, items, payment);
       } catch (error) {
         if (error.code !== 'OUT_OF_STOCK') throw error;
+        await markOrderForReview(tx, order, items, payment, 'merchandise_out_of_stock');
         return {
           processed: true,
           orderId: order.id,
+          reviewRequired: true,
           conflict: { reason: 'merchandise_out_of_stock', reference: eventReference }
         };
       }
@@ -577,7 +587,8 @@ router.post('/payments/webhook', paymentWebhookRateLimit, async (request, respon
     if (outcome.duplicate) return response.json({ received: true, duplicate: true });
     if (outcome.conflict) {
       if (outcome.reviewRequired) {
-        await notifyBookingNeedsReview(database, outcome.order, outcome.conflict.reason);
+        const reviewType = outcome.conflict.reason === 'merchandise_out_of_stock' ? 'merchandise' : 'booking';
+        await notifyOrderNeedsReview(database, outcome.order, outcome.conflict.reason, reviewType);
         return response.json({ received: true, conflict: outcome.conflict.reason });
       }
       recordAuditSafely(database, { action: 'payment_webhook_conflict', entityType: 'order', entityId: outcome.orderId, details: { ...outcome.conflict, event: eventType } });
