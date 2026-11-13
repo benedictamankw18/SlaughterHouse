@@ -1313,10 +1313,7 @@ $('#business-settings-form').addEventListener('submit', async event => {
 });
 
 $('#business-settings-form').addEventListener('click', async event => {
-  const button = event.target.closest('button');
-  if (!button) return;
-
-  // Allow editing rate toggle
+  // Allow editing rate toggle (checkbox, not a button)
   const toggle = event.target.closest('.rate-edit-toggle');
   if (toggle) {
     const checkbox = toggle.querySelector('input[type="checkbox"]');
@@ -1324,6 +1321,9 @@ $('#business-settings-form').addEventListener('click', async event => {
     await loadBusinessSettings();
     return;
   }
+
+  const button = event.target.closest('button');
+  if (!button) return;
 
   // Refresh rate from online service
   if (button.classList.contains('rate-refresh-btn')) {
