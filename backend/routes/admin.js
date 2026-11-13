@@ -404,6 +404,42 @@ router.post('/admin/settings/refresh-rate', sessions.requirePermission('admin:ma
            updated_at = CURRENT_TIMESTAMP`,
         [ghsValue, request.admin.id]
       );
+      if (ngnPerGhs && Number.isFinite(ngnPerGhs) && ngnPerGhs > 0) {
+        await tx.run(
+          `INSERT INTO fx_rates (currency, ghs_per_unit, approved_by, approved_at, updated_at)
+           VALUES ('NGN', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+           ON CONFLICT (currency) DO UPDATE SET
+             ghs_per_unit = EXCLUDED.ghs_per_unit,
+             approved_by = EXCLUDED.approved_by,
+             approved_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP`,
+          [ngnPerGhs, request.admin.id]
+        );
+      }
+      if (gbpPerGhs && Number.isFinite(gbpPerGhs) && gbpPerGhs > 0) {
+        await tx.run(
+          `INSERT INTO fx_rates (currency, ghs_per_unit, approved_by, approved_at, updated_at)
+           VALUES ('GBP', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+           ON CONFLICT (currency) DO UPDATE SET
+             ghs_per_unit = EXCLUDED.ghs_per_unit,
+             approved_by = EXCLUDED.approved_by,
+             approved_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP`,
+          [gbpPerGhs, request.admin.id]
+        );
+      }
+      if (eurPerGhs && Number.isFinite(eurPerGhs) && eurPerGhs > 0) {
+        await tx.run(
+          `INSERT INTO fx_rates (currency, ghs_per_unit, approved_by, approved_at, updated_at)
+           VALUES ('EUR', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+           ON CONFLICT (currency) DO UPDATE SET
+             ghs_per_unit = EXCLUDED.ghs_per_unit,
+             approved_by = EXCLUDED.approved_by,
+             approved_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP`,
+          [eurPerGhs, request.admin.id]
+        );
+      }
     });
     recordAuditSafely(database, {
       userId: request.admin.id,
@@ -453,6 +489,31 @@ router.put('/admin/settings', sessions.requirePermission('admin:manage_settings'
              updated_at = CURRENT_TIMESTAMP`,
           [usdRate[1], request.admin.id]
         );
+      }
+      const ghsPerUsd = usdRate ? Number(usdRate[1]) : null;
+      const foreignSettings = [
+        ['usd_to_ngn_rate', 'NGN'],
+        ['usd_to_gbp_rate', 'GBP'],
+        ['usd_to_eur_rate', 'EUR']
+      ];
+      for (const [settingKey, currency] of foreignSettings) {
+        const found = validation.value.find(([key]) => key === settingKey);
+        if (found && ghsPerUsd) {
+          const foreignPerUsd = Number(found[1]);
+          if (foreignPerUsd > 0) {
+            const ghsPerUnit = (ghsPerUsd / foreignPerUsd).toFixed(6);
+            await tx.run(
+              `INSERT INTO fx_rates (currency, ghs_per_unit, approved_by, approved_at, updated_at)
+               VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               ON CONFLICT (currency) DO UPDATE SET
+                 ghs_per_unit = EXCLUDED.ghs_per_unit,
+                 approved_by = EXCLUDED.approved_by,
+                 approved_at = CURRENT_TIMESTAMP,
+                 updated_at = CURRENT_TIMESTAMP`,
+              [currency, ghsPerUnit, request.admin.id]
+            );
+          }
+        }
       }
     });
     recordAuditSafely(database, {
