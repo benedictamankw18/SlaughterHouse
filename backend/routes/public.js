@@ -15,6 +15,7 @@ const { ensureCertificateForLicense, certificateToken } = require('../services/l
 const { checkReadiness } = require('../services/health');
 const { getDownloadItems } = require('../services/downloads');
 const { getUsdGhsRate } = require('../services/pricing');
+const { fetchSuggestedRates } = require('../services/fx');
 
 const router = express.Router();
 const queryRows = (query, parameters = []) => new Promise((resolve, reject) => database.all(query, parameters, (error, rows) => error ? reject(error) : resolve(rows || [])));
@@ -58,7 +59,49 @@ router.get('/exchange-rate', async (request, response) => {
   response.setHeader('Cache-Control', 'no-store');
   try {
     const exchangeRate = await getUsdGhsRate(database);
-    response.json({ usdToGhsRate: exchangeRate.rate, updatedAt: exchangeRate.updatedAt });
+    const ngnRate = await new Promise((resolve, reject) => {
+      database.get(
+        'SELECT setting_value FROM settings WHERE setting_key = ?',
+        ['usd_to_ngn_rate'],
+        (error, row) => error ? reject(error) : resolve(row?.setting_value ? Number(row.setting_value) : null)
+      );
+    });
+    const gbpRate = await new Promise((resolve, reject) => {
+      database.get(
+        'SELECT setting_value FROM settings WHERE setting_key = ?',
+        ['usd_to_gbp_rate'],
+        (error, row) => error ? reject(error) : resolve(row?.setting_value ? Number(row.setting_value) : null)
+      );
+    });
+    const eurRate = await new Promise((resolve, reject) => {
+      database.get(
+        'SELECT setting_value FROM settings WHERE setting_key = ?',
+        ['usd_to_eur_rate'],
+        (error, row) => error ? reject(error) : resolve(row?.setting_value ? Number(row.setting_value) : null)
+      );
+    });
+    const result = {
+      usdToGhsRate: exchangeRate.rate,
+      usdToNgnRate: ngnRate,
+      usdToGbpRate: gbpRate,
+      usdToEurRate: eurRate,
+      updatedAt: exchangeRate.updatedAt
+    };
+
+    // Suggested foreign currency rates (GHS per unit of currency) for catalog
+    // display conversion. Unavailable rates simply aren't included, so the
+    // frontend falls back to the USD price with an honest message.
+    try {
+      const suggestions = await fetchSuggestedRates();
+      if (suggestions?.rates) {
+        result.rates = suggestions.rates;
+        result.suggestionsUpdatedAt = suggestions.fetchedAt;
+      }
+    } catch {
+      // Suggested rates unavailable — foreign currency preview stays unavailable.
+    }
+
+    response.json(result);
   } catch (error) {
     response.status(503).json({ error: databaseError('Loading the current exchange rate failed.', error) });
   }

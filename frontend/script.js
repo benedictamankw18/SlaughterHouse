@@ -1034,6 +1034,11 @@ function setupPreviewCard(card) {
 document.querySelectorAll('.beat-card').forEach(setupPreviewCard);
 
 let usdToGhsRate = null;
+let usdToNgnRate = null;
+let usdToGbpRate = null;
+let usdToEurRate = null;
+// GHS per unit of each foreign currency, used for USD -> GBP/EUR display conversion.
+let foreignRates = {};
 
 const cartStorageKey = 'ultbigboyCart';
 const pendingCartPaymentsKey = 'ultbigboyPendingCartPayments';
@@ -1101,15 +1106,43 @@ function convertCartAmount(value, fromCurrency, toCurrency) {
   if (!Number.isFinite(usdToGhsRate) || usdToGhsRate <= 0) return null;
   const fromCurrencyUpper = String(fromCurrency || 'USD').toUpperCase();
   const toCurrencyUpper = String(toCurrency || 'USD').toUpperCase();
-  // Catalog prices are stored in USD. We only have the USD->GHS rate on the
-  // frontend, so we can accurately convert USD<->GHS only. For EUR/GBP/NGN the
-  // frontend lacks the foreign rate; show the USD price with a note instead of
-  // inventing a wrong cross-rate.
+  // Catalog prices are stored in USD. We have the USD->GHS and USD->NGN rates
+  // from the server, and suggested GHS-per-unit rates for GBP/EUR. Compute
+  // foreign conversion using GHS as the bridge currency where needed.
   if (fromCurrencyUpper === 'USD' && toCurrencyUpper === 'GHS') {
     return Number(value) * usdToGhsRate;
   }
   if (fromCurrencyUpper === 'GHS' && toCurrencyUpper === 'USD') {
     return Number(value) / usdToGhsRate;
+  }
+  if (fromCurrencyUpper === 'USD' && toCurrencyUpper === 'NGN' && Number.isFinite(usdToNgnRate) && usdToNgnRate > 0) {
+    return Number(value) * usdToNgnRate;
+  }
+  if (fromCurrencyUpper === 'NGN' && toCurrencyUpper === 'USD' && Number.isFinite(usdToNgnRate) && usdToNgnRate > 0) {
+    return Number(value) / usdToNgnRate;
+  }
+  if (fromCurrencyUpper === 'USD' && toCurrencyUpper === 'GBP' && Number.isFinite(usdToGbpRate) && usdToGbpRate > 0) {
+    return Number(value) * usdToGbpRate;
+  }
+  if (fromCurrencyUpper === 'GBP' && toCurrencyUpper === 'USD' && Number.isFinite(usdToGbpRate) && usdToGbpRate > 0) {
+    return Number(value) / usdToGbpRate;
+  }
+  if (fromCurrencyUpper === 'USD' && toCurrencyUpper === 'EUR' && Number.isFinite(usdToEurRate) && usdToEurRate > 0) {
+    return Number(value) * usdToEurRate;
+  }
+  if (fromCurrencyUpper === 'EUR' && toCurrencyUpper === 'USD' && Number.isFinite(usdToEurRate) && usdToEurRate > 0) {
+    return Number(value) / usdToEurRate;
+  }
+  if (fromCurrencyUpper === 'USD' && Number.isFinite(foreignRates[toCurrencyUpper]) && foreignRates[toCurrencyUpper] > 0) {
+    return Number(value) * usdToGhsRate / foreignRates[toCurrencyUpper];
+  }
+  if (fromCurrencyUpper !== 'USD' && toCurrencyUpper === 'USD' && Number.isFinite(foreignRates[fromCurrencyUpper]) && foreignRates[fromCurrencyUpper] > 0) {
+    return Number(value) * foreignRates[fromCurrencyUpper] / usdToGhsRate;
+  }
+  if (Number.isFinite(foreignRates[fromCurrencyUpper]) && foreignRates[fromCurrencyUpper] > 0
+      && Number.isFinite(foreignRates[toCurrencyUpper]) && foreignRates[toCurrencyUpper] > 0) {
+    const valueInGhs = Number(value) * foreignRates[fromCurrencyUpper];
+    return valueInGhs / foreignRates[toCurrencyUpper];
   }
   return null;
 }
@@ -1125,7 +1158,7 @@ function updateBeatPrices() {
     const basePrice = Number(selectedLicense.dataset.price);
     const convertedPrice = convertCartAmount(basePrice, 'USD', currentCurrency);
     priceElement.textContent = convertedPrice === null
-      ? `${formatCurrency(basePrice, 'USD')} (GHS conversion unavailable)`
+      ? `${formatCurrency(basePrice, 'USD')} (currency conversion unavailable)`
       : formatCurrency(convertedPrice, currentCurrency);
   });
 }
@@ -1155,6 +1188,10 @@ async function loadDisplayExchangeRate() {
     const rate = Number(data.usdToGhsRate);
     if (!Number.isFinite(rate) || rate <= 0) throw new Error('The server returned an invalid exchange rate.');
     usdToGhsRate = rate;
+    usdToNgnRate = data.usdToNgnRate != null ? Number(data.usdToNgnRate) : null;
+    usdToGbpRate = data.usdToGbpRate != null ? Number(data.usdToGbpRate) : null;
+    usdToEurRate = data.usdToEurRate != null ? Number(data.usdToEurRate) : null;
+    foreignRates = data.rates && typeof data.rates === 'object' ? data.rates : {};
     updateBeatPrices();
     updateCart();
     updateMerchandisePrices();
@@ -1436,7 +1473,7 @@ function updateMerchandisePrices() {
     const baseCurrency = priceElement.dataset.currency;
     const convertedPrice = convertCartAmount(basePrice, baseCurrency, currentCurrency);
     priceElement.textContent = convertedPrice === null
-      ? `${formatCurrency(basePrice, baseCurrency)} (conversion unavailable)`
+      ? `${formatCurrency(basePrice, baseCurrency)} (currency conversion unavailable)`
       : formatCurrency(convertedPrice, currentCurrency);
   });
 }

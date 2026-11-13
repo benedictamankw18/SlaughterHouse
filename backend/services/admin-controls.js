@@ -12,7 +12,10 @@ const BUSINESS_SETTINGS = Object.freeze({
   beat_default_premium_usd: 'Default premium beat license (USD)',
   beat_default_unlimited_usd: 'Default unlimited beat license (USD)',
   beat_default_exclusive_usd: 'Default exclusive beat license (USD)',
-  usd_to_ghs_rate: 'USD to GHS exchange rate'
+  usd_to_ghs_rate: 'USD to GHS exchange rate',
+  usd_to_ngn_rate: 'USD to NGN exchange rate',
+  usd_to_gbp_rate: 'USD to GBP exchange rate',
+  usd_to_eur_rate: 'USD to EUR exchange rate'
 });
 
 function validateSettingUpdates(updates) {
@@ -29,17 +32,26 @@ function validateSettingUpdates(updates) {
     if (key === 'usd_to_ghs_rate' && (Number(value) <= 0 || Number(value) >= 1000000)) {
       return { error: 'USD to GHS exchange rate must be greater than zero and less than 1000000.' };
     }
+    if (key === 'usd_to_ngn_rate' && (Number(value) <= 0 || Number(value) >= 1000000000)) {
+      return { error: 'USD to NGN exchange rate must be greater than zero and less than 1000000000.' };
+    }
+    if (key === 'usd_to_gbp_rate' && (Number(value) <= 0 || Number(value) >= 1000000)) {
+      return { error: 'USD to GBP exchange rate must be greater than zero and less than 1000000.' };
+    }
+    if (key === 'usd_to_eur_rate' && (Number(value) <= 0 || Number(value) >= 1000000)) {
+      return { error: 'USD to EUR exchange rate must be greater than zero and less than 1000000.' };
+    }
     if (key === 'booking_ep_album_discount_percent' && Number(value) >= 100) {
       return { error: 'EP / Album discount must be less than 100%.' };
     }
-    const decimalPlaces = key === 'usd_to_ghs_rate' ? 6 : 2;
+    const decimalPlaces = key === 'usd_to_ghs_rate' || key === 'usd_to_ngn_rate' || key === 'usd_to_gbp_rate' || key === 'usd_to_eur_rate' ? 6 : 2;
     if (Number(value) !== Number(Number(value).toFixed(decimalPlaces))) {
       const precision = decimalPlaces === 2 ? 'two' : String(decimalPlaces);
       return { error: `${BUSINESS_SETTINGS[key]} can have at most ${precision} decimal places.` };
     }
   }
   return {
-    value: entries.map(([key, value]) => [key, Number(value).toFixed(key === 'usd_to_ghs_rate' ? 6 : 2)])
+    value: entries.map(([key, value]) => [key, Number(value).toFixed(key === 'usd_to_ghs_rate' || key === 'usd_to_ngn_rate' || key === 'usd_to_gbp_rate' || key === 'usd_to_eur_rate' ? 6 : 2)])
   };
 }
 
