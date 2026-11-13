@@ -925,3 +925,50 @@ test('PostgreSQL never reassigns a payment reference to another order or provide
     await pool.end();
   }
 });
+
+test('PostgreSQL rejects unsupported payment and order providers', {
+  skip: !testDatabaseUrl && 'Set TEST_DATABASE_URL to the dedicated local slaughterhouse_route_test database.'
+}, async () => {
+  assertSafeTestDatabase(testDatabaseUrl);
+  const pool = new Pool({ connectionString: testDatabaseUrl });
+  const paymentReference = `UBB-PROVIDER-CHECK-${crypto.randomUUID()}`;
+  let paymentId = null;
+  try {
+    await applyMigrations(pool);
+
+    await assert.rejects(
+      pool.query(
+        `INSERT INTO payments (provider, provider_reference, status, amount, currency)
+         VALUES ($1, $2, 'pending', 1, 'GHS')`,
+        ['stripe', paymentReference]
+      ),
+      error => error.code === '23514'
+    );
+
+    const { rows } = await pool.query(
+      `INSERT INTO payments (provider, provider_reference, status, amount, currency)
+       VALUES ($1, $2, 'pending', 1, 'GHS') RETURNING id`,
+      ['paystack', paymentReference]
+    );
+    paymentId = rows[0].id;
+
+    await assert.rejects(
+      pool.query('UPDATE payments SET provider = $1 WHERE id = $2', ['stripe', paymentId]),
+      error => error.code === '23514'
+    );
+
+    for (const provider of ['stripe', 'paypal']) {
+      await assert.rejects(
+        pool.query(
+          `INSERT INTO orders (reference, customer_name, customer_email, amount, currency, items_json, provider)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [`UBB-PROVIDER-CHECK-ORDER-${crypto.randomUUID()}`, 'Integration Customer', 'integration-customer@example.test', 1, 'GHS', '[]', provider]
+        ),
+        error => error.code === '23514'
+      );
+    }
+  } finally {
+    if (paymentId !== null) await pool.query('DELETE FROM payments WHERE id = $1', [paymentId]).catch(() => {});
+    await pool.end();
+  }
+});

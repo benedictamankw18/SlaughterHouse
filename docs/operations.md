@@ -212,7 +212,7 @@ LEFT JOIN orders o ON o.id = p.order_id
 WHERE p.provider_reference = '<reference>';
 ```
 
-Settled orders with no payment row are the fingerprint of a payment that was reassigned before this guard existed. Run this periodically after deploying the guard:
+Settled orders with no payment row would be the fingerprint of a payment that was reassigned. That is not reachable through the current integration (both gateways are handed the order reference and `provider_reference` is globally unique), so any rows returned by this audit warrant investigation rather than routine cleanup:
 
 ```sql
 SELECT o.reference, o.status, COUNT(p.id) AS payment_rows
@@ -222,6 +222,40 @@ WHERE o.status IN ('paid', 'partially_refunded', 'refunded')
 GROUP BY o.reference, o.status
 HAVING COUNT(p.id) = 0;
 ```
+
+The global uniqueness of `payments.provider_reference` is deliberate and must not be narrowed to `(provider, provider_reference)`. Both gateways receive the order reference (`reference` for Paystack, `tx_ref` for Flutterwave), so one reference can only identify one payment. A per-provider key would allow the same reference to exist once per provider, letting a cross-provider replay insert a second payment row instead of surfacing a conflict, and it would invalidate the `ON CONFLICT (provider_reference)` clause the guarded writer relies on. If a gateway ever starts minting its own reference, store it in a separate column with its own uniqueness instead of weakening this key.
+
+Migration 40 enforces `provider IN ('paystack', 'flutterwave')` on `payments` and `orders`. Application code already fails closed on unknown providers; the constraints keep bad values out if a future code path forgets to validate. A write with any other provider fails with SQLSTATE `23514`. Before applying it, confirm no existing row uses another value, because the `ALTER TABLE` fails if one does:
+
+```sql
+SELECT 'payments' AS source, provider, COUNT(*) FROM payments GROUP BY provider
+UNION ALL
+SELECT 'orders', provider, COUNT(*) FROM orders GROUP BY provider
+ORDER BY source, provider;
+```
+
+Payments whose order was deleted keep their row with `order_id` set to `NULL` (the foreign key uses `ON DELETE SET NULL`), so they do not appear in the audit above. List them explicitly:
+
+```sql
+SELECT p.id, p.provider, p.provider_reference, p.provider_transaction_id,
+       p.status, p.amount, p.currency, p.created_at
+FROM payments p
+WHERE p.order_id IS NULL
+ORDER BY p.created_at DESC;
+```
+
+Treat any such row with a settled status as a reconciliation item before reusing its reference.
+
+Orders created before `orders.provider` existed were backfilled with the `paystack` default, so legacy foreign-currency orders can be mislabeled. Confirm the stored provider still matches the charged currency:
+
+```sql
+SELECT currency, provider, COUNT(*)
+FROM orders
+GROUP BY currency, provider
+ORDER BY currency, provider;
+```
+
+USD, NGN, GBP, and EUR orders should be `flutterwave`; a mismatch needs a reviewed data correction before verifying or refunding those orders.
 
 ## Migration recovery
 
