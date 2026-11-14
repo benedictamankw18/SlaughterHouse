@@ -439,3 +439,19 @@ test('all versioned migration statements are converted away from MySQL-only synt
     }
   }
 });
+
+test('migration 44 constrains cart ownership and numbers issued licenses', () => {
+  const migration = migrations.find(candidate => candidate.version === 44);
+  assert.ok(migration, 'migration 44 must exist');
+  assert.deepEqual(migration.statements[0], {
+    ensureColumn: { table: 'licenses', column: 'purchase_number', definition: 'INT NULL' }
+  });
+  assert.match(migration.statements[1], /ROW_NUMBER\(\) OVER \(ORDER BY purchased_at, id\)/);
+  assert.match(migration.statements[2], /GREATEST\(count, COALESCE\(\(SELECT MAX\(purchase_number\) FROM licenses\), 0\)\)/);
+  assert.ok(migration.statements.includes('CREATE UNIQUE INDEX IF NOT EXISTS uq_licenses_purchase_number ON licenses (purchase_number)'));
+  assert.ok(migration.statements.includes('CREATE UNIQUE INDEX IF NOT EXISTS uq_carts_user_id ON carts (user_id)'));
+  assert.ok(migration.statements.includes('CREATE UNIQUE INDEX IF NOT EXISTS uq_carts_cart_id ON carts (cart_id)'));
+  assert.ok(migration.statements.includes(
+    'ALTER TABLE carts ADD CONSTRAINT carts_scope_check CHECK ((user_id IS NULL) <> (cart_id IS NULL))'
+  ));
+});

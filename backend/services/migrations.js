@@ -797,6 +797,26 @@ const migrations = [
       )`,
       `INSERT IGNORE INTO license_purchase_counter (id, count) VALUES (1, 0)`
     ]
+  },
+  {
+    // Cart ownership constraints plus authoritative license purchase numbering.
+    // Existing deployments never wrote these carts (migrations 41-43 were unreleased),
+    // so ownership rows can be constrained without deduplicating data. Purchase numbers
+    // are assigned from the counter inside the payment transaction from now on.
+    version: 44,
+    statements: [
+      { ensureColumn: { table: 'licenses', column: 'purchase_number', definition: 'INT NULL' } },
+      `UPDATE licenses SET purchase_number = numbered.position
+       FROM (SELECT id, ROW_NUMBER() OVER (ORDER BY purchased_at, id) AS position FROM licenses) AS numbered
+       WHERE licenses.id = numbered.id AND licenses.purchase_number IS NULL`,
+      `UPDATE license_purchase_counter
+       SET count = GREATEST(count, COALESCE((SELECT MAX(purchase_number) FROM licenses), 0))
+       WHERE id = 1`,
+      'CREATE UNIQUE INDEX IF NOT EXISTS uq_licenses_purchase_number ON licenses (purchase_number)',
+      'CREATE UNIQUE INDEX IF NOT EXISTS uq_carts_user_id ON carts (user_id)',
+      'CREATE UNIQUE INDEX IF NOT EXISTS uq_carts_cart_id ON carts (cart_id)',
+      'ALTER TABLE carts ADD CONSTRAINT carts_scope_check CHECK ((user_id IS NULL) <> (cart_id IS NULL))'
+    ]
   }
 ];
 

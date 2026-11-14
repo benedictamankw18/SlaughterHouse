@@ -105,3 +105,26 @@ test('getDownloadItems safely rejects malformed order payloads and missing base 
   assert.match(items[0].files[0].url, /^\/api\/orders\/UBB-123-abc\/downloads\/1\?/);
   assert.match(items[0].files[0].url, /token=/);
 });
+
+test('getDownloadItems only returns links for orders that can actually download', () => {
+  const order = {
+    reference,
+    status: 'paid',
+    items_json: JSON.stringify([{ type: 'beat', productId, name: 'Beat A', license: 'basic' }])
+  };
+  assert.equal(getDownloadItems(order, 'http://localhost:3000').length, 1);
+
+  for (const status of ['pending', 'partially_refunded', 'refunded', 'failed']) {
+    assert.deepEqual(
+      getDownloadItems({ ...order, status }, 'http://localhost:3000'),
+      [],
+      `${status} orders must not receive download links`
+    );
+  }
+
+  assert.equal(
+    getDownloadItems({ reference, items_json: order.items_json }, 'http://localhost:3000').length,
+    1,
+    'synthetic callers without a status keep their existing behavior'
+  );
+});

@@ -26,7 +26,8 @@ const routeFiles = [
   'bookings',
   'payments',
   'downloads',
-  'certificates'
+  'certificates',
+  'cart'
 ];
 
 function assertSafeTestDatabase(connectionString) {
@@ -92,7 +93,7 @@ async function clearTestTables(pool) {
   );
   const names = tables
     .map(row => row.tablename)
-    .filter(name => !['schema_migrations', 'settings', 'license_rights', 'license_definition_status', 'stream_releases'].includes(name));
+    .filter(name => !['schema_migrations', 'settings', 'license_rights', 'license_definition_status', 'stream_releases', 'license_purchase_counter'].includes(name));
   if (!names.length) return;
   const tablesToClear = names.map(name => `"${String(name).replace(/"/g, '""')}"`).join(', ');
   await pool.query(`TRUNCATE TABLE ${tablesToClear} RESTART IDENTITY CASCADE`);
@@ -267,7 +268,7 @@ function mountIntegrationApp(routeModules, database, config) {
   app.use(cors({
     credentials: true,
     methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'X-CSRF-Token', 'X-Request-ID'],
+    allowedHeaders: ['Content-Type', 'X-CSRF-Token', 'X-Request-ID', 'X-Cart-Id'],
     exposedHeaders: ['X-Request-ID'],
     maxAge: 600,
     origin(origin, callback) {
@@ -383,6 +384,10 @@ async function seedSettings(pool) {
       [key, value]
     );
   }
+  await pool.execute(
+    `INSERT INTO license_purchase_counter (id, count) VALUES (1, 0)
+     ON CONFLICT (id) DO UPDATE SET count = 0`
+  );
 }
 
 async function invokeRoute(baseUrl, route, sessions, routeFixtures) {
@@ -834,6 +839,184 @@ test('all registered API route methods execute against an isolated PostgreSQL te
       [`payment-reference-conflict:${conflictReferenceB}:%`]
     );
     assert.equal(conflictNotifications.length, 1, 'Administrators are told to reconcile the conflicting payment.');
+
+    // Cart scoping, isolation, guest merging, concurrency, and removed endpoints.
+    const cartItemFixture = (overrides = {}) => ({
+      type: 'beat',
+      productId: 901,
+      name: 'Integration cart beat',
+      license: 'basic',
+      price: 10,
+      priceCurrency: 'USD',
+      cover: '',
+      selected: true,
+      ...overrides
+    });
+    const guestCartRequest = (cartId, method = 'GET', body) => fetch(`${baseUrl}/api/cart`, {
+      method,
+      headers: {
+        ...(cartId ? { 'X-Cart-Id': cartId } : {}),
+        ...(body ? { 'Content-Type': 'application/json' } : {})
+      },
+      ...(body ? { body: JSON.stringify(body) } : {})
+    });
+    const customerCartRequest = (cartId, method = 'GET', body) => fetch(`${baseUrl}/api/cart`, {
+      method,
+      headers: {
+        ...sessionHeaders(sessions.customer, 'customer'),
+        ...(cartId ? { 'X-Cart-Id': cartId } : {}),
+        ...(body ? { 'Content-Type': 'application/json' } : {})
+      },
+      ...(body ? { body: JSON.stringify(body) } : {})
+    });
+    const guestA = crypto.randomUUID();
+    const guestB = crypto.randomUUID();
+    const itemA = cartItemFixture({ productId: 901, name: 'Guest A item' });
+    const itemB = cartItemFixture({ productId: 902, name: 'Guest B item' });
+    const customerItem = cartItemFixture({ productId: 903, name: 'Customer item' });
+
+    let cartResponse = await guestCartRequest(guestA, 'POST', { item: itemA });
+    assert.equal(cartResponse.status, 200);
+    cartResponse = await guestCartRequest(guestB, 'POST', { item: itemB });
+    assert.equal(cartResponse.status, 200);
+    assert.deepEqual((await (await guestCartRequest(guestA)).json()).items.map(item => item.name), ['Guest A item']);
+    assert.deepEqual((await (await guestCartRequest(guestB)).json()).items.map(item => item.name), ['Guest B item']);
+    assert.deepEqual((await (await guestCartRequest(crypto.randomUUID())).json()).items, []);
+    assert.equal((await guestCartRequest('not a valid cart id')).status, 400);
+    assert.equal((await guestCartRequest(null, 'POST', { item: itemA })).status, 400);
+
+    // A customer cannot read or write another cart by supplying its id.
+    cartResponse = await customerCartRequest(guestB, 'POST', { item: customerItem });
+    assert.equal(cartResponse.status, 200);
+    const customerCart = await (await customerCartRequest(guestB)).json();
+    assert.deepEqual(customerCart.items.map(item => item.name), ['Customer item']);
+    assert.deepEqual((await (await guestCartRequest(guestB)).json()).items.map(item => item.name), ['Guest B item']);
+
+    // Concurrent guest writes to the same new cart are all retained.
+    const concurrentGuest = crypto.randomUUID();
+    const concurrentItems = Array.from({ length: 6 }, (_, index) => cartItemFixture({ productId: 910 + index, name: `Concurrent item ${index}` }));
+    const concurrentResponses = await Promise.all(concurrentItems.map(item => guestCartRequest(concurrentGuest, 'POST', { item })));
+    assert.ok(concurrentResponses.every(result => result.status === 200));
+    const concurrentCart = await (await guestCartRequest(concurrentGuest)).json();
+    assert.equal(concurrentCart.items.length, concurrentItems.length, 'Concurrent cart writes must not be lost.');
+
+    // Cart writes never consume license purchase numbers.
+    const [counterBeforePayment] = await promisePool.execute('SELECT count FROM license_purchase_counter WHERE id = 1');
+    assert.equal(Number(counterBeforePayment[0].count), 0, 'Cart writes must not consume license purchase numbers.');
+
+    // Public pending-payment and counter endpoints no longer exist.
+    for (const [method, route] of [
+      ['GET', '/api/cart/pending-payments'],
+      ['POST', '/api/cart/pending-payments/UBB-REF'],
+      ['DELETE', '/api/cart/pending-payments/UBB-REF'],
+      ['GET', '/api/cart/license-purchase-counter'],
+      ['POST', '/api/cart/license-purchase-counter/increment']
+    ]) {
+      const removed = await fetch(`${baseUrl}${route}`, {
+        method,
+        headers: sessionHeaders(sessions.customer, 'customer')
+      });
+      assert.equal(removed.status, 404, `${method} ${route} must not be publicly available.`);
+    }
+
+    // A guest cart merges into an existing customer cart on login.
+    const { hashPassword } = require('../services/security');
+    const loginPassword = 'Integration-cart-Password-1!';
+    await promisePool.execute(
+      'UPDATE users SET password_hash = ? WHERE email = ?',
+      [await hashPassword(loginPassword), 'integration-customer@example.test']
+    );
+    const guestMerge = crypto.randomUUID();
+    const mergeItem = cartItemFixture({ productId: 930, name: 'Merged guest item' });
+    assert.equal((await guestCartRequest(guestMerge, 'POST', { item: mergeItem })).status, 200);
+    cartResponse = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Cart-Id': guestMerge },
+      body: JSON.stringify({ identifier: 'integration-customer@example.test', password: loginPassword })
+    });
+    assert.equal(cartResponse.status, 200, 'The customer can sign in with the guest cart header.');
+    const loginCookie = String(cartResponse.headers.get('set-cookie') || '').split(';')[0];
+    const mergedCart = await fetch(`${baseUrl}/api/cart`, { headers: { Cookie: loginCookie } }).then(result => result.json());
+    assert.deepEqual(
+      mergedCart.items.map(item => item.name).sort(),
+      ['Customer item', 'Merged guest item'],
+      'Guest and customer carts merge without losing either side.'
+    );
+    assert.deepEqual((await (await guestCartRequest(guestMerge)).json()).items, [], 'The guest cart is removed after merging.');
+
+    // Router-level limiters are scoped to their own routes: the administrator
+    // and certificate limiters must not consume the cart request budget.
+    await promisePool.execute('DELETE FROM rate_limit_buckets');
+    const cartBurst = await Promise.all(Array.from({ length: 61 }, () => guestCartRequest(guestA)));
+    assert.ok(
+      cartBurst.every(result => result.status === 200),
+      'Cart requests are limited only by the cart limiter, not by administrator or certificate limits.'
+    );
+
+    // A guest cart is reassigned when the customer has no cart yet.
+    const freshEmail = `cart-login-${crypto.randomUUID()}@example.test`;
+    const [freshUser] = await promisePool.execute(
+      `INSERT INTO users (name, email, phone, role, password_hash, email_verified_at)
+       VALUES (?, ?, ?, 'customer', ?, CURRENT_TIMESTAMP)`,
+      ['Fresh Cart Customer', freshEmail, `+23324${crypto.randomInt(1000000, 9999999)}`, await hashPassword(loginPassword)]
+    );
+    const freshGuest = crypto.randomUUID();
+    const freshItem = cartItemFixture({ productId: 931, name: 'Fresh guest item' });
+    assert.equal((await guestCartRequest(freshGuest, 'POST', { item: freshItem })).status, 200);
+    cartResponse = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Cart-Id': freshGuest },
+      body: JSON.stringify({ identifier: freshEmail, password: loginPassword })
+    });
+    assert.equal(cartResponse.status, 200);
+    const freshCookie = String(cartResponse.headers.get('set-cookie') || '').split(';')[0];
+    const freshCart = await fetch(`${baseUrl}/api/cart`, { headers: { Cookie: freshCookie } }).then(result => result.json());
+    assert.deepEqual(freshCart.items.map(item => item.name), ['Fresh guest item']);
+    const [reassignedCart] = await promisePool.execute(
+      'SELECT user_id, cart_id FROM carts WHERE user_id = ?',
+      [freshUser.insertId]
+    );
+    assert.equal(reassignedCart.length, 1);
+    assert.equal(reassignedCart[0].cart_id, null, 'An empty customer cart receives the guest cart row.');
+
+    // Purchase numbers are assigned by the backend only after confirmed payment.
+    const purchaseBeatId = (await promisePool.execute(
+      `INSERT INTO beats (title, basic_price, catalog_status) VALUES (?, 25, 'published')`,
+      [`Integration purchase beat ${crypto.randomUUID()}`]
+    ))[0].insertId;
+    const purchaseReference = `UBB-LICENSE-NUMBER-${crypto.randomUUID()}`;
+    await insertPaidOrderCandidate(promisePool, {
+      reference: purchaseReference,
+      amount: 25,
+      item: { type: 'beat', productId: purchaseBeatId, name: 'Integration purchase beat', license: 'basic', priceGhs: 25 }
+    });
+    const purchaseWebhook = await postSignedWebhook(baseUrl, {
+      event: 'charge.success',
+      data: { reference: purchaseReference, status: 'success', amount: 2500, currency: 'GHS' }
+    }, config.paystackSecretKey);
+    assert.equal(purchaseWebhook.status, 200);
+    const [issuedLicenses] = await promisePool.execute(
+      'SELECT l.purchase_number FROM licenses l JOIN orders o ON o.id = l.order_id WHERE o.reference = ?',
+      [purchaseReference]
+    );
+    assert.equal(issuedLicenses.length, 1);
+    assert.equal(Number(issuedLicenses[0].purchase_number), 1, 'Paid webhooks assign the first authoritative purchase number.');
+    const [counterAfterPayment] = await promisePool.execute('SELECT count FROM license_purchase_counter WHERE id = 1');
+    assert.equal(Number(counterAfterPayment[0].count), 1);
+
+    const replayWebhook = await postSignedWebhook(baseUrl, {
+      event: 'charge.success',
+      data: { reference: purchaseReference, status: 'success', amount: 2500, currency: 'GHS' }
+    }, config.paystackSecretKey);
+    assert.equal(replayWebhook.status, 200);
+    const [licensesAfterReplay] = await promisePool.execute(
+      'SELECT purchase_number FROM licenses WHERE beat_id = ?',
+      [purchaseBeatId]
+    );
+    assert.equal(licensesAfterReplay.length, 1, 'Replayed webhooks never issue duplicate licenses.');
+    assert.equal(Number(licensesAfterReplay[0].purchase_number), 1);
+    const [counterAfterReplay] = await promisePool.execute('SELECT count FROM license_purchase_counter WHERE id = 1');
+    assert.equal(Number(counterAfterReplay[0].count), 1, 'Replayed webhooks never consume a purchase number.');
   } finally {
     if (server?.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     loaded?.restore();
@@ -969,6 +1152,115 @@ test('PostgreSQL rejects unsupported payment and order providers', {
     }
   } finally {
     if (paymentId !== null) await pool.query('DELETE FROM payments WHERE id = $1', [paymentId]).catch(() => {});
+    await pool.end();
+  }
+});
+
+test('PostgreSQL 17+ enforces cart ownership and license purchase numbering constraints', {
+  skip: !testDatabaseUrl && 'Set TEST_DATABASE_URL to the dedicated local slaughterhouse_route_test database.'
+}, async () => {
+  assertSafeTestDatabase(testDatabaseUrl);
+  const pool = new Pool({ connectionString: testDatabaseUrl });
+  const suffix = crypto.randomUUID().replace(/-/g, '').slice(0, 12);
+  const userIds = [];
+  const cartIds = [];
+  const licenseIds = [];
+  const orderIds = [];
+  const beatIds = [];
+  try {
+    await applyMigrations(pool);
+    const versionResult = await pool.query(`SELECT current_setting('server_version_num')::int AS version`);
+    assert.ok(
+      Number(versionResult.rows[0].version) >= 170000,
+      'The migration suite must be exercised against PostgreSQL 17 or newer.'
+    );
+
+    const insertUser = async label => {
+      const { rows } = await pool.query(
+        `INSERT INTO users (name, email, phone, role, password_hash)
+         VALUES ($1, $2, $3, 'customer', 'integration-hash') RETURNING id`,
+        [`Cart Constraint ${label}`, `cart-constraint-${label}-${suffix}@example.test`, `+23320${suffix.slice(0, 7)}${label}`]
+      );
+      userIds.push(rows[0].id);
+      return rows[0].id;
+    };
+    const firstUserId = await insertUser('a');
+    const secondUserId = await insertUser('b');
+
+    const insertCart = async (userId, cartId) => {
+      const { rows } = await pool.query(
+        `INSERT INTO carts (user_id, cart_id, items_json) VALUES ($1, $2, '[]') RETURNING id`,
+        [userId, cartId]
+      );
+      cartIds.push(rows[0].id);
+      return rows[0].id;
+    };
+
+    // A user may only own one cart.
+    await insertCart(firstUserId, null);
+    await assert.rejects(
+      insertCart(firstUserId, null),
+      error => error.code === '23505',
+      'A second cart for the same user must be rejected.'
+    );
+
+    // A guest cart id may only identify one cart.
+    const guestCartId = `guest-${suffix}`;
+    await insertCart(null, guestCartId);
+    await assert.rejects(
+      insertCart(null, guestCartId),
+      error => error.code === '23505',
+      'A second cart for the same guest cart id must be rejected.'
+    );
+
+    // Every cart row must be either user-owned or guest-owned, not both or neither.
+    for (const [userId, cartId, label] of [[null, null, 'neither'], [secondUserId, `guest-${suffix}-both`, 'both']]) {
+      await assert.rejects(
+        pool.query(`INSERT INTO carts (user_id, cart_id, items_json) VALUES ($1, $2, '[]')`, [userId, cartId]),
+        error => error.code === '23514',
+        `Cart rows with ${label} user and guest scope must be rejected.`
+      );
+    }
+
+    // Issued licenses must never share an authoritative purchase number.
+    const insertOrder = async label => {
+      const { rows } = await pool.query(
+        `INSERT INTO orders (reference, customer_name, customer_email, amount, currency, items_json)
+         VALUES ($1, 'Integration Customer', 'integration-customer@example.test', 1, 'GHS', '[]') RETURNING id`,
+        [`UBB-CART-CONSTRAINT-${label}-${suffix}`]
+      );
+      orderIds.push(rows[0].id);
+      return rows[0].id;
+    };
+    const insertLicense = async (userId, label, purchaseNumber) => {
+      const beatResult = await pool.query(
+        `INSERT INTO beats (title, catalog_status) VALUES ($1, 'published') RETURNING id`,
+        [`Constraint beat ${label} ${suffix}`]
+      );
+      beatIds.push(beatResult.rows[0].id);
+      const orderId = await insertOrder(label);
+      const { rows } = await pool.query(
+        `INSERT INTO licenses (user_id, beat_id, order_id, license_type, rights_json, purchase_number)
+         VALUES ($1, $2, $3, 'basic', '{}', $4) RETURNING id`,
+        [userId, beatResult.rows[0].id, orderId, purchaseNumber]
+      );
+      licenseIds.push(rows[0].id);
+      return rows[0].id;
+    };
+    const purchaseNumber = 900000 + crypto.randomInt(1000, 9000);
+    await insertLicense(firstUserId, 'a', purchaseNumber);
+    const secondLicenseId = await insertLicense(secondUserId, 'b', purchaseNumber + 1);
+    await assert.rejects(
+      pool.query('UPDATE licenses SET purchase_number = $1 WHERE id = $2', [purchaseNumber, secondLicenseId]),
+      error => error.code === '23505',
+      'Two licenses must never share a purchase number.'
+    );
+  } finally {
+    if (licenseIds.length) await pool.query('DELETE FROM licenses WHERE id = ANY($1::int[])', [licenseIds]).catch(() => {});
+    if (orderIds.length) await pool.query('DELETE FROM orders WHERE id = ANY($1::int[])', [orderIds]).catch(() => {});
+    if (beatIds.length) await pool.query('DELETE FROM beats WHERE id = ANY($1::int[])', [beatIds]).catch(() => {});
+    if (cartIds.length) await pool.query('DELETE FROM carts WHERE id = ANY($1::int[])', [cartIds]).catch(() => {});
+    if (userIds.length) await pool.query('DELETE FROM users WHERE id = ANY($1::int[])', [userIds]).catch(() => {});
     await pool.end();
   }
 });
