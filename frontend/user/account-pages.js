@@ -51,7 +51,7 @@ if (accountPageRoot) {
     const status = document.getElementById('account-page-message');
     const csrfHeaders = method => window.ultbigboyCsrfHeaders?.(method) || (() => {
       if (['GET', 'HEAD', 'OPTIONS'].includes(String(method || 'GET').toUpperCase())) return {};
-      const value = localStorage.getItem('customerCsrfToken') || '';
+      const value = sessionStorage.getItem('customerCsrfToken') || '';
       return value ? { 'X-CSRF-Token': value } : {};
     })();
     const request = async (path, options = {}) => {
@@ -171,7 +171,7 @@ if (accountPageRoot) {
           content.innerHTML = '<div class="account-page-state"><h2>Sign in to view your account</h2><p>Your account pages are private and available after signing in.</p><button class="auth-primary-button" type="button" data-open-login>Sign in</button></div>';
           return;
         }
-        localStorage.setItem('customerCsrfToken', session.csrfToken);
+        sessionStorage.setItem('customerCsrfToken', session.csrfToken);
         sessionStorage.setItem('customerUser', JSON.stringify(session.user));
         const result = await request(page.endpoint);
         document.getElementById('account-page-customer').textContent = session.user.name ? `Signed in as ${session.user.name}` : '';
