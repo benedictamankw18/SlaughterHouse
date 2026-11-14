@@ -9,6 +9,7 @@ const { databaseError } = require('../services/error-messages');
 const validators = require('../services/input-validation');
 const { issueToken, consumeToken } = require('../services/account-tokens');
 const { recordAuditSafely } = require('../services/audit');
+const { mergeGuestCartOnLogin } = require('../services/cart');
 const { rateLimit } = require('../services/rate-limit');
 const { createEmailIdempotencyKey, queueEmailSafely } = require('../services/email/outbox');
 const {
@@ -210,7 +211,12 @@ router.post('/auth/login', loginRateLimit, loginAccountRateLimit, (request, resp
           ? sessions.deleteSession(previousToken).then(() => ({ token, csrfToken }))
           : { token, csrfToken };
       })
-      .then(({ token, csrfToken }) => {
+      .then(async ({ token, csrfToken }) => {
+        try {
+          await mergeGuestCartOnLogin(database, user.id, request.get('X-Cart-Id'));
+        } catch (mergeError) {
+          logger.warn('guest_cart_merge_failed', { code: mergeError?.code });
+        }
         response.setHeader('Set-Cookie', cookieOptions(config.sessionCookieNames.customer, token));
         response.json({ csrfToken, user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role } });
       })

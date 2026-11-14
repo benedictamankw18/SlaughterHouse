@@ -268,7 +268,7 @@ router.get('/customer/licenses', requireCustomer, async (request, response) => {
       `SELECT l.id, l.beat_id, b.title AS beat_title, b.genre, b.bpm, b.musical_key, b.cover_art,
               l.order_id, o.reference AS order_reference, l.license_type, l.rights_json,
               l.purchased_at, l.expires_at, (l.expires_at IS NULL OR l.expires_at > CURRENT_TIMESTAMP) AS license_active,
-              o.items_json, c.id AS certificate_record_id, c.certificate_id,
+              o.items_json, o.status AS order_status, c.id AS certificate_record_id, c.certificate_id,
               c.terms_version, c.status AS certificate_status, c.issued_at
        FROM licenses l
        JOIN beats b ON b.id = l.beat_id
@@ -289,7 +289,7 @@ router.get('/customer/licenses', requireCustomer, async (request, response) => {
         `SELECT l.id, l.beat_id, b.title AS beat_title, b.genre, b.bpm, b.musical_key, b.cover_art,
                 l.order_id, o.reference AS order_reference, l.license_type, l.rights_json,
                 l.purchased_at, l.expires_at, (l.expires_at IS NULL OR l.expires_at > CURRENT_TIMESTAMP) AS license_active,
-                o.items_json, c.id AS certificate_record_id, c.certificate_id,
+                o.items_json, o.status AS order_status, c.id AS certificate_record_id, c.certificate_id,
                 c.terms_version, c.status AS certificate_status, c.issued_at
          FROM licenses l
          JOIN beats b ON b.id = l.beat_id
@@ -317,6 +317,7 @@ router.get('/customer/licenses', requireCustomer, async (request, response) => {
         if (!downloadsByOrder.has(license.order_id)) {
           downloadsByOrder.set(license.order_id, getDownloadItems({
             reference: license.order_reference,
+            status: license.order_status,
             items_json: license.items_json
           }, config.apiPublicUrl, licenseRights));
         }

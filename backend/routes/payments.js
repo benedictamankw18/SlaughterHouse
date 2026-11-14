@@ -265,12 +265,28 @@ async function normalizePaidOrder(db, order, items, payment) {
   const licenseRights = await loadLicenseRights(db);
   for (const item of items.filter(candidate => candidate.type === 'beat')) {
     const rights = rightsFor(licenseRights, item.license);
-    await db.run(
+    const insertedLicense = await db.run(
       `INSERT INTO licenses (user_id, beat_id, order_id, license_type, rights_json, expires_at)
        SELECT ?, ?, ?, ?, ?, CURRENT_TIMESTAMP + INTERVAL '1 year'
        WHERE NOT EXISTS (SELECT 1 FROM licenses WHERE order_id = ? AND beat_id = ? AND license_type = ?)`,
       [customer.id, item.productId, order.id, item.license, JSON.stringify(rights), order.id, item.productId, item.license]
     );
+    if (Number(insertedLicense?.changes) > 0) {
+      // Assign the next purchase number while the payment transaction holds the
+      // counter row lock, so concurrent webhooks cannot reuse a number and
+      // replayed webhooks never consume one.
+      await db.run(
+        `INSERT INTO license_purchase_counter (id, count) VALUES (1, 1)
+         ON CONFLICT (id) DO UPDATE SET count = license_purchase_counter.count + 1, updated_at = CURRENT_TIMESTAMP`
+      );
+      const counter = await db.get('SELECT count FROM license_purchase_counter WHERE id = 1');
+      if (counter && counter.count !== undefined && counter.count !== null) {
+        await db.run(
+          'UPDATE licenses SET purchase_number = ? WHERE order_id = ? AND beat_id = ? AND license_type = ?',
+          [counter.count, order.id, item.productId, item.license]
+        );
+      }
+    }
     const license = await db.get(
       'SELECT id FROM licenses WHERE order_id = ? AND beat_id = ? AND license_type = ? FOR UPDATE',
       [order.id, item.productId, item.license]

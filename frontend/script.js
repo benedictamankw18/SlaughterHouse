@@ -649,7 +649,15 @@ if (loginButton) {
         window.location.href = '/admin/admin.html';
         return;
       }
-      const result = await fetch(`${API}/api/auth/login`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
+      const result = await fetch(`${API}/api/auth/login`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(cartId ? { 'X-Cart-Id': cartId } : {})
+        },
+        body: JSON.stringify(form)
+      });
       const data = await result.json();
       if (result.status === 403 && data.code === 'EMAIL_NOT_VERIFIED') {
         resendVerificationButton.hidden = false;
@@ -662,6 +670,8 @@ if (loginButton) {
       sessionStorage.removeItem('customerToken');
       sessionStorage.setItem('customerCsrfToken', data.csrfToken || '');
       window.dispatchEvent(new Event('ultbigboy:auth-changed'));
+      await loadCartFromServer();
+      updateCart();
       refreshAuthPanel();
       setAuthView('account');
       loadAccountHistory('purchases');
@@ -1040,7 +1050,6 @@ let usdToEurRate = null;
 // GHS per unit of each foreign currency, used for USD -> GBP/EUR display conversion.
 let foreignRates = {};
 
-const pendingCartPaymentsKey = 'ultbigboyPendingCartPayments';
 const currencyStorageKey = 'ultbigboyCurrency';
 const cartStorageKey = 'ultbigboyCartId';
 let cart = [];
@@ -1105,37 +1114,6 @@ async function clearCartOnServer() {
   } catch {}
 }
 
-async function registerPendingPaymentOnServer(reference, items) {
-  try {
-    const headers = { 'Content-Type': 'application/json' };
-    if (cartId) headers['X-Cart-Id'] = cartId;
-    await fetch(`${API}/api/cart/pending-payments/${encodeURIComponent(reference)}`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ items })
-    });
-  } catch {}
-}
-
-async function removePendingPaymentOnServer(reference) {
-  try {
-    const headers = {};
-    if (cartId) headers['X-Cart-Id'] = cartId;
-    await fetch(`${API}/api/cart/pending-payments/${encodeURIComponent(reference)}`, { method: 'DELETE', headers });
-  } catch {}
-}
-
-async function incrementLicensePurchaseCounter() {
-  try {
-    const response = await fetch(`${API}/api/cart/license-purchase-counter/increment`, { method: 'POST' });
-    if (response.ok) {
-      const data = await response.json();
-      return data.count || 0;
-    }
-  } catch {}
-  return 0;
-}
-
 async function loadCartAndInit() {
   await loadCartFromServer();
   updateCart();
@@ -1157,14 +1135,6 @@ if (currencySelect) {
     const selectedOption = currencySelect.options[currencySelect.selectedIndex];
     flagIcon.src = selectedOption.dataset.flag;
   }
-}
-
-async function createLicenseCode() {
-  const purchaseCount = await incrementLicensePurchaseCounter() || 1;
-  const purchaseDate = new Date();
-  const month = String(purchaseDate.getMonth() + 1).padStart(2, '0');
-  const year = String(purchaseDate.getFullYear()).slice(-3);
-  return `AAD-99-${month}-${year}-${purchaseCount}`;
 }
 
 const currencySymbols = {
@@ -1930,7 +1900,6 @@ function openCheckoutForm() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not start payment.');
       if (!data.reference || !data.authorizationUrl) throw new Error('Payment could not be started because the response was incomplete.');
-      await registerPendingPaymentOnServer(data.reference, ghsItems.map(cartItemKey));
       window.location.href = data.authorizationUrl;
     } catch (error) {
       message.textContent = error.message;
@@ -1962,16 +1931,16 @@ document.querySelectorAll('.beat-cart-button').forEach(button => {
     addToCart(item);
     const purchase = { ...item, purchasedAt: new Date() };
     if (item.license.toLowerCase() === 'basic') {
-      window.basicLicensePurchase = { ...purchase, licenseCode: await createLicenseCode() };
+      window.basicLicensePurchase = purchase;
     }
     if (item.license.toLowerCase() === 'premium') {
-      window.premiumLicensePurchase = { ...purchase, licenseCode: await createLicenseCode() };
+      window.premiumLicensePurchase = purchase;
     }
     if (item.license.toLowerCase() === 'unlimited') {
       window.unlimitedLicensePurchase = purchase;
     }
     if (item.license.toLowerCase() === 'exclusive') {
-      window.exclusiveLicensePurchase = { ...purchase, licenseCode: await createLicenseCode() };
+      window.exclusiveLicensePurchase = purchase;
     }
     showCartToast('Item added.');
   });
