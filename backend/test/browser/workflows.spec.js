@@ -358,7 +358,7 @@ async function seedCustomerSession(page) {
     httpOnly: true,
     sameSite: 'Lax'
   }]);
-  await page.addInitScript(() => localStorage.setItem('customerCsrfToken', 'test-customer-csrf'));
+  await page.addInitScript(() => sessionStorage.setItem('customerCsrfToken', 'test-customer-csrf'));
 }
 
 async function seedAdminSession(page) {
@@ -369,7 +369,7 @@ async function seedAdminSession(page) {
     httpOnly: true,
     sameSite: 'Lax'
   }]);
-  await page.addInitScript(() => localStorage.setItem('adminCsrfToken', 'test-admin-csrf'));
+  await page.addInitScript(() => sessionStorage.setItem('adminCsrfToken', 'test-admin-csrf'));
 }
 
 test('signup submits the entered profile and enters email verification', async ({ page }) => {
@@ -412,7 +412,7 @@ test('login keeps the session in a cookie and opens the account view', async ({ 
   await page.getByRole('button', { name: 'Sign in' }).click();
 
   await expect(page.getByRole('heading', { name: customer.name })).toBeVisible();
-  await expect.poll(() => page.evaluate(() => localStorage.getItem('customerCsrfToken'))).toBe('test-customer-csrf');
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem('customerCsrfToken'))).toBe('test-customer-csrf');
   expect(await page.evaluate(() => sessionStorage.getItem('customerToken'))).toBeNull();
   expect(await page.evaluate(() => document.cookie)).not.toContain('customer_session');
 });

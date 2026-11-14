@@ -4,7 +4,7 @@
   if (!message) return;
   const certificateFetch = (url, options = {}) => {
     const method = String(options.method || 'GET').toUpperCase();
-    const csrfToken = localStorage.getItem('customerCsrfToken') || '';
+    const csrfToken = sessionStorage.getItem('customerCsrfToken') || '';
     const headers = new Headers(options.headers || {});
     if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && csrfToken && !headers.has('X-CSRF-Token')) {
       headers.set('X-CSRF-Token', csrfToken);
