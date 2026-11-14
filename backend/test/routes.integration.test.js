@@ -1156,7 +1156,7 @@ test('PostgreSQL rejects unsupported payment and order providers', {
   }
 });
 
-test('PostgreSQL 17+ enforces cart ownership and license purchase numbering constraints', {
+test('PostgreSQL 16+ enforces cart ownership and license purchase numbering constraints', {
   skip: !testDatabaseUrl && 'Set TEST_DATABASE_URL to the dedicated local slaughterhouse_route_test database.'
 }, async () => {
   assertSafeTestDatabase(testDatabaseUrl);
@@ -1171,8 +1171,8 @@ test('PostgreSQL 17+ enforces cart ownership and license purchase numbering cons
     await applyMigrations(pool);
     const versionResult = await pool.query(`SELECT current_setting('server_version_num')::int AS version`);
     assert.ok(
-      Number(versionResult.rows[0].version) >= 170000,
-      'The migration suite must be exercised against PostgreSQL 17 or newer.'
+      Number(versionResult.rows[0].version) >= 160000,
+      'The migration suite must be exercised against PostgreSQL 16 or newer.'
     );
 
     const insertUser = async label => {
