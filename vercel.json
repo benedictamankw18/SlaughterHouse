@@ -85,7 +85,7 @@
     {
       "source": "/payment-success.html",
       "headers": [
-        { "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-DmbzTK4TxvPdo8MNNaWYaeUs5XWrpzkm34J/u1LOsRo='" }
+        { "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-j9RfTalCwJ33zDRuhiZh8UEBD354oT+msWNijZikB2U='" }
       ]
     },
     {
@@ -174,7 +174,7 @@
     },
     {
       "source": "/user/payment-success.html",
-      "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-DmbzTK4TxvPdo8MNNaWYaeUs5XWrpzkm34J/u1LOsRo='" }]
+      "headers": [{ "key": "Content-Security-Policy", "value": "script-src 'self' 'sha256-j9RfTalCwJ33zDRuhiZh8UEBD354oT+msWNijZikB2U='" }]
     },
     {
       "source": "/user/certificate.html",
