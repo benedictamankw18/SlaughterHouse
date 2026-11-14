@@ -58,7 +58,12 @@ router.get('/health', (request, response) => response.json({ status: 'ok' }));
 router.get('/exchange-rate', async (request, response) => {
   response.setHeader('Cache-Control', 'no-store');
   try {
-    const exchangeRate = await getUsdGhsRate(database);
+    let exchangeRate = null;
+    try {
+      exchangeRate = await getUsdGhsRate(database);
+    } catch {
+      // GHS rate missing or invalid — return what we have; frontend handles null gracefully.
+    }
     const ngnRate = await new Promise((resolve, reject) => {
       database.get(
         'SELECT setting_value FROM settings WHERE setting_key = ?',
@@ -81,11 +86,11 @@ router.get('/exchange-rate', async (request, response) => {
       );
     });
     const result = {
-      usdToGhsRate: exchangeRate.rate,
+      usdToGhsRate: exchangeRate?.rate ?? null,
       usdToNgnRate: ngnRate,
       usdToGbpRate: gbpRate,
       usdToEurRate: eurRate,
-      updatedAt: exchangeRate.updatedAt
+      updatedAt: exchangeRate?.updatedAt ?? null
     };
 
     // Suggested foreign currency rates (GHS per unit of currency) for catalog

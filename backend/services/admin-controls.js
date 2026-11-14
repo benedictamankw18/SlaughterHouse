@@ -15,7 +15,8 @@ const BUSINESS_SETTINGS = Object.freeze({
   usd_to_ghs_rate: 'USD to GHS exchange rate',
   usd_to_ngn_rate: 'USD to NGN exchange rate',
   usd_to_gbp_rate: 'USD to GBP exchange rate',
-  usd_to_eur_rate: 'USD to EUR exchange rate'
+  usd_to_eur_rate: 'USD to EUR exchange rate',
+  multi_currency_charge_enabled: 'Enable multi-currency charging (USD, NGN, GBP, EUR)'
 });
 
 function validateSettingUpdates(updates) {
@@ -41,6 +42,9 @@ function validateSettingUpdates(updates) {
     if (key === 'usd_to_eur_rate' && (Number(value) <= 0 || Number(value) >= 1000000)) {
       return { error: 'USD to EUR exchange rate must be greater than zero and less than 1000000.' };
     }
+    if (key === 'multi_currency_charge_enabled' && value !== '0' && value !== '1') {
+      return { error: 'Enable multi-currency charging must be 0 (off) or 1 (on).' };
+    }
     if (key === 'booking_ep_album_discount_percent' && Number(value) >= 100) {
       return { error: 'EP / Album discount must be less than 100%.' };
     }
@@ -51,7 +55,10 @@ function validateSettingUpdates(updates) {
     }
   }
   return {
-    value: entries.map(([key, value]) => [key, Number(value).toFixed(key === 'usd_to_ghs_rate' || key === 'usd_to_ngn_rate' || key === 'usd_to_gbp_rate' || key === 'usd_to_eur_rate' ? 6 : 2)])
+    value: entries.map(([key, value]) => {
+      if (key === 'multi_currency_charge_enabled') return [key, value];
+      return [key, Number(value).toFixed(key === 'usd_to_ghs_rate' || key === 'usd_to_ngn_rate' || key === 'usd_to_gbp_rate' || key === 'usd_to_eur_rate' ? 6 : 2)];
+    })
   };
 }
 

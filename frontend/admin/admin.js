@@ -9,7 +9,7 @@ let reportRequestId = 0;
 const activeAdminSectionKey = 'adminActiveSection';
 const adminCsrfHeaders = method => {
   if (['GET', 'HEAD', 'OPTIONS'].includes(String(method || 'GET').toUpperCase())) return {};
-  const token = localStorage.getItem('adminCsrfToken') || '';
+  const token = sessionStorage.getItem('adminCsrfToken') || '';
   return token ? { 'X-CSRF-Token': token } : {};
 };
 
@@ -527,9 +527,9 @@ function renderReport(report) {
 
 function renderBusinessSettings(settings, canEdit, suggestedUsdToGhsRate, suggestedUsdToNgnRate, suggestedUsdToGbpRate, suggestedUsdToEurRate) {
   const form = $('#business-settings-form');
-  const rateEditEnabled = localStorage.getItem('ultbigboyRateEditEnabled') !== 'false';
   const byKey = new Map(settings.map(setting => [setting.key, setting]));
-  const editable = canEdit && rateEditEnabled;
+
+  const isRateEditEnabled = key => localStorage.getItem(key) === 'true';
 
   const sections = [
     {
@@ -562,7 +562,7 @@ function renderBusinessSettings(settings, canEdit, suggestedUsdToGhsRate, sugges
     },
     {
       heading: 'Exchange rates',
-      keys: ['usd_to_ghs_rate', 'usd_to_ngn_rate', 'usd_to_gbp_rate', 'usd_to_eur_rate']
+      keys: ['usd_to_ghs_rate', 'usd_to_ngn_rate', 'usd_to_gbp_rate', 'usd_to_eur_rate', 'multi_currency_charge_enabled']
     }
   ];
 
@@ -571,9 +571,15 @@ function renderBusinessSettings(settings, canEdit, suggestedUsdToGhsRate, sugges
     const isNgnRate = setting.key === 'usd_to_ngn_rate';
     const isGbpRate = setting.key === 'usd_to_gbp_rate';
     const isEurRate = setting.key === 'usd_to_eur_rate';
+    const isMultiCurrency = setting.key === 'multi_currency_charge_enabled';
     const exchangeRate = isGhsRate || isNgnRate || isGbpRate || isEurRate;
     const updatedAt = setting.updatedAt ? new Date(setting.updatedAt).toLocaleString() : null;
+    const chargeEnabled = setting.value === '1' || setting.value === true || setting.value === 'true';
     let rateStatus = '';
+    if (isMultiCurrency) {
+      const checked = chargeEnabled ? 'checked' : '';
+      return `<label class="toggle-setting"><input type="checkbox" name="${escapeHtml(setting.key)}" ${checked ? 'checked' : ''} ${canEdit ? '' : 'disabled'}> ${escapeHtml(setting.label)} <small style="color:rgba(255,255,255,.55)">${chargeEnabled ? 'Enabled' : 'Disabled'}</small></label>`;
+    }
     if (exchangeRate) {
       const suggested = isGhsRate ? suggestedUsdToGhsRate : isNgnRate ? suggestedUsdToNgnRate : isGbpRate ? suggestedUsdToGbpRate : suggestedUsdToEurRate;
       const unit = isGhsRate ? 'GHS' : isNgnRate ? 'NGN' : isGbpRate ? 'GBP' : 'EUR';
@@ -586,12 +592,14 @@ function renderBusinessSettings(settings, canEdit, suggestedUsdToGhsRate, sugges
       const useSuggestedBtn = suggested != null && canEdit
         ? `<button type="button" class="rate-use-suggested" data-rate="${setting.key}" data-suggested="${escapeHtml(suggested.toFixed(6))}" title="Use the suggested online ${unit} rate in the field above">Use suggested</button>`
         : '';
+      const rateKey = `ultbigboyRateEditEnabled:${setting.key}`;
+      const rateEditEnabled = canEdit && isRateEditEnabled(rateKey);
       const toggle = canEdit
-        ? `<label class="rate-edit-toggle"><input type="checkbox" name="rateEditEnabled" ${rateEditEnabled ? 'checked' : ''}><span class="toggle-slider"></span><span>Allow editing rate</span></label>`
+        ? `<label class="rate-edit-toggle"><input type="checkbox" name="rateEditEnabled" data-rate="${setting.key}" ${rateEditEnabled ? 'checked' : ''}><span class="toggle-slider"></span><span>Allow editing rate</span></label>`
         : '';
       rateStatus = `${updatedAt ? `<small>Configured ${unit} rate updated ${escapeHtml(updatedAt)}. ${setting.fresh ? 'Current.' : 'STALE \u2014 beat checkout is disabled until refreshed.'} Rates expire after 24 hours.</small>` : `<small>No ${unit} exchange rate is configured. Beat checkout is unavailable until one is saved.</small>`} ${suggestedHtml} ${refreshBtn} ${useSuggestedBtn} ${toggle}`;
     }
-    const inputDisabled = exchangeRate && !editable;
+    const inputDisabled = exchangeRate && !(canEdit && isRateEditEnabled(`ultbigboyRateEditEnabled:${setting.key}`));
     return `<label>${escapeHtml(setting.label)}<input name="${escapeHtml(setting.key)}" type="number" min="${exchangeRate ? '0.000001' : '0'}" max="${exchangeRate ? '999999.999999' : '100000000'}" step="${exchangeRate ? '0.000001' : '0.01'}" value="${escapeHtml(setting.value)}" ${canEdit ? 'required' : 'disabled'}${inputDisabled ? ' disabled' : ''}>${rateStatus}</label>`;
   };
 
@@ -801,7 +809,7 @@ function activateAdminSection(sectionName, persist = true) {
   if (!selectedTab) return;
   document.querySelectorAll('.admin-tab').forEach(tab => tab.classList.toggle('active', tab === selectedTab));
   document.querySelectorAll('.admin-section').forEach(section => section.classList.toggle('active', section.dataset.adminSection === selectedTab.dataset.section));
-  if (persist) sessionStorage.setItem(activeAdminSectionKey, selectedTab.dataset.section);
+  if (persist) localStorage.setItem(activeAdminSectionKey, selectedTab.dataset.section);
 }
 
 function renderMerchandiseManagement(merchandise = dashboardData.merchandise || []) {
@@ -1065,7 +1073,7 @@ async function loadDashboard() {
   document.querySelector('[data-admin-section="settings"]').hidden = false;
   document.querySelector('[data-section="staff"]').hidden = dashboardData.role !== 'super_admin';
   document.querySelector('[data-admin-section="staff"]').hidden = dashboardData.role !== 'super_admin';
-  activateAdminSection(sessionStorage.getItem(activeAdminSectionKey) || 'overview', false);
+  activateAdminSection(localStorage.getItem(activeAdminSectionKey) || 'overview', false);
   renderAnalytics(dashboardData.analytics || {});
   filterContent();
   filterSales();
@@ -1097,7 +1105,7 @@ function showDashboard() {
   loadDashboard().catch(error => {
     if (error.code === 'ADMIN_MFA_REQUIRED') {
       sessionStorage.removeItem('adminToken');
-      localStorage.removeItem('adminCsrfToken');
+      sessionStorage.removeItem('adminCsrfToken');
       $('#admin-dashboard').hidden = true;
       $('#admin-login').hidden = false;
       message('admin-login-message', 'Administrator MFA setup is required. Sign in again to enroll.', true);
@@ -1110,7 +1118,7 @@ function showDashboard() {
 async function restoreAdminSession() {
   try {
     const session = await api('/api/admin/session');
-    localStorage.setItem('adminCsrfToken', session.csrfToken);
+    sessionStorage.setItem('adminCsrfToken', session.csrfToken);
     showDashboard();
   } catch (error) {
     if (![401, 403].includes(error.status)) message('admin-login-message', error.message, true);
@@ -1122,7 +1130,7 @@ restoreAdminSession();
 
 function showAdminMfaChallenge(data) {
   sessionStorage.removeItem('adminToken');
-  localStorage.removeItem('adminCsrfToken');
+  sessionStorage.removeItem('adminCsrfToken');
   adminMfaChallengeToken = data.challengeToken;
   adminMfaEnrollment = Boolean(data.mfaEnrollmentRequired);
   $('#admin-login').hidden = true;
@@ -1149,7 +1157,7 @@ function showAdminMfaChallenge(data) {
 
 function saveAdminSession(data) {
   sessionStorage.removeItem('adminToken');
-  localStorage.setItem('adminCsrfToken', data.csrfToken || '');
+  sessionStorage.setItem('adminCsrfToken', data.csrfToken || '');
   adminMfaChallengeToken = null;
   $('#admin-mfa-panel').hidden = true;
   showDashboard();
@@ -1219,8 +1227,8 @@ $('#admin-logout').addEventListener('click', async event => {
     console.warn('Admin session could not be invalidated remotely:', error.message);
   }).finally(() => {
     sessionStorage.removeItem('adminToken');
-    localStorage.removeItem('adminCsrfToken');
-    sessionStorage.removeItem(activeAdminSectionKey);
+    sessionStorage.removeItem('adminCsrfToken');
+    localStorage.removeItem(activeAdminSectionKey);
     stopBusy();
     location.href = '/index.html';
   });
@@ -1297,7 +1305,10 @@ $('#audit-filter').addEventListener('submit', event => {
 $('#business-settings-form').addEventListener('submit', async event => {
   event.preventDefault();
   const form = event.currentTarget;
-  const settings = Object.fromEntries([...form.elements].filter(element => element.name && element.type === 'number').map(element => [element.name, element.value]));
+  const settings = Object.fromEntries([...form.elements].filter(element => element.name && !element.name.startsWith('rateEditEnabled')).map(element => {
+    if (element.type === 'checkbox') return [element.name, element.checked ? '1' : '0'];
+    return [element.name, element.value];
+  }));
   if (!window.confirm('Save these business settings? Price and exchange-rate changes affect future checkouts and requests.')) return;
   const stopBusy = startButtonBusy(form.querySelector('button[type="submit"]'), 'Saving…');
   if (!stopBusy) return;
@@ -1313,17 +1324,18 @@ $('#business-settings-form').addEventListener('submit', async event => {
 });
 
 $('#business-settings-form').addEventListener('click', async event => {
-  const button = event.target.closest('button');
-  if (!button) return;
-
-  // Allow editing rate toggle
+  // Allow editing rate toggle (checkbox, not a button)
   const toggle = event.target.closest('.rate-edit-toggle');
   if (toggle) {
     const checkbox = toggle.querySelector('input[type="checkbox"]');
-    localStorage.setItem('ultbigboyRateEditEnabled', checkbox.checked);
+    const rateKey = checkbox.getAttribute('data-rate');
+    localStorage.setItem(`ultbigboyRateEditEnabled:${rateKey}`, checkbox.checked);
     await loadBusinessSettings();
     return;
   }
+
+  const button = event.target.closest('button');
+  if (!button) return;
 
   // Refresh rate from online service
   if (button.classList.contains('rate-refresh-btn')) {

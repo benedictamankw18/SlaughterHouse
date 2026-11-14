@@ -835,7 +835,7 @@ router.get('/payments/verify/:reference', paymentVerificationRateLimit, async (r
           status: 'success',
           reference: lockedOrder.reference,
           booking: bookingItem ? { service: bookingItem.name, feeGhs: bookingItem.feeGhs } : null,
-          downloads: lockedOrder.status === 'paid' ? getDownloadItems(lockedOrder, apiPublicUrl, licenseRights) : []
+          downloads: getDownloadItems(lockedOrder, apiPublicUrl, licenseRights)
         }
       });
       if (lockedOrder.status === 'paid' || lockedOrder.status === 'partially_refunded') return success();
