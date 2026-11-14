@@ -34,6 +34,55 @@ async function mockApi(page, options = {}) {
     availableUntil: null,
     sessionMinutes: 140
   };
+  let fxRates = {
+    settings: { markupPercent: 2, chargeEnabled: false },
+    rates: [
+      {
+        currency: 'USD',
+        provider: 'flutterwave',
+        decimals: 2,
+        configured: true,
+        midRate: 12.5,
+        approvedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        stale: false,
+        suggestion: { rate: 12.4, source: 'open.er-api.com', at: new Date().toISOString() }
+      },
+      {
+        currency: 'NGN',
+        provider: 'flutterwave',
+        decimals: 0,
+        configured: false,
+        midRate: null,
+        approvedAt: null,
+        updatedAt: null,
+        stale: true,
+        suggestion: { rate: 0.008, source: 'open.er-api.com', at: new Date().toISOString() }
+      },
+      {
+        currency: 'GBP',
+        provider: 'flutterwave',
+        decimals: 2,
+        configured: false,
+        midRate: null,
+        approvedAt: null,
+        updatedAt: null,
+        stale: true,
+        suggestion: { rate: 15, source: 'open.er-api.com', at: new Date().toISOString() }
+      },
+      {
+        currency: 'EUR',
+        provider: 'flutterwave',
+        decimals: 2,
+        configured: false,
+        midRate: null,
+        approvedAt: null,
+        updatedAt: null,
+        stale: true,
+        suggestion: { rate: 13.33, source: 'open.er-api.com', at: new Date().toISOString() }
+      }
+    ]
+  };
   const reconciliationOrders = [
     {
       id: 3,
@@ -247,22 +296,51 @@ async function mockApi(page, options = {}) {
         settings: bookingSettings,
         canEdit: (options.adminRole || 'admin') === 'super_admin'
       };
+    } else if (path === '/api/admin/fx-rates') {
+      if (method === 'PUT') {
+        for (const [currency, value] of Object.entries(data?.rates || {})) {
+          const rate = fxRates.rates.find(item => item.currency === currency);
+          if (rate) {
+            rate.midRate = Number(value);
+            rate.configured = true;
+            rate.approvedAt = new Date().toISOString();
+            rate.updatedAt = rate.approvedAt;
+            rate.stale = false;
+          }
+        }
+        if (data?.settings) fxRates.settings = { ...fxRates.settings, ...data.settings };
+      }
+      body = {
+        ...fxRates,
+        supportedCurrencies: ['GHS', 'USD', 'NGN', 'GBP', 'EUR'],
+        editableCurrencies: ['USD', 'NGN', 'GBP', 'EUR'],
+        canEdit: (options.adminRole || 'admin') === 'super_admin'
+      };
+    } else if (path === '/api/admin/fx-rates/suggestions/refresh' && method === 'POST') {
+      for (const rate of fxRates.rates) {
+        rate.suggestion = {
+          rate: rate.suggestion?.rate ?? 12,
+          source: 'open.er-api.com',
+          at: new Date().toISOString()
+        };
+      }
+      body = {
+        persisted: true,
+        approvedRatesUnchanged: true,
+        source: 'open.er-api.com',
+        fetchedAt: new Date().toISOString(),
+        base: 'GHS per unit of currency',
+        rates: Object.fromEntries(fxRates.rates.map(rate => [rate.currency, rate.suggestion.rate]))
+      };
     } else if (path === '/api/admin/settings') {
       body = {
         settings: options.adminPricing ? [
           { key: 'booking_fee_mixtape_ghs', label: 'Mixtape booking fee (GHS)', value: '700' },
           { key: 'booking_ep_album_discount_percent', label: 'EP / Album discount (%)', value: '20' },
           { key: 'beat_request_license_basic_ghs', label: 'Basic custom beat license (GHS)', value: '500' },
-          { key: 'beat_default_basic_usd', label: 'Default basic beat license (USD)', value: '25' },
-          {
-            key: 'usd_to_ghs_rate',
-            label: 'USD to GHS exchange rate',
-            value: '12.345678',
-            updatedAt: new Date().toISOString(),
-            fresh: true
-          }
+          { key: 'beat_default_basic_usd', label: 'Default basic beat license (USD)', value: '25' }
         ] : [],
-        canEdit: true
+        canEdit: (options.adminRole || 'admin') === 'super_admin'
       };
     } else if (path === '/api/admin/staff') {
       body = { staff: options.adminFilters ? [
@@ -951,8 +1029,8 @@ test('admin resolves paid booking cases by assigning replacement sessions or req
     .toEqual({ action: 'request_refund' });
 });
 
-test('admin displays saved GHS purchase amounts and exchange-rate freshness', async ({ page }) => {
-  await mockApi(page, { adminLogin: true, adminPricing: true });
+test('admin displays saved GHS purchase amounts and dedicated FX approval panel', async ({ page }) => {
+  await mockApi(page, { adminLogin: true, adminRole: 'super_admin', adminPricing: true });
   await seedAdminSession(page);
   await page.goto('/admin/admin.html');
   await expect(page.locator('#admin-dashboard')).toBeVisible();
@@ -960,12 +1038,61 @@ test('admin displays saved GHS purchase amounts and exchange-rate freshness', as
   await expect(page.locator('#artists-list')).toContainText('GHS 154.32');
   await expect(page.locator('#artists-list')).toContainText('USD/GHS 12.345678');
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await expect(page.locator('#business-settings-form')).toContainText('Rates expire after 24 hours.');
-  await expect(page.locator('#business-settings-form input[name="usd_to_ghs_rate"]')).toHaveValue('12.345678');
+
+  // FX values live only in the dedicated panel, never in generic business settings.
+  await expect(page.locator('#business-settings-form [name="usd_to_ghs_rate"]')).toHaveCount(0);
+  await expect(page.locator('#business-settings-form [name="multi_currency_charge_enabled"]')).toHaveCount(0);
   await expect(page.locator('#business-settings-form input[name="booking_fee_mixtape_ghs"]')).toHaveValue('700');
   await expect(page.locator('#business-settings-form input[name="booking_ep_album_discount_percent"]')).toHaveValue('20');
   await expect(page.locator('#business-settings-form input[name="beat_request_license_basic_ghs"]')).toHaveValue('500');
   await expect(page.locator('#business-settings-form input[name="beat_default_basic_usd"]')).toHaveValue('25');
+
+  const fxForm = page.locator('#fx-rates-form');
+  await expect(fxForm).toContainText('Approved rates and suggestions');
+  await expect(fxForm.locator('input[data-currency="USD"]')).toHaveValue('12.5');
+  await expect(fxForm).toContainText('Approved: 12.50000000 GHS per 1 USD');
+  await expect(fxForm).toContainText('No approved NGN rate.');
+  await expect(fxForm).toContainText('Suggested: 0.00800000 GHS per 1 NGN');
+});
+
+test('admin uses FX suggestions without submitting and approves only changed rates', async ({ page }) => {
+  const calls = await mockApi(page, { adminLogin: true, adminRole: 'super_admin', adminPricing: true });
+  await seedAdminSession(page);
+  await page.goto('/admin/admin.html');
+  await expect(page.locator('#admin-dashboard')).toBeVisible();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+
+  const fxForm = page.locator('#fx-rates-form');
+  const ngnInput = fxForm.locator('input[data-currency="NGN"]');
+
+  await fxForm.getByRole('button', { name: 'Refresh suggestions' }).click();
+  await expect.poll(() => calls.some(call =>
+    call.path === '/api/admin/fx-rates/suggestions/refresh' && call.method === 'POST'
+  )).toBe(true);
+  await expect(page.locator('#fx-rates-message')).toContainText('Approved rates were not changed.');
+
+  // Applying a suggestion only fills the input; it must not send an approval.
+  await fxForm.locator('button[data-currency="NGN"]').click();
+  await expect(ngnInput).toHaveValue('0.008');
+  expect(calls.some(call => call.path === '/api/admin/fx-rates' && call.method === 'PUT')).toBe(false);
+
+  await ngnInput.fill('0.009');
+  page.once('dialog', dialog => dialog.accept());
+  await fxForm.getByRole('button', { name: 'Save and approve' }).click();
+  await expect.poll(() => calls.some(call => call.path === '/api/admin/fx-rates' && call.method === 'PUT')).toBe(true);
+  const approval = calls.find(call => call.path === '/api/admin/fx-rates' && call.method === 'PUT');
+  expect(approval.data).toEqual({ rates: { NGN: '0.009' }, settings: {} });
+
+  // Business settings never carry FX keys, even when other prices are saved.
+  const settingsForm = page.locator('#business-settings-form');
+  await settingsForm.locator('input[name="booking_fee_mixtape_ghs"]').fill('710');
+  page.once('dialog', dialog => dialog.accept());
+  await settingsForm.getByRole('button', { name: 'Save business settings' }).click();
+  await expect.poll(() => calls.some(call => call.path === '/api/admin/settings' && call.method === 'PUT')).toBe(true);
+  const businessSettings = calls.find(call => call.path === '/api/admin/settings' && call.method === 'PUT');
+  expect(businessSettings.data.settings).not.toHaveProperty('usd_to_ghs_rate');
+  expect(businessSettings.data.settings).not.toHaveProperty('multi_currency_charge_enabled');
+  expect(businessSettings.data.settings).toMatchObject({ booking_fee_mixtape_ghs: '710' });
 });
 
 test('admin switches analytics granularity, metric, and chart type', async ({ page }) => {

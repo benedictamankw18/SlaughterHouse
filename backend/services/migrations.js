@@ -797,6 +797,17 @@ const migrations = [
       )`,
       `INSERT IGNORE INTO license_purchase_counter (id, count) VALUES (1, 0)`
     ]
+  },
+  {
+    // A currency can receive a suggested rate before an administrator approves
+    // one. Relax the NOT NULL constraint so suggestion-only rows can be stored
+    // without creating an approved rate. Existing approved values are kept.
+    // Version 45 leaves 44 free for the carts/licenses migration already
+    // reserved on the provider-validation branch.
+    version: 45,
+    statements: [
+      'ALTER TABLE fx_rates ALTER COLUMN ghs_per_unit DROP NOT NULL'
+    ]
   }
 ];
 

@@ -353,6 +353,18 @@ test('migration 39 enforces unique provider transaction ids', () => {
   ]);
 });
 
+test('migration 45 relaxes approved FX rates so suggestions can exist without approval', () => {
+  const migration = migrations.find(candidate => candidate.version === 45);
+  assert.ok(migration, 'migration 45 must exist');
+  assert.deepEqual(migration.statements, [
+    'ALTER TABLE fx_rates ALTER COLUMN ghs_per_unit DROP NOT NULL'
+  ]);
+  assert.equal(
+    preparePostgresStatement(migration.statements[0]).query,
+    'ALTER TABLE fx_rates ALTER COLUMN ghs_per_unit DROP NOT NULL'
+  );
+});
+
 test('applyMigrations runs every statement once and records each version', async () => {
   const pool = fakePool();
   await applyMigrations(pool);

@@ -19,7 +19,6 @@ const { LICENSE_TYPES, loadLicenseRights, loadLicenseDefinitions, saveLicenseRig
 const { FULFILLMENT_STATUSES, updateFulfillmentStatus } = require('../services/fulfillment');
 const { normalizePaymentProvider } = require('../services/payment-providers');
 const { BUSINESS_SETTINGS, REPORT_GRANULARITIES, validateDateRange, validateSettingUpdates, validateReportGranularity, buildReportPeriods } = require('../services/admin-controls');
-const { isUsdGhsRateFresh } = require('../services/pricing');
 const {
   SUPPORTED_CURRENCIES,
   FOREIGN_CURRENCIES,
@@ -29,7 +28,8 @@ const {
   listFxRates,
   validateApprovedRate,
   validateMarkupPercent,
-  fetchSuggestedRates
+  fetchSuggestedRates,
+  persistSuggestedRates
 } = require('../services/fx');
 const logger = require('../services/logger');
 const monitoring = require('../services/monitoring');
@@ -296,29 +296,6 @@ router.get('/admin/settings', sessions.requireAdmin, async (request, response) =
       `SELECT setting_key, setting_value, updated_at FROM settings WHERE setting_key IN (${keys.map(() => '?').join(', ')})`,
       keys
     );
-    const values = Object.fromEntries(rows.map(row => [row.setting_key, row.setting_value]));
-    let suggestedUsdToGhsRate = null;
-    let suggestedUsdToNgnRate = null;
-    let suggestedUsdToGbpRate = null;
-    let suggestedUsdToEurRate = null;
-    try {
-      const suggestions = await fetchSuggestedRates();
-      if (suggestions?.rates?.USD) {
-        suggestedUsdToGhsRate = Number(suggestions.rates.USD);
-      }
-      if (suggestedUsdToGhsRate && suggestions?.rates?.NGN) {
-        suggestedUsdToNgnRate = suggestedUsdToGhsRate / Number(suggestions.rates.NGN);
-      }
-      if (suggestedUsdToGhsRate && suggestions?.rates?.GBP) {
-        suggestedUsdToGbpRate = suggestedUsdToGhsRate / Number(suggestions.rates.GBP);
-      }
-      if (suggestedUsdToGhsRate && suggestions?.rates?.EUR) {
-        suggestedUsdToEurRate = suggestedUsdToGhsRate / Number(suggestions.rates.EUR);
-      }
-    } catch {
-      // Suggested rate unavailable — continue without it.
-    }
-
     response.json({
       settings: keys.map(key => {
         const row = rows.find(candidate => candidate.setting_key === key);
@@ -326,204 +303,95 @@ router.get('/admin/settings', sessions.requireAdmin, async (request, response) =
           key,
           label: BUSINESS_SETTINGS[key],
           value: row?.setting_value ?? '',
-          updatedAt: row?.updated_at ?? null,
-          fresh: key === 'usd_to_ghs_rate' && row ? isUsdGhsRateFresh(row.updated_at) : false
+          updatedAt: row?.updated_at ?? null
         };
       }),
-      canEdit: request.role === 'super_admin',
-      suggestedUsdToGhsRate,
-      suggestedUsdToNgnRate,
-      suggestedUsdToGbpRate,
-      suggestedUsdToEurRate
+      canEdit: request.role === 'super_admin'
     });
   } catch (error) {
     response.status(500).json({ error: databaseError('Loading business settings failed.', error) });
   }
 });
 
+const FX_DISPLAY_SETTING_BY_CURRENCY = Object.freeze({
+  NGN: 'usd_to_ngn_rate',
+  GBP: 'usd_to_gbp_rate',
+  EUR: 'usd_to_eur_rate'
+});
+
+async function saveSetting(runner, key, value) {
+  await runner.run(
+    'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = CURRENT_TIMESTAMP',
+    [key, value]
+  );
+}
+
+// Deprecated compatibility endpoint. Older clients call this to "refresh" the
+// rate; it now only refreshes suggestions and never approves anything.
 router.post('/admin/settings/refresh-rate', sessions.requirePermission('admin:manage_settings'), async (request, response) => {
   try {
-    const suggestions = await fetchSuggestedRates({ force: true });
-    const ghsRate = suggestions?.rates?.USD;
-    if (!ghsRate || !Number.isFinite(ghsRate) || ghsRate <= 0 || ghsRate >= 1000000) {
-      return response.status(502).json({ error: 'The online exchange-rate service did not return a valid USD to GHS rate.' });
-    }
-    const ghsValue = ghsRate.toFixed(6);
-
-    // USD to NGN rate: NGN per USD = (GHS per USD) / (GHS per NGN)
-    const ngnPerGhs = suggestions?.rates?.NGN;
-    let ngnValue = null;
-    if (ngnPerGhs && Number.isFinite(ngnPerGhs) && ngnPerGhs > 0) {
-      ngnValue = (ghsRate / ngnPerGhs).toFixed(6);
-    }
-
-    // USD to GBP rate: GBP per USD = (GHS per USD) / (GHS per GBP)
-    const gbpPerGhs = suggestions?.rates?.GBP;
-    let gbpValue = null;
-    if (gbpPerGhs && Number.isFinite(gbpPerGhs) && gbpPerGhs > 0) {
-      gbpValue = (ghsRate / gbpPerGhs).toFixed(6);
-    }
-
-    // USD to EUR rate: EUR per USD = (GHS per USD) / (GHS per EUR)
-    const eurPerGhs = suggestions?.rates?.EUR;
-    let eurValue = null;
-    if (eurPerGhs && Number.isFinite(eurPerGhs) && eurPerGhs > 0) {
-      eurValue = (ghsRate / eurPerGhs).toFixed(6);
-    }
-
-    await database.transaction(async tx => {
-      await tx.run(
-        'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = CURRENT_TIMESTAMP',
-        ['usd_to_ghs_rate', ghsValue]
-      );
-      if (ngnValue) {
-        await tx.run(
-          'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = CURRENT_TIMESTAMP',
-          ['usd_to_ngn_rate', ngnValue]
-        );
-      }
-      if (gbpValue) {
-        await tx.run(
-          'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = CURRENT_TIMESTAMP',
-          ['usd_to_gbp_rate', gbpValue]
-        );
-      }
-      if (eurValue) {
-        await tx.run(
-          'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = CURRENT_TIMESTAMP',
-          ['usd_to_eur_rate', eurValue]
-        );
-      }
-      await tx.run(
-        `INSERT INTO fx_rates (currency, ghs_per_unit, approved_by, approved_at, updated_at)
-         VALUES ('USD', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-         ON CONFLICT (currency) DO UPDATE SET
-           ghs_per_unit = EXCLUDED.ghs_per_unit,
-           approved_by = EXCLUDED.approved_by,
-           approved_at = CURRENT_TIMESTAMP,
-           updated_at = CURRENT_TIMESTAMP`,
-        [ghsValue, request.admin.id]
-      );
-      if (ngnPerGhs && Number.isFinite(ngnPerGhs) && ngnPerGhs > 0) {
-        await tx.run(
-          `INSERT INTO fx_rates (currency, ghs_per_unit, approved_by, approved_at, updated_at)
-           VALUES ('NGN', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-           ON CONFLICT (currency) DO UPDATE SET
-             ghs_per_unit = EXCLUDED.ghs_per_unit,
-             approved_by = EXCLUDED.approved_by,
-             approved_at = CURRENT_TIMESTAMP,
-             updated_at = CURRENT_TIMESTAMP`,
-          [ngnPerGhs, request.admin.id]
-        );
-      }
-      if (gbpPerGhs && Number.isFinite(gbpPerGhs) && gbpPerGhs > 0) {
-        await tx.run(
-          `INSERT INTO fx_rates (currency, ghs_per_unit, approved_by, approved_at, updated_at)
-           VALUES ('GBP', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-           ON CONFLICT (currency) DO UPDATE SET
-             ghs_per_unit = EXCLUDED.ghs_per_unit,
-             approved_by = EXCLUDED.approved_by,
-             approved_at = CURRENT_TIMESTAMP,
-             updated_at = CURRENT_TIMESTAMP`,
-          [gbpPerGhs, request.admin.id]
-        );
-      }
-      if (eurPerGhs && Number.isFinite(eurPerGhs) && eurPerGhs > 0) {
-        await tx.run(
-          `INSERT INTO fx_rates (currency, ghs_per_unit, approved_by, approved_at, updated_at)
-           VALUES ('EUR', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-           ON CONFLICT (currency) DO UPDATE SET
-             ghs_per_unit = EXCLUDED.ghs_per_unit,
-             approved_by = EXCLUDED.approved_by,
-             approved_at = CURRENT_TIMESTAMP,
-             updated_at = CURRENT_TIMESTAMP`,
-          [eurPerGhs, request.admin.id]
-        );
-      }
-    });
+    const suggestion = await fetchSuggestedRates({ force: true });
+    const persisted = await database.transaction(transaction => persistSuggestedRates(transaction, suggestion));
     recordAuditSafely(database, {
       userId: request.admin.id,
-      action: 'exchange_rate_refreshed_online',
-      entityType: 'settings',
-      details: { rate: ghsValue, ngnRate: ngnValue, gbpRate: gbpValue, eurRate: eurValue, source: suggestions.source },
+      action: 'fx_suggestions_refreshed',
+      entityType: 'fx_rates',
+      details: { source: persisted.source, rates: persisted.rates, deprecatedEndpoint: '/admin/settings/refresh-rate' },
       ipAddress: request.ip
     });
     response.json({
-      setting: { key: 'usd_to_ghs_rate', value: ghsValue },
-      ngnSetting: ngnValue ? { key: 'usd_to_ngn_rate', value: ngnValue } : null,
-      gbpSetting: gbpValue ? { key: 'usd_to_gbp_rate', value: gbpValue } : null,
-      eurSetting: eurValue ? { key: 'usd_to_eur_rate', value: eurValue } : null,
-      suggestedUsdToGhsRate: ghsRate,
-      suggestedUsdToNgnRate: ngnValue ? Number(ngnValue) : null,
-      suggestedUsdToGbpRate: gbpValue ? Number(gbpValue) : null,
-      suggestedUsdToEurRate: eurValue ? Number(eurValue) : null
+      deprecated: true,
+      message: 'Suggested rates were refreshed. Approved rates were not changed. Use the exchange-rate panel to approve rates.',
+      source: suggestion.source,
+      fetchedAt: suggestion.fetchedAt,
+      base: suggestion.base,
+      rates: suggestion.rates,
+      persisted: true,
+      approvedRatesUnchanged: true
     });
   } catch (error) {
     if (error.code === 'FX_SUGGESTION_UNAVAILABLE') {
       return response.status(502).json({ error: error.message });
     }
-    response.status(500).json({ error: databaseError('Refreshing the exchange rate failed.', error) });
+    response.status(500).json({ error: databaseError('Refreshing exchange-rate suggestions failed.', error) });
   }
 });
 
 router.put('/admin/settings', sessions.requirePermission('admin:manage_settings'), async (request, response) => {
   const validation = validateSettingUpdates(request.body?.settings);
   if (validation.error) return response.status(400).json({ error: validation.error });
+  const ignoredSettings = validation.ignored || [];
+  if (!validation.value.length) {
+    recordAuditSafely(database, {
+      userId: request.admin.id,
+      action: 'business_settings_fx_ignored',
+      entityType: 'settings',
+      details: { ignoredSettings },
+      ipAddress: request.ip
+    });
+    return response.json({
+      settings: [],
+      ignoredSettings,
+      message: 'Exchange rates and multi-currency charging are managed through the exchange-rate panel and were not changed.'
+    });
+  }
   try {
     await database.transaction(async tx => {
       for (const [key, value] of validation.value) {
-        await tx.run(
-          'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = CURRENT_TIMESTAMP',
-          [key, value]
-        );
-      }
-      const usdRate = validation.value.find(([key]) => key === 'usd_to_ghs_rate');
-      if (usdRate) {
-        await tx.run(
-          `INSERT INTO fx_rates (currency, ghs_per_unit, approved_by, approved_at, updated_at)
-           VALUES ('USD', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-           ON CONFLICT (currency) DO UPDATE SET
-             ghs_per_unit = EXCLUDED.ghs_per_unit,
-             approved_by = EXCLUDED.approved_by,
-             approved_at = CURRENT_TIMESTAMP,
-             updated_at = CURRENT_TIMESTAMP`,
-          [usdRate[1], request.admin.id]
-        );
-      }
-      const ghsPerUsd = usdRate ? Number(usdRate[1]) : null;
-      const foreignSettings = [
-        ['usd_to_ngn_rate', 'NGN'],
-        ['usd_to_gbp_rate', 'GBP'],
-        ['usd_to_eur_rate', 'EUR']
-      ];
-      for (const [settingKey, currency] of foreignSettings) {
-        const found = validation.value.find(([key]) => key === settingKey);
-        if (found && ghsPerUsd) {
-          const foreignPerUsd = Number(found[1]);
-          if (foreignPerUsd > 0) {
-            const ghsPerUnit = (ghsPerUsd / foreignPerUsd).toFixed(6);
-            await tx.run(
-              `INSERT INTO fx_rates (currency, ghs_per_unit, approved_by, approved_at, updated_at)
-               VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-               ON CONFLICT (currency) DO UPDATE SET
-                 ghs_per_unit = EXCLUDED.ghs_per_unit,
-                 approved_by = EXCLUDED.approved_by,
-                 approved_at = CURRENT_TIMESTAMP,
-                 updated_at = CURRENT_TIMESTAMP`,
-              [currency, ghsPerUnit, request.admin.id]
-            );
-          }
-        }
+        await saveSetting(tx, key, value);
       }
     });
     recordAuditSafely(database, {
       userId: request.admin.id,
       action: 'business_settings_updated',
       entityType: 'settings',
-      details: Object.fromEntries(validation.value),
+      details: { settings: Object.fromEntries(validation.value), ignoredSettings },
       ipAddress: request.ip
     });
-    response.json({ settings: validation.value.map(([key, value]) => ({ key, value })) });
+    response.json({
+      settings: validation.value.map(([key, value]) => ({ key, value })),
+      ignoredSettings
+    });
   } catch (error) {
     response.status(500).json({ error: databaseError('Updating business settings failed.', error) });
   }
@@ -546,18 +414,44 @@ router.get('/admin/fx-rates', sessions.requireAdmin, async (request, response) =
 
 router.get('/admin/fx-rates/suggestions', sessions.requireAdmin, async (request, response) => {
   try {
-    const suggestion = await fetchSuggestedRates({ force: String(request.query.force || '') === '1' });
-    await database.transaction(async transaction => {
-      for (const [currency, rate] of Object.entries(suggestion.rates)) {
-        await transaction.run(
-          'UPDATE fx_rates SET suggested_ghs_per_unit = ?, suggested_source = ?, suggested_at = CURRENT_TIMESTAMP WHERE currency = ?',
-          [rate, suggestion.source, currency]
-        );
-      }
+    const rates = await listFxRates(database);
+    const suggestions = rates
+      .filter(rate => rate.suggestion)
+      .map(rate => ({ currency: rate.currency, rate: rate.suggestion.rate, source: rate.suggestion.source, at: rate.suggestion.at }));
+    const latest = suggestions.map(item => item.at).filter(Boolean).sort().at(-1) || null;
+    response.json({
+      source: suggestions[0]?.source || null,
+      fetchedAt: latest,
+      base: 'GHS per unit of currency',
+      rates: Object.fromEntries(suggestions.map(item => [item.currency, item.rate])),
+      suggestions
     });
-    response.json(suggestion);
   } catch (error) {
-    response.status(503).json({ error: databaseError('Loading suggested exchange rates failed.', error) });
+    response.status(500).json({ error: databaseError('Loading stored exchange-rate suggestions failed.', error) });
+  }
+});
+
+router.post('/admin/fx-rates/suggestions/refresh', sessions.requirePermission('admin:manage_settings'), async (request, response) => {
+  try {
+    const suggestion = await fetchSuggestedRates({ force: true });
+    const persisted = await database.transaction(transaction => persistSuggestedRates(transaction, suggestion));
+    recordAuditSafely(database, {
+      userId: request.admin.id,
+      action: 'fx_suggestions_refreshed',
+      entityType: 'fx_rates',
+      details: { source: persisted.source, rates: persisted.rates },
+      ipAddress: request.ip
+    });
+    response.json({
+      ...suggestion,
+      persisted: true,
+      approvedRatesUnchanged: true
+    });
+  } catch (error) {
+    if (error.code === 'FX_SUGGESTION_UNAVAILABLE') {
+      return response.status(502).json({ error: error.message });
+    }
+    response.status(500).json({ error: databaseError('Refreshing exchange-rate suggestions failed.', error) });
   }
 });
 
@@ -586,18 +480,13 @@ router.put('/admin/fx-rates', sessions.requirePermission('admin:manage_settings'
       rateUpdates.push([String(currency).toUpperCase(), validation.value]);
     }
   }
-  const approvedUsd = rateUpdates.find(([currency]) => currency === 'USD');
-  if (approvedUsd) settingsUpdates.push(['usd_to_ghs_rate', Number(approvedUsd[1]).toFixed(6)]);
   if (!settingsUpdates.length && !rateUpdates.length) {
     return response.status(400).json({ error: 'Provide at least one exchange rate or FX setting to update.' });
   }
   try {
     await database.transaction(async transaction => {
       for (const [key, value] of settingsUpdates) {
-        await transaction.run(
-          'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = CURRENT_TIMESTAMP',
-          [key, value]
-        );
+        await saveSetting(transaction, key, value);
       }
       for (const [currency, value] of rateUpdates) {
         await transaction.run(
@@ -610,6 +499,37 @@ router.put('/admin/fx-rates', sessions.requirePermission('admin:manage_settings'
              updated_at = CURRENT_TIMESTAMP`,
           [currency, value, request.admin.id]
         );
+      }
+
+      // Mirror approved rates into the legacy display settings used by the
+      // public catalog. This is the only place allowed to change those values,
+      // so business settings can never become an approval input.
+      const rows = await transaction.all(
+        'SELECT currency, ghs_per_unit FROM fx_rates WHERE currency IN (?, ?, ?, ?)',
+        [...FOREIGN_CURRENCIES]
+      );
+      const approved = new Map();
+      for (const row of rows || []) {
+        const currency = String(row.currency).toUpperCase();
+        const value = Number(row.ghs_per_unit);
+        if (Number.isFinite(value) && value > 0) approved.set(currency, value);
+      }
+      const approvedInRequest = new Set(rateUpdates.map(([currency]) => currency));
+      const usdApproved = approvedInRequest.has('USD');
+      const ghsPerUsd = usdApproved
+        ? Number(rateUpdates.find(([currency]) => currency === 'USD')[1])
+        : approved.get('USD') ?? null;
+      if (usdApproved) await saveSetting(transaction, 'usd_to_ghs_rate', ghsPerUsd.toFixed(6));
+      for (const [currency, settingKey] of Object.entries(FX_DISPLAY_SETTING_BY_CURRENCY)) {
+        if (!usdApproved && !approvedInRequest.has(currency)) continue;
+        const approvedRate = approved.get(currency) ?? null;
+        if (ghsPerUsd && approvedRate) {
+          await saveSetting(transaction, settingKey, (ghsPerUsd / approvedRate).toFixed(6));
+        } else {
+          // A stale display value is safer to remove than to keep showing an
+          // unapproved conversion.
+          await transaction.run('DELETE FROM settings WHERE setting_key = ?', [settingKey]);
+        }
       }
     });
     recordAuditSafely(database, {

@@ -11,13 +11,20 @@ const BUSINESS_SETTINGS = Object.freeze({
   beat_default_basic_usd: 'Default basic beat license (USD)',
   beat_default_premium_usd: 'Default premium beat license (USD)',
   beat_default_unlimited_usd: 'Default unlimited beat license (USD)',
-  beat_default_exclusive_usd: 'Default exclusive beat license (USD)',
-  usd_to_ghs_rate: 'USD to GHS exchange rate',
-  usd_to_ngn_rate: 'USD to NGN exchange rate',
-  usd_to_gbp_rate: 'USD to GBP exchange rate',
-  usd_to_eur_rate: 'USD to EUR exchange rate',
-  multi_currency_charge_enabled: 'Enable multi-currency charging (USD, NGN, GBP, EUR)'
+  beat_default_exclusive_usd: 'Default exclusive beat license (USD)'
 });
+
+// Exchange rates and the charging switch are approved exclusively through the
+// dedicated FX endpoint. The legacy business-settings endpoint still accepts
+// these keys so older clients keep working, but it must never apply them.
+const IGNORED_FX_SETTINGS = Object.freeze([
+  'usd_to_ghs_rate',
+  'usd_to_ngn_rate',
+  'usd_to_gbp_rate',
+  'usd_to_eur_rate',
+  'multi_currency_charge_enabled'
+]);
+const IGNORED_FX_SETTING_KEYS = new Set(IGNORED_FX_SETTINGS);
 
 function validateSettingUpdates(updates) {
   if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
@@ -25,40 +32,23 @@ function validateSettingUpdates(updates) {
   }
   const entries = Object.entries(updates);
   if (!entries.length) return { error: 'Provide at least one setting to update.' };
-  for (const [key, value] of entries) {
+  const ignored = entries.filter(([key]) => IGNORED_FX_SETTING_KEYS.has(key)).map(([key]) => key);
+  const active = entries.filter(([key]) => !IGNORED_FX_SETTING_KEYS.has(key));
+  for (const [key, value] of active) {
     if (!Object.hasOwn(BUSINESS_SETTINGS, key)) return { error: `Setting "${key}" cannot be changed through this endpoint.` };
     if ((typeof value === 'string' && !value.trim()) || value === null || value === undefined || !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 100000000) {
       return { error: `${BUSINESS_SETTINGS[key]} must be a non-negative amount no greater than 100000000.` };
     }
-    if (key === 'usd_to_ghs_rate' && (Number(value) <= 0 || Number(value) >= 1000000)) {
-      return { error: 'USD to GHS exchange rate must be greater than zero and less than 1000000.' };
-    }
-    if (key === 'usd_to_ngn_rate' && (Number(value) <= 0 || Number(value) >= 1000000000)) {
-      return { error: 'USD to NGN exchange rate must be greater than zero and less than 1000000000.' };
-    }
-    if (key === 'usd_to_gbp_rate' && (Number(value) <= 0 || Number(value) >= 1000000)) {
-      return { error: 'USD to GBP exchange rate must be greater than zero and less than 1000000.' };
-    }
-    if (key === 'usd_to_eur_rate' && (Number(value) <= 0 || Number(value) >= 1000000)) {
-      return { error: 'USD to EUR exchange rate must be greater than zero and less than 1000000.' };
-    }
-    if (key === 'multi_currency_charge_enabled' && value !== '0' && value !== '1') {
-      return { error: 'Enable multi-currency charging must be 0 (off) or 1 (on).' };
-    }
     if (key === 'booking_ep_album_discount_percent' && Number(value) >= 100) {
       return { error: 'EP / Album discount must be less than 100%.' };
     }
-    const decimalPlaces = key === 'usd_to_ghs_rate' || key === 'usd_to_ngn_rate' || key === 'usd_to_gbp_rate' || key === 'usd_to_eur_rate' ? 6 : 2;
-    if (Number(value) !== Number(Number(value).toFixed(decimalPlaces))) {
-      const precision = decimalPlaces === 2 ? 'two' : String(decimalPlaces);
-      return { error: `${BUSINESS_SETTINGS[key]} can have at most ${precision} decimal places.` };
+    if (Number(value) !== Number(Number(value).toFixed(2))) {
+      return { error: `${BUSINESS_SETTINGS[key]} can have at most two decimal places.` };
     }
   }
   return {
-    value: entries.map(([key, value]) => {
-      if (key === 'multi_currency_charge_enabled') return [key, value];
-      return [key, Number(value).toFixed(key === 'usd_to_ghs_rate' || key === 'usd_to_ngn_rate' || key === 'usd_to_gbp_rate' || key === 'usd_to_eur_rate' ? 6 : 2)];
-    })
+    value: active.map(([key, value]) => [key, Number(value).toFixed(2)]),
+    ignored
   };
 }
 
@@ -138,6 +128,7 @@ function buildReportPeriods(from, to, granularity) {
 
 module.exports = {
   BUSINESS_SETTINGS,
+  IGNORED_FX_SETTINGS,
   REPORT_GRANULARITIES,
   validateSettingUpdates,
   validateDateRange,
