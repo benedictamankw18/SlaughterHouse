@@ -4,6 +4,7 @@ const sessions = require('../session-store');
 const { requireCustomer } = sessions;
 const { databaseError } = require('../services/error-messages');
 const { rateLimit } = require('../services/rate-limit');
+const logger = require('../services/logger');
 
 const router = express.Router();
 const queryRows = (query, parameters = []) => new Promise((resolve, reject) => database.all(query, parameters, (error, rows) => error ? reject(error) : resolve(rows || [])));
@@ -41,31 +42,59 @@ function validateCartItem(item) {
 }
 
 /**
- * Cart item key: "type:productId:license" for beats, "type:productId" for merchandise.
+ * Cart item key: "type|id:productId|license" for beats, "type|id:productId" for merchandise.
+ * Must match frontend/script.js cartItemKey exactly so DELETE /api/cart/:itemKey works.
  */
 function cartItemKey(item) {
-  if (item.type === 'beat') return `beat:${item.productId}:${item.license}`;
-  return `merchandise:${item.productId}`;
+  const product = Number.isInteger(Number(item.productId)) && Number(item.productId) > 0
+    ? `id:${Number(item.productId)}`
+    : `name:${String(item.name || '').trim().toLowerCase()}`;
+  return `${item.type || 'beat'}|${product}|${String(item.license || '').toLowerCase()}`;
+}
+
+/**
+ * Safely parse JSON, returning an empty array on failure.
+ * Handles legacy cart rows that may contain invalid JSON (e.g. "[object Object]").
+ * PostgreSQL JSONB columns are auto-parsed by pg into JavaScript objects, so
+ * non-string values are returned as-is.
+ */
+function safeJsonParse(value, fallback = []) {
+  try {
+    if (typeof value === 'string') {
+      return JSON.parse(value || '[]');
+    }
+    return value || fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 /**
  * GET /api/cart - return cart items for the current user/guest.
  */
-router.get('/', async (request, response) => {
+router.get('/cart', async (request, response) => {
+  const { userId, cartId } = resolveCartScope(request);
   try {
-    const { userId, cartId } = resolveCartScope(request);
     let rows;
     if (userId) {
       const result = await queryOne('SELECT items_json FROM carts WHERE user_id = ?', [userId]);
-      rows = result ? JSON.parse(result.items_json || '[]') : [];
+      rows = result ? safeJsonParse(result.items_json) : [];
     } else if (cartId) {
       const result = await queryOne('SELECT items_json FROM carts WHERE cart_id = ?', [cartId]);
-      rows = result ? JSON.parse(result.items_json || '[]') : [];
+      rows = result ? safeJsonParse(result.items_json) : [];
     } else {
       return response.json({ items: [] });
     }
     response.json({ items: rows });
   } catch (error) {
+    logger.error('cart_get_failed', {
+      requestId: request.requestId,
+      code: error?.code,
+      message: error?.message,
+      detail: error?.detail,
+      userId,
+      cartId,
+    });
     response.status(500).json({ error: databaseError('Loading cart failed.', error) });
   }
 });
@@ -74,10 +103,10 @@ router.get('/', async (request, response) => {
  * POST /api/cart - add or update a cart item.
  * Body: { item: {...} } or { items: [...] }
  */
-router.post('/', async (request, response) => {
+router.post('/cart', async (request, response) => {
+  const { userId, cartId } = resolveCartScope(request);
+  const { item, items } = request.body || {};
   try {
-    const { userId, cartId } = resolveCartScope(request);
-    const { item, items } = request.body || {};
 
     const incomingItems = items || (item ? [item] : []);
     if (!incomingItems.length) return response.status(400).json({ error: 'No items provided.' });
@@ -94,13 +123,13 @@ router.post('/', async (request, response) => {
       const result = await queryOne('SELECT items_json FROM carts WHERE user_id = ?', [userId]);
       if (result) {
         rowExists = true;
-        existingItems = JSON.parse(result.items_json || '[]');
+        existingItems = safeJsonParse(result.items_json);
       }
     } else if (cartId) {
       const result = await queryOne('SELECT items_json FROM carts WHERE cart_id = ?', [cartId]);
       if (result) {
         rowExists = true;
-        existingItems = JSON.parse(result.items_json || '[]');
+        existingItems = safeJsonParse(result.items_json);
       }
     } else {
       return response.status(400).json({ error: 'No cart scope available. Sign in or provide a cart id.' });
@@ -132,6 +161,14 @@ router.post('/', async (request, response) => {
 
     response.json({ items: mergedItems });
   } catch (error) {
+    logger.error('cart_post_failed', {
+      requestId: request.requestId,
+      code: error?.code,
+      message: error?.message,
+      detail: error?.detail,
+      userId,
+      cartId,
+    });
     response.status(500).json({ error: databaseError('Saving cart failed.', error) });
   }
 });
@@ -139,7 +176,7 @@ router.post('/', async (request, response) => {
 /**
  * DELETE /api/cart/:itemKey - remove a single cart item by its cart item key.
  */
-router.delete('/:itemKey', async (request, response) => {
+router.delete('/cart/:itemKey', async (request, response) => {
   try {
     const { userId, cartId } = resolveCartScope(request);
     const itemKey = request.params.itemKey;
@@ -151,13 +188,13 @@ router.delete('/:itemKey', async (request, response) => {
       const result = await queryOne('SELECT items_json FROM carts WHERE user_id = ?', [userId]);
       if (result) {
         rowExists = true;
-        existingItems = JSON.parse(result.items_json || '[]');
+        existingItems = safeJsonParse(result.items_json);
       }
     } else if (cartId) {
       const result = await queryOne('SELECT items_json FROM carts WHERE cart_id = ?', [cartId]);
       if (result) {
         rowExists = true;
-        existingItems = JSON.parse(result.items_json || '[]');
+        existingItems = safeJsonParse(result.items_json);
       }
     } else {
       return response.status(400).json({ error: 'No cart scope available.' });
@@ -182,7 +219,7 @@ router.delete('/:itemKey', async (request, response) => {
 /**
  * DELETE /api/cart - clear all cart items.
  */
-router.delete('/', async (request, response) => {
+router.delete('/cart', async (request, response) => {
   try {
     const { userId, cartId } = resolveCartScope(request);
 
@@ -203,7 +240,7 @@ router.delete('/', async (request, response) => {
 /**
  * GET /api/cart/pending-payments - list pending payment references.
  */
-router.get('/pending-payments', async (request, response) => {
+router.get('/cart/pending-payments', async (request, response) => {
   try {
     const rows = await queryRows('SELECT reference, items_json, status, created_at FROM cart_pending_payments WHERE status = ? ORDER BY created_at DESC', ['pending']);
     const payments = rows.map(row => ({
@@ -222,7 +259,7 @@ router.get('/pending-payments', async (request, response) => {
  * POST /api/cart/pending-payments/:ref - register a pending payment.
  * Body: { items: [...] }
  */
-router.post('/pending-payments/:ref', async (request, response) => {
+router.post('/cart/pending-payments/:ref', async (request, response) => {
   try {
     const { ref } = request.params;
     const { items } = request.body || {};
@@ -247,7 +284,7 @@ router.post('/pending-payments/:ref', async (request, response) => {
 /**
  * DELETE /api/cart/pending-payments/:ref - remove a pending payment.
  */
-router.delete('/pending-payments/:ref', async (request, response) => {
+router.delete('/cart/pending-payments/:ref', async (request, response) => {
   try {
     const { ref } = request.params;
     await runQuery('DELETE FROM cart_pending_payments WHERE reference = ?', [ref]);
@@ -260,7 +297,7 @@ router.delete('/pending-payments/:ref', async (request, response) => {
 /**
  * GET /api/cart/license-purchase-counter - get current counter value.
  */
-router.get('/license-purchase-counter', async (request, response) => {
+router.get('/cart/license-purchase-counter', async (request, response) => {
   try {
     const row = await queryOne('SELECT count FROM license_purchase_counter WHERE id = 1');
     response.json({ count: row ? row.count : 0 });
@@ -272,7 +309,7 @@ router.get('/license-purchase-counter', async (request, response) => {
 /**
  * POST /api/cart/license-purchase-counter/increment - increment and return new value.
  */
-router.post('/license-purchase-counter/increment', async (request, response) => {
+router.post('/cart/license-purchase-counter/increment', async (request, response) => {
   try {
     await runQuery('UPDATE license_purchase_counter SET count = count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = 1');
     const row = await queryOne('SELECT count FROM license_purchase_counter WHERE id = 1');

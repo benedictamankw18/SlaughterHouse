@@ -2606,7 +2606,7 @@ button.is-busy { cursor: progress; opacity: 0.85; }
   border-color: rgba(34, 197, 94, .55);
   background: rgba(34, 197, 94, .12);
   color: #86efac;
-  cursor: default;
+  cursor: pointer;
 }
 
 .beat-cart-button.is-in-cart:hover {
@@ -2663,13 +2663,18 @@ nav a[href*="merchandise"],
 .cart-drawer h2 { margin: 0; font: 700 1.5rem 'Montserrat', sans-serif; }
 .cart-close-button, .cart-remove-button { border: 0; background: transparent; color: #f97316; cursor: pointer; font-family: 'Montserrat', sans-serif; }
 .cart-items { display: grid; gap: 12px; overflow-y: auto; margin: 22px 0 0; padding: 0; list-style: none; }
-.cart-item { display: grid; grid-template-columns: 86px minmax(0, 1fr) auto; align-items: center; gap: 16px; padding-bottom: 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.12); font-size: 0.85rem; }
-.cart-item-cover { width: 86px; aspect-ratio: 1; border-radius: 10px; object-fit: cover; background: #000; }
+.cart-item { display: grid; grid-template-columns: 72px minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 14px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.12); font-size: 0.85rem; }
+.cart-item-info { min-width: 0; }
+.cart-item-title { font-weight: 700; font-size: 0.88rem; color: #fff; line-height: 1.2; margin-bottom: 2px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.cart-item-subtitle { font-size: 0.72rem; color: rgba(255, 255, 255, 0.55); line-height: 1.2; }
+.cart-item-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.cart-item-price { font-weight: 700; font-size: 0.88rem; color: #fff; white-space: nowrap; }
+.cart-item-cover { width: 72px; aspect-ratio: 1; border-radius: 10px; object-fit: cover; background: #000; }
 .cart-item-select { display: flex; min-width: 0; align-items: flex-start; gap: 10px; cursor: pointer; }
 .cart-item-select input { margin-top: 3px; accent-color: #22c55e; }
 .cart-item-select span { display: grid; gap: 4px; }
-.cart-item-actions { display: flex; flex-shrink: 0; align-items: center; gap: 8px; }
 .cart-remove-button { padding: 4px; font-size: 1.1rem; }
+.cart-remove-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
 .cart-item small { color: rgba(255, 255, 255, 0.55); }
 .cart-empty { color: rgba(255, 255, 255, 0.55); }
 .cart-summary { margin-top: 18px; padding: 18px 0; border-top: 1px solid rgba(255, 255, 255, 0.15); }

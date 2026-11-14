@@ -562,7 +562,7 @@ function renderBusinessSettings(settings, canEdit, suggestedUsdToGhsRate, sugges
     },
     {
       heading: 'Exchange rates',
-      keys: ['usd_to_ghs_rate', 'usd_to_ngn_rate', 'usd_to_gbp_rate', 'usd_to_eur_rate']
+      keys: ['usd_to_ghs_rate', 'usd_to_ngn_rate', 'usd_to_gbp_rate', 'usd_to_eur_rate', 'multi_currency_charge_enabled']
     }
   ];
 
@@ -571,9 +571,15 @@ function renderBusinessSettings(settings, canEdit, suggestedUsdToGhsRate, sugges
     const isNgnRate = setting.key === 'usd_to_ngn_rate';
     const isGbpRate = setting.key === 'usd_to_gbp_rate';
     const isEurRate = setting.key === 'usd_to_eur_rate';
+    const isMultiCurrency = setting.key === 'multi_currency_charge_enabled';
     const exchangeRate = isGhsRate || isNgnRate || isGbpRate || isEurRate;
     const updatedAt = setting.updatedAt ? new Date(setting.updatedAt).toLocaleString() : null;
+    const chargeEnabled = setting.value === '1' || setting.value === true || setting.value === 'true';
     let rateStatus = '';
+    if (isMultiCurrency) {
+      const checked = chargeEnabled ? 'checked' : '';
+      return `<label class="toggle-setting"><input type="checkbox" name="${escapeHtml(setting.key)}" ${checked ? 'checked' : ''} ${canEdit ? '' : 'disabled'}> ${escapeHtml(setting.label)} <small style="color:rgba(255,255,255,.55)">${chargeEnabled ? 'Enabled' : 'Disabled'}</small></label>`;
+    }
     if (exchangeRate) {
       const suggested = isGhsRate ? suggestedUsdToGhsRate : isNgnRate ? suggestedUsdToNgnRate : isGbpRate ? suggestedUsdToGbpRate : suggestedUsdToEurRate;
       const unit = isGhsRate ? 'GHS' : isNgnRate ? 'NGN' : isGbpRate ? 'GBP' : 'EUR';
@@ -803,7 +809,7 @@ function activateAdminSection(sectionName, persist = true) {
   if (!selectedTab) return;
   document.querySelectorAll('.admin-tab').forEach(tab => tab.classList.toggle('active', tab === selectedTab));
   document.querySelectorAll('.admin-section').forEach(section => section.classList.toggle('active', section.dataset.adminSection === selectedTab.dataset.section));
-  if (persist) sessionStorage.setItem(activeAdminSectionKey, selectedTab.dataset.section);
+  if (persist) localStorage.setItem(activeAdminSectionKey, selectedTab.dataset.section);
 }
 
 function renderMerchandiseManagement(merchandise = dashboardData.merchandise || []) {
@@ -1067,7 +1073,7 @@ async function loadDashboard() {
   document.querySelector('[data-admin-section="settings"]').hidden = false;
   document.querySelector('[data-section="staff"]').hidden = dashboardData.role !== 'super_admin';
   document.querySelector('[data-admin-section="staff"]').hidden = dashboardData.role !== 'super_admin';
-  activateAdminSection(sessionStorage.getItem(activeAdminSectionKey) || 'overview', false);
+  activateAdminSection(localStorage.getItem(activeAdminSectionKey) || 'overview', false);
   renderAnalytics(dashboardData.analytics || {});
   filterContent();
   filterSales();
@@ -1112,7 +1118,7 @@ function showDashboard() {
 async function restoreAdminSession() {
   try {
     const session = await api('/api/admin/session');
-    localStorage.setItem('adminCsrfToken', session.csrfToken);
+    sessionStorage.setItem('adminCsrfToken', session.csrfToken);
     showDashboard();
   } catch (error) {
     if (![401, 403].includes(error.status)) message('admin-login-message', error.message, true);
@@ -1151,7 +1157,7 @@ function showAdminMfaChallenge(data) {
 
 function saveAdminSession(data) {
   sessionStorage.removeItem('adminToken');
-  localStorage.setItem('adminCsrfToken', data.csrfToken || '');
+  sessionStorage.setItem('adminCsrfToken', data.csrfToken || '');
   adminMfaChallengeToken = null;
   $('#admin-mfa-panel').hidden = true;
   showDashboard();
@@ -1222,7 +1228,7 @@ $('#admin-logout').addEventListener('click', async event => {
   }).finally(() => {
     sessionStorage.removeItem('adminToken');
     sessionStorage.removeItem('adminCsrfToken');
-    sessionStorage.removeItem(activeAdminSectionKey);
+    localStorage.removeItem(activeAdminSectionKey);
     stopBusy();
     location.href = '/index.html';
   });
@@ -1299,7 +1305,10 @@ $('#audit-filter').addEventListener('submit', event => {
 $('#business-settings-form').addEventListener('submit', async event => {
   event.preventDefault();
   const form = event.currentTarget;
-  const settings = Object.fromEntries([...form.elements].filter(element => element.name && element.type === 'number').map(element => [element.name, element.value]));
+  const settings = Object.fromEntries([...form.elements].filter(element => element.name && !element.name.startsWith('rateEditEnabled')).map(element => {
+    if (element.type === 'checkbox') return [element.name, element.checked ? '1' : '0'];
+    return [element.name, element.value];
+  }));
   if (!window.confirm('Save these business settings? Price and exchange-rate changes affect future checkouts and requests.')) return;
   const stopBusy = startButtonBusy(form.querySelector('button[type="submit"]'), 'Saving…');
   if (!stopBusy) return;

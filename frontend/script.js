@@ -1042,8 +1042,13 @@ let foreignRates = {};
 
 const pendingCartPaymentsKey = 'ultbigboyPendingCartPayments';
 const currencyStorageKey = 'ultbigboyCurrency';
+const cartStorageKey = 'ultbigboyCartId';
 let cart = [];
-let cartId = sessionStorage.getItem('ultbigboyCartId') || null;
+let cartId = sessionStorage.getItem(cartStorageKey) || null;
+if (!cartId) {
+  cartId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  try { sessionStorage.setItem(cartStorageKey, cartId); } catch {}
+}
 
 async function loadCartFromServer() {
   try {
@@ -1069,6 +1074,7 @@ async function loadCartFromServer() {
 
 async function saveCartToServer() {
   try {
+    if (!cart.length) return;
     const headers = { 'Content-Type': 'application/json' };
     if (cartId) headers['X-Cart-Id'] = cartId;
     const response = await fetch(`${API}/api/cart`, {
@@ -1134,16 +1140,24 @@ async function loadCartAndInit() {
   await loadCartFromServer();
   updateCart();
 }
+const SUPPORTED_CURRENCIES = ['GHS', 'USD', 'NGN', 'GBP', 'EUR'];
+
 let currentCurrency = null;
 try {
-  const saved = localStorage.getItem(currencyStorageKey);
-  if (saved && SUPPORTED_CURRENCIES.includes(String(saved).toUpperCase())) {
-    currentCurrency = String(saved).toUpperCase();
+  const stored = localStorage.getItem(currencyStorageKey);
+  if (stored && SUPPORTED_CURRENCIES.includes(String(stored).toUpperCase())) {
+    currentCurrency = String(stored).toUpperCase();
   }
 } catch {}
 if (!currentCurrency && currencySelect) currentCurrency = currencySelect.value;
-if (!currentCurrency) currentCurrency = 'USD';
-if (currencySelect) currencySelect.value = currentCurrency;
+if (!currentCurrency) currentCurrency = 'GHS';
+if (currencySelect) {
+  currencySelect.value = currentCurrency;
+  if (flagIcon) {
+    const selectedOption = currencySelect.options[currencySelect.selectedIndex];
+    flagIcon.src = selectedOption.dataset.flag;
+  }
+}
 
 async function createLicenseCode() {
   const purchaseCount = await incrementLicensePurchaseCounter() || 1;
@@ -1168,8 +1182,6 @@ const currencyDecimals = {
   GBP: 2,
   EUR: 2
 };
-
-const SUPPORTED_CURRENCIES = ['GHS', 'USD', 'NGN', 'GBP', 'EUR'];
 
 function formatCurrency(value, currency) {
   const code = String(currency || 'GHS').toUpperCase();
@@ -1263,15 +1275,18 @@ async function loadDisplayExchangeRate() {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Could not load the current exchange rate.');
     const rate = Number(data.usdToGhsRate);
-    if (!Number.isFinite(rate) || rate <= 0) throw new Error('The server returned an invalid exchange rate.');
-    usdToGhsRate = rate;
-    usdToNgnRate = data.usdToNgnRate != null ? Number(data.usdToNgnRate) : null;
-    usdToGbpRate = data.usdToGbpRate != null ? Number(data.usdToGbpRate) : null;
-    usdToEurRate = data.usdToEurRate != null ? Number(data.usdToEurRate) : null;
-    foreignRates = data.rates && typeof data.rates === 'object' ? data.rates : {};
-    updateBeatPrices();
-    updateCart();
-    updateMerchandisePrices();
+    if (Number.isFinite(rate) && rate > 0) {
+      usdToGhsRate = rate;
+      usdToNgnRate = data.usdToNgnRate != null ? Number(data.usdToNgnRate) : null;
+      usdToGbpRate = data.usdToGbpRate != null ? Number(data.usdToGbpRate) : null;
+      usdToEurRate = data.usdToEurRate != null ? Number(data.usdToEurRate) : null;
+      foreignRates = data.rates && typeof data.rates === 'object' ? data.rates : {};
+      updateBeatPrices();
+      updateCart();
+      updateMerchandisePrices();
+    } else {
+      console.warn('USD to GHS exchange rate not set — currency conversion unavailable.');
+    }
   } catch (error) {
     console.error('Currency display conversion is unavailable:', error);
   }
@@ -1442,15 +1457,18 @@ function syncCartProductButtons() {
       license
     }));
     button.classList.toggle('is-in-cart', inCart);
-    button.disabled = inCart;
+    button.disabled = false;
     button.innerHTML = inCart
-      ? '<button type="button" class="cart-remove-button" style="display:inline-flex;align-items:center;gap:4px;"><svg class="cart-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2c0 .6.4 1 1 1v12c0 .6.4 1 1 1h8c.6 0 1-.4 1-1V7c0-.6-.4-1-1-1zm-3 16c-.6 0-1-.4-1-1V8c0-.6.4-1 1-1s1 .4 1 1v11c0 .6-.4 1-1 1zm-4 0c-.6 0-1-.4-1-1V8c0-.6.4-1 1-1s1 .4 1 1v11c0 .6-.4 1-1 1z"/></svg><small>Remove</small></button>'
+      ? '<span class="cart-remove-label cart-remove-button" style="display:inline-flex;align-items:center;gap:4px;"><svg class="trash-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2c0 .6.4 1 1 1v12c0 .6.4 1 1 1h8c.6 0 1-.4 1-1V7c0-.6-.4-1-1-1zm-3 16c-.6 0-1-.4-1-1V8c0-.6.4-1 1-1s1 .4 1 1v11c0 .6-.4 1-1 1zm-4 0c-.6 0-1-.4-1-1V8c0-.6.4-1 1-1s1 .4 1 1v11c0 .6-.4 1-1 1z"/></svg><small>Remove</small></span>'
       : '<svg class="cart-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18c-1.5 0-2.5-.7-2.5-2h3.1l.4-2c.2-.9 1-1.6 1.9-1.6h5.7c.9 0 1.7.7 1.9 1.6l.4 2h2c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v9c0 1.1.9 2 2 2zm4-11h3l1 4H5v-.5c0-.3.2-.5.5-.5zm11 4l-.4-2c-.2-.9-1-1.6-1.9-1.6H9.4c-.6 0-1 .4-1.1 1l-.2 1H3c-.6 0-.9.5-.9 1.1c0 2.3 1.9 4.1 4.1 4.1h12.7c.9 0 1.7-.7 1.9-1.6c.1-.5.1-.9-.1-1.4zm-5.5 0H12v-2h4.5c.3 0 .5-.2.5-.5s-.2-.5-.5-.5H12v-2c0-.3-.2-.5-.5-.5h-5c-.3 0-.5.2-.5.5v5c0 .3.2.5.5.5h5c.3 0 .5-.2.5-.5z"/></svg>';
     const productKey = card.dataset.productId;
     const itemKey = cartItemKey({ type: 'beat', productId: productKey, name: card.querySelector('h3')?.textContent, license });
-    button.onclick = inCart ? (event) => {
+    button.onclick = inCart ? async (event) => {
       event.stopPropagation();
-      cart.splice(cart.findIndex(i => cartItemKey(i) === itemKey), 1);
+      const index = cart.findIndex(i => cartItemKey(i) === itemKey);
+      if (index < 0) return;
+      cart.splice(index, 1);
+      await removeCartItemFromServer(itemKey);
       saveCartToServer();
       updateCart();
     } : undefined;
@@ -1471,7 +1489,8 @@ function syncCartProductButtons() {
 }
 
 function updateCart() {
-  saveCartToServer();
+  try {
+    saveCartToServer();
 
   document.getElementById('checkout-form-panel')?.remove();
   document.getElementById('cart-checkout-button')?.setAttribute('aria-expanded', 'false');
@@ -1488,6 +1507,24 @@ function updateCart() {
   }
   cartButton?.setAttribute('aria-label', `Shopping cart, ${itemCount} ${itemCount === 1 ? 'item' : 'items'}`);
   syncCartProductButtons();
+
+  // Event delegation for cart remove buttons: attached once on the container so
+  // it survives re-renders (cartItems.innerHTML = "" wipes child buttons but not the container).
+  if (cartItems && !cartItems.dataset.removeListenerAttached) {
+    cartItems.addEventListener('click', async (event) => {
+      const button = event.target.closest('.cart-remove-button');
+      if (!button) return;
+      const index = Number(button.dataset.cartIndex);
+      if (!Number.isFinite(index)) return;
+      const itemKey = cartItemKey(cart[index]);
+      cart.splice(index, 1);
+      await removeCartItemFromServer(itemKey);
+      saveCartToServer();
+      updateCart();
+    });
+    cartItems.dataset.removeListenerAttached = 'true';
+  }
+
   if (!cartItems || !cartEmpty || !cartTotal) return;
   cartItems.innerHTML = "";
   let total = 0;
@@ -1502,7 +1539,7 @@ function updateCart() {
     const displayedPrice = displayPrice === null
       ? `${formatCurrency(item.price, priceCurrency)} (conversion unavailable)`
       : formatCurrency(displayPrice, currentCurrency);
-    li.innerHTML = `<img class="cart-item-cover" src="${escapeHTML(item.cover || '/Images/Logo 2.png')}" alt="${escapeHTML(item.name)} cover art"><label class="cart-item-label"><strong>${escapeHTML(item.name)}</strong><small>${escapeHTML(itemKind)}</small></label><span class="cart-item-actions"><strong>${displayedPrice}</strong><button type="button" class="cart-remove-button" data-cart-index="${index}" aria-label="Remove ${escapeHTML(item.name)}" title="Remove item"><svg class="trash-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2c0 .6.4 1 1 1v12c0 .6.4 1 1 1h8c.6 0 1-.4 1-1V7c0-.6-.4-1-1-1zm-3 16c-.6 0-1-.4-1-1V8c0-.6.4-1 1-1s1 .4 1 1v11c0 .6-.4 1-1 1zm-4 0c-.6 0-1-.4-1-1V8c0-.6.4-1 1-1s1 .4 1 1v11c0 .6-.4 1-1 1z"/></svg></button></span>`;
+    li.innerHTML = `<img class="cart-item-cover" src="${escapeHTML(item.cover || '/Images/Logo 2.png')}" alt="${escapeHTML(item.name)} cover art"><div class="cart-item-info"><div class="cart-item-title">${escapeHTML(item.name)}</div><div class="cart-item-subtitle">${escapeHTML(itemKind)}</div></div><div class="cart-item-actions"><div class="cart-item-price">${displayedPrice}</div><button type="button" class="cart-remove-button" data-cart-index="${index}" aria-label="Remove ${escapeHTML(item.name)}" title="Remove item"><svg class="trash-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2c0 .6.4 1 1 1v12c0 .6.4 1 1 1h8c.6 0 1-.4 1-1V7c0-.6-.4-1-1-1zm-3 16c-.6 0-1-.4-1-1V8c0-.6.4-1 1-1s1 .4 1 1v11c0 .6-.4 1-1 1zm-4 0c-.6 0-1-.4-1-1V8c0-.6.4-1 1-1s1 .4 1 1v11c0 .6-.4 1-1 1z"/></svg></button></div>`;
     cartItems.appendChild(li);
   });
 
@@ -1512,12 +1549,9 @@ function updateCart() {
     checkoutButton.disabled = cart.length === 0;
     checkoutButton.textContent = cart.length ? `Proceed payment (${cart.length})` : 'Proceed payment';
   }
-  cartItems.querySelectorAll('.cart-remove-button').forEach(button => {
-    button.addEventListener('click', () => {
-      cart.splice(Number(button.dataset.cartIndex), 1);
-      updateCart();
-    });
-  });
+  } catch (error) {
+    console.error('updateCart failed:', error);
+  }
 }
 
 window.addEventListener('storage', () => {
@@ -1659,10 +1693,13 @@ async function loadDatabaseBeatCatalog() {
       updateBeatPrices();
       syncCartProductButtons();
     }));
-    catalogList.querySelectorAll('.beat-cart-button').forEach(button => button.addEventListener('click', () => {
+    catalogList.querySelectorAll('.beat-cart-button').forEach(button => button.addEventListener('click', (event) => {
+      if (event.target.closest('.cart-remove-label')) return;
       const card = button.closest('.beat-card');
       const select = card.querySelector('.license-select');
       const option = select.options[select.selectedIndex];
+      const itemKey = cartItemKey({ type: 'beat', productId: Number(card.dataset.productId), name: card.querySelector('h3')?.textContent, license: option.value });
+      if (cart.some(item => cartItemKey(item) === itemKey)) return;
       addToCart({ type: 'beat', productId: Number(card.dataset.productId), name: card.querySelector('h3').textContent, license: option.value, price: Number(option.dataset.price), cover: card.querySelector('img')?.src || '', selected: true });
       showCartToast('Beat added to cart.');
     }));
@@ -1713,10 +1750,13 @@ async function loadFeaturedBeatCatalog() {
       updateBeatPrices();
       syncCartProductButtons();
     }));
-    catalogList.querySelectorAll('.beat-cart-button').forEach(button => button.addEventListener('click', () => {
+    catalogList.querySelectorAll('.beat-cart-button').forEach(button => button.addEventListener('click', (event) => {
+      if (event.target.closest('.cart-remove-label')) return;
       const card = button.closest('.beat-card');
       const select = card.querySelector('.license-select');
       const option = select.options[select.selectedIndex];
+      const itemKey = cartItemKey({ type: 'beat', productId: Number(card.dataset.productId), name: card.querySelector('h3')?.textContent, license: option.value });
+      if (cart.some(item => cartItemKey(item) === itemKey)) return;
       addToCart({ type: 'beat', productId: Number(card.dataset.productId), name: card.querySelector('h3').textContent, license: option.value, price: Number(option.dataset.price), cover: card.querySelector('img')?.src || '', selected: true });
       showCartToast('Beat added to cart.');
     }));
@@ -1865,11 +1905,32 @@ function openCheckoutForm() {
     const stopBusy = window.startActionBusy(submitButton, 'Starting payment…');
     if (!stopBusy) return;
     try {
-      const response = await fetch(`${API}/api/payments/initialize`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: customerUser?.name || 'Guest Customer', email: paymentEmail, items: currentSelectedItems, paymentMethod, currency: currentCurrency }) });
+      // Paystack only supports GHS charging. Convert all cart items to GHS
+      // before sending to the backend, regardless of the user's display currency.
+      // Calculate total USD once, convert to GHS once, then distribute across
+      // items so the sum matches exactly (avoids rounding drift from per-item
+      // conversion).
+      const totalUSD = currentSelectedItems.reduce((sum, item) => sum + Number(item.price || 0), 0);
+      const totalGHS = Math.round(convertCartAmount(totalUSD, 'USD', 'GHS') * 100) / 100;
+      if (!Number.isFinite(totalGHS)) {
+        throw new Error('Currency conversion unavailable. Set a USD to GHS exchange rate in Admin > Settings before checking out.');
+      }
+      // Distribute total GHS across items, adjusting the last item to absorb
+      // any rounding difference so the sum equals totalGHS exactly.
+      let remainingGHS = totalGHS;
+      const ghsItems = currentSelectedItems.map((item, index) => {
+        const isLast = index === currentSelectedItems.length - 1;
+        const ghsPrice = isLast
+          ? Math.round(remainingGHS * 100) / 100
+          : Math.round(convertCartAmount(item.price, item.priceCurrency, 'GHS') * 100) / 100;
+        remainingGHS -= ghsPrice;
+        return { ...item, price: ghsPrice, priceCurrency: 'GHS' };
+      });
+      const response = await fetch(`${API}/api/payments/initialize`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: customerUser?.name || 'Guest Customer', email: paymentEmail, items: ghsItems, paymentMethod, currency: 'GHS' }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not start payment.');
       if (!data.reference || !data.authorizationUrl) throw new Error('Payment could not be started because the response was incomplete.');
-      await registerPendingPaymentOnServer(data.reference, currentSelectedItems.map(cartItemKey));
+      await registerPendingPaymentOnServer(data.reference, ghsItems.map(cartItemKey));
       window.location.href = data.authorizationUrl;
     } catch (error) {
       message.textContent = error.message;
