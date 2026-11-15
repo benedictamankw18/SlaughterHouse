@@ -603,7 +603,7 @@ function renderFxRates(data) {
     <h3 class="admin-settings-section">Charging</h3>
     <div class="admin-settings-grid">
       <label>FX markup (%)<input name="markupPercent" type="number" min="0" max="50" step="0.01" value="${escapeHtml(String(markup))}" ${disabled}></label>
-      <label class="toggle-setting"><input type="checkbox" name="chargeEnabled" ${chargeEnabled ? 'checked' : ''} ${disabled}> Charge customers in USD, NGN, GBP, and EUR <small style="color:rgba(255,255,255,.55)">${chargeEnabled ? 'Enabled' : 'Disabled'}</small></label>
+      <label class="switch"><input type="checkbox" name="chargeEnabled" ${chargeEnabled ? 'checked' : ''} ${disabled}><span class="switch-track" aria-hidden="true"></span><span class="switch-text">Charge customers in USD, NGN, GBP, and EUR <small style="color:rgba(255,255,255,.55)">${chargeEnabled ? 'Enabled' : 'Disabled'}</small></span></label>
     </div>
     ${canEdit
       ? '<div class="admin-inline-actions"><button type="button" class="admin-secondary-button" id="fx-refresh-suggestions">Refresh suggestions</button><button class="auth-primary-button" type="submit">Save and approve</button></div>'
@@ -624,7 +624,7 @@ function renderBookingSettings(settings, canEdit) {
     <fieldset class="admin-weekdays" ${disabled}>
       <legend>Available weekdays</legend>
       <div class="admin-weekdays-grid">
-        ${weekdays.map(([label, value]) => `<label><input type="checkbox" name="availableWeekdays" value="${value}" ${selected.has(value) ? 'checked' : ''} ${disabled}>${label}</label>`).join('')}
+        ${weekdays.map(([label, value]) => `<label class="switch"><input type="checkbox" name="availableWeekdays" value="${value}" ${selected.has(value) ? 'checked' : ''} ${disabled}><span class="switch-track" aria-hidden="true"></span><span class="switch-text">${label}</span></label>`).join('')}
       </div>
     </fieldset>
     <div class="admin-settings-grid">
