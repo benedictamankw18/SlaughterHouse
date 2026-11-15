@@ -673,8 +673,7 @@ if (loginButton) {
       await loadCartFromServer();
       updateCart();
       refreshAuthPanel();
-      setAuthView('account');
-      loadAccountHistory('purchases');
+      closeAuthPanel();
       refreshReviewAccess();
     } catch (error) {
       setAuthMessage('login-message', error.message || 'Could not log in.');

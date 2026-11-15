@@ -481,7 +481,7 @@ test('successful email verification redirects to index.html', async ({ page }) =
   expect(calls.some(call => call.path === '/api/auth/verify-email')).toBe(true);
 });
 
-test('login keeps the session in a cookie and opens the account view', async ({ page }) => {
+test('login keeps the session in a cookie and closes the account panel', async ({ page }) => {
   await mockApi(page);
   await openAuth(page);
 
@@ -489,7 +489,8 @@ test('login keeps the session in a cookie and opens the account view', async ({ 
   await page.locator('#login-password').fill('Secure123');
   await page.getByRole('button', { name: 'Sign in' }).click();
 
-  await expect(page.getByRole('heading', { name: customer.name })).toBeVisible();
+  await expect(page.locator('#customer-auth-panel')).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Account' })).toBeVisible();
   await expect.poll(() => page.evaluate(() => sessionStorage.getItem('customerCsrfToken'))).toBe('test-customer-csrf');
   expect(await page.evaluate(() => sessionStorage.getItem('customerToken'))).toBeNull();
   expect(await page.evaluate(() => document.cookie)).not.toContain('customer_session');
