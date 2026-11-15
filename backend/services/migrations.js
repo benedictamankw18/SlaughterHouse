@@ -817,6 +817,15 @@ const migrations = [
       'CREATE UNIQUE INDEX IF NOT EXISTS uq_carts_cart_id ON carts (cart_id)',
       'ALTER TABLE carts ADD CONSTRAINT carts_scope_check CHECK ((user_id IS NULL) <> (cart_id IS NULL))'
     ]
+  },
+  {
+    // A currency can receive a suggested rate before an administrator approves
+    // one. Relax the NOT NULL constraint so suggestion-only rows can be stored
+    // without creating an approved rate. Existing approved values are kept.
+    version: 45,
+    statements: [
+      'ALTER TABLE fx_rates ALTER COLUMN ghs_per_unit DROP NOT NULL'
+    ]
   }
 ];
 

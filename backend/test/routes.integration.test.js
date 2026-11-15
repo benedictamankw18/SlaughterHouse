@@ -16,6 +16,33 @@ const storage = require('../services/storage');
 const { summarizeResult, toPostgresQuery, withReturningId } = require('../services/postgres');
 const { encryptSecret, generateTotpSecret } = require('../services/admin-mfa');
 
+// The FX suggestion routes call the public rate service. Keep integration tests
+// deterministic and offline-safe by answering only that URL; every other fetch
+// (including requests to the in-process test server) keeps using the real one.
+const realFetch = globalThis.fetch;
+const SUGGESTION_SERVICE_URL = 'https://open.er-api.com/v6/latest/USD';
+const SUGGESTION_SERVICE_PAYLOAD = {
+  result: 'success',
+  rates: { GHS: 12, USD: 1, NGN: 1500, GBP: 0.8, EUR: 0.9 }
+};
+
+test.before(() => {
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input?.url;
+    if (url === SUGGESTION_SERVICE_URL) {
+      return new Response(JSON.stringify(SUGGESTION_SERVICE_PAYLOAD), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return realFetch(input, init);
+  };
+});
+
+test.after(() => {
+  globalThis.fetch = realFetch;
+});
+
 const TEST_SCHEMA = 'slaughterhouse_route_test';
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const routeFiles = [
@@ -202,6 +229,15 @@ function loadRouteRouters(database) {
   loggerModule.loaded = true;
   loggerModule.exports = { debug() {}, error() {}, info() {}, warn() {} };
   require.cache[loggerId] = loggerModule;
+
+  // These modules capture the injected database when they are first required.
+  // Drop them so a second mount in the same process cannot keep using the
+  // previous (already closed) pool.
+  for (const modulePath of ['../session-store', '../services/rate-limit']) {
+    const id = require.resolve(modulePath);
+    originals.set(id, require.cache[id]);
+    delete require.cache[id];
+  }
 
   const routeModules = routeFiles.map(name => {
     const id = require.resolve(`../routes/${name}`);
@@ -1152,6 +1188,178 @@ test('PostgreSQL rejects unsupported payment and order providers', {
     }
   } finally {
     if (paymentId !== null) await pool.query('DELETE FROM payments WHERE id = $1', [paymentId]).catch(() => {});
+    await pool.end();
+  }
+});
+
+test('FX approval stays behind the dedicated endpoint and suggestions never approve', {
+  skip: !testDatabaseUrl && 'Set TEST_DATABASE_URL to the dedicated local slaughterhouse_route_test database.'
+}, async () => {
+  assertSafeTestDatabase(testDatabaseUrl);
+  const pool = new Pool({ connectionString: testDatabaseUrl });
+  const promisePool = createPromisePoolAdapter(pool);
+  let loaded;
+  let server;
+  try {
+    await applyMigrations(pool);
+    await clearTestTables(pool);
+    await seedSettings(promisePool);
+    await promisePool.execute(
+      'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = CURRENT_TIMESTAMP',
+      ['multi_currency_charge_enabled', '0']
+    );
+    await promisePool.execute(
+      'DELETE FROM settings WHERE setting_key IN (?, ?, ?, ?)',
+      ['usd_to_ngn_rate', 'usd_to_gbp_rate', 'usd_to_eur_rate', 'fx_markup_percent']
+    );
+
+    const database = createDatabaseAdapter(pool, promisePool);
+    loaded = loadRouteRouters(database);
+    const sessions = await seedSessions(promisePool);
+
+    // A plain admin may read admin data but must never be able to approve rates.
+    const [adminUser] = await promisePool.execute(
+      `INSERT INTO users (name, email, role, password_hash, email_verified_at, admin_mfa_secret, admin_mfa_enabled_at)
+       VALUES (?, ?, 'admin', ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)`,
+      [
+        'Integration Staff',
+        'integration-staff@example.test',
+        'integration-test-hash',
+        encryptSecret(generateTotpSecret(), 'integration-admin-mfa-encryption-key-32-bytes')
+      ]
+    );
+    const staffToken = crypto.randomBytes(32).toString('hex');
+    await promisePool.execute(
+      'INSERT INTO user_sessions (user_id, token_hash, csrf_token_hash, role, expires_at) VALUES (?, ?, ?, ?, ?)',
+      [
+        adminUser.insertId,
+        crypto.createHash('sha256').update(staffToken).digest('hex'),
+        crypto.createHash('sha256').update(csrfTokenForSession(staffToken)).digest('hex'),
+        'admin',
+        new Date(Date.now() + 60 * 60 * 1000)
+      ]
+    );
+
+    const app = mountIntegrationApp(loaded.routeModules, database, testConfig());
+    server = app.listen(0, '127.0.0.1');
+    await new Promise(resolve => server.once('listening', resolve));
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const adminHeaders = sessionHeaders(sessions.super_admin, 'super_admin');
+    const jsonHeaders = { ...adminHeaders, 'Content-Type': 'application/json' };
+    const send = (method, route, body, headers = jsonHeaders) => fetch(`${baseUrl}${route}`, {
+      method,
+      headers,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    });
+    const settingValue = async key => {
+      const { rows } = await pool.query('SELECT setting_value FROM settings WHERE setting_key = $1', [key]);
+      return rows[0]?.setting_value ?? null;
+    };
+    const fxRow = async currency => {
+      const { rows } = await pool.query(
+        `SELECT currency, ghs_per_unit, suggested_ghs_per_unit, suggested_source, suggested_at, approved_by, approved_at
+         FROM fx_rates WHERE currency = $1`,
+        [currency]
+      );
+      return rows[0] || null;
+    };
+
+    // 1. Legacy settings cannot approve rates or enable charging.
+    const legacyBypass = await send('PUT', '/api/admin/settings', {
+      settings: {
+        usd_to_ghs_rate: '99',
+        usd_to_ngn_rate: '1500',
+        usd_to_gbp_rate: '0.8',
+        usd_to_eur_rate: '0.9',
+        multi_currency_charge_enabled: '1'
+      }
+    });
+    assert.equal(legacyBypass.status, 200);
+    const legacyBody = await legacyBypass.json();
+    assert.deepEqual(legacyBody.settings, []);
+    assert.deepEqual(new Set(legacyBody.ignoredSettings), new Set([
+      'usd_to_ghs_rate',
+      'usd_to_ngn_rate',
+      'usd_to_gbp_rate',
+      'usd_to_eur_rate',
+      'multi_currency_charge_enabled'
+    ]));
+    assert.equal(await settingValue('usd_to_ghs_rate'), '10');
+    assert.equal(await settingValue('multi_currency_charge_enabled'), '0');
+    assert.equal(await fxRow('USD'), null);
+
+    // 2. The deprecated refresh endpoint stores suggestions only.
+    const legacyRefresh = await send('POST', '/api/admin/settings/refresh-rate', {});
+    assert.equal(legacyRefresh.status, 200);
+    const legacyRefreshBody = await legacyRefresh.json();
+    assert.equal(legacyRefreshBody.deprecated, true);
+    assert.equal(legacyRefreshBody.approvedRatesUnchanged, true);
+    assert.equal(await settingValue('usd_to_ghs_rate'), '10');
+    const usdSuggestion = await fxRow('USD');
+    assert.equal(usdSuggestion.ghs_per_unit, null);
+    assert.equal(usdSuggestion.approved_at, null);
+    assert.equal(Number(usdSuggestion.suggested_ghs_per_unit), 12);
+
+    // 3. Non-super-admin staff cannot approve.
+    const staffApproval = await send('PUT', '/api/admin/fx-rates', { rates: { USD: '50' } }, {
+      ...sessionHeaders(staffToken, 'admin'),
+      'Content-Type': 'application/json'
+    });
+    assert.equal(staffApproval.status, 403);
+    assert.equal((await fxRow('USD')).ghs_per_unit, null);
+
+    // 4. Refreshing suggestions persists every currency without approving any.
+    const refresh = await send('POST', '/api/admin/fx-rates/suggestions/refresh', {});
+    assert.equal(refresh.status, 200);
+    const expectedSuggestions = { USD: 12, NGN: 0.008, GBP: 15, EUR: 13.33333333 };
+    for (const [currency, expected] of Object.entries(expectedSuggestions)) {
+      const row = await fxRow(currency);
+      assert.ok(row, `${currency} suggestion row must exist`);
+      assert.equal(row.ghs_per_unit, null, `${currency} must not be approved by a suggestion refresh`);
+      assert.equal(row.approved_at, null);
+      assert.ok(Math.abs(Number(row.suggested_ghs_per_unit) - expected) < 1e-9, `${currency} suggestion persisted`);
+    }
+
+    // 5. Reading stored suggestions is read-only.
+    const beforeRead = await fxRow('USD');
+    const suggestionsRead = await send('GET', '/api/admin/fx-rates/suggestions', undefined, adminHeaders);
+    assert.equal(suggestionsRead.status, 200);
+    const suggestionsBody = await suggestionsRead.json();
+    assert.equal(Number(suggestionsBody.rates.USD), 12);
+    assert.equal(Number(suggestionsBody.rates.NGN), 0.008);
+    const afterRead = await fxRow('USD');
+    assert.equal(
+      new Date(afterRead.suggested_at).getTime(),
+      new Date(beforeRead.suggested_at).getTime(),
+      'GET must not rewrite stored suggestions'
+    );
+
+    // 6. Only the dedicated endpoint approves, and it mirrors legacy display settings.
+    const approval = await send('PUT', '/api/admin/fx-rates', {
+      rates: { USD: '12.5', NGN: '0.008', GBP: '15', EUR: '13.33333333' }
+    });
+    assert.equal(approval.status, 200);
+    const approvedUsd = await fxRow('USD');
+    assert.equal(Number(approvedUsd.ghs_per_unit), 12.5);
+    assert.ok(approvedUsd.approved_at);
+    assert.ok(approvedUsd.approved_by);
+    assert.equal(await settingValue('usd_to_ghs_rate'), '12.500000');
+    assert.equal(await settingValue('usd_to_ngn_rate'), '1562.500000');
+    assert.equal(await settingValue('usd_to_gbp_rate'), '0.833333');
+    assert.equal(await settingValue('usd_to_eur_rate'), '0.937500');
+    assert.equal(await settingValue('multi_currency_charge_enabled'), '0');
+
+    // 7. A markup-only save never re-approves or moves the approval timestamp.
+    const approvedAtBefore = new Date(approvedUsd.approved_at).toISOString();
+    const markupOnly = await send('PUT', '/api/admin/fx-rates', { settings: { markupPercent: '3.25' } });
+    assert.equal(markupOnly.status, 200);
+    const approvedUsdAfter = await fxRow('USD');
+    assert.equal(new Date(approvedUsdAfter.approved_at).toISOString(), approvedAtBefore);
+    assert.equal(Number(approvedUsdAfter.ghs_per_unit), 12.5);
+    assert.equal(await settingValue('fx_markup_percent'), '3.25');
+  } finally {
+    if (server?.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    loaded?.restore();
     await pool.end();
   }
 });

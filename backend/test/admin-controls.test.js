@@ -7,25 +7,49 @@ test('business settings accepts only known non-negative currency values', () => 
     booking_fee_mixtape_ghs: '750.50',
     booking_ep_album_discount_percent: 15,
     beat_default_exclusive_usd: 420,
-    beat_request_license_basic_ghs: 1.15,
-    usd_to_ghs_rate: '12.345678'
+    beat_request_license_basic_ghs: 1.15
   });
   assert.deepEqual(result.value, [
     ['booking_fee_mixtape_ghs', '750.50'],
     ['booking_ep_album_discount_percent', '15.00'],
     ['beat_default_exclusive_usd', '420.00'],
-    ['beat_request_license_basic_ghs', '1.15'],
-    ['usd_to_ghs_rate', '12.345678']
+    ['beat_request_license_basic_ghs', '1.15']
   ]);
+  assert.deepEqual(result.ignored, []);
   assert.equal(validateSettingUpdates({ unknown_setting: 1 }).error.includes('cannot be changed'), true);
   assert.equal(validateSettingUpdates({ beat_default_basic_usd: -1 }).error.includes('non-negative'), true);
   assert.equal(validateSettingUpdates({ beat_default_basic_usd: 1.001 }).error.includes('two decimal places'), true);
-  assert.equal(validateSettingUpdates({ usd_to_ghs_rate: 0 }).error.includes('greater than zero'), true);
-  assert.equal(validateSettingUpdates({ usd_to_ghs_rate: 1000000 }).error.includes('less than 1000000'), true);
-  assert.equal(validateSettingUpdates({ usd_to_ghs_rate: 1.0000001 }).error.includes('at most 6 decimal places'), true);
   assert.equal(validateSettingUpdates({ booking_ep_album_discount_percent: 100 }).error.includes('less than 100%'), true);
   assert.equal(validateSettingUpdates([]).error.includes('object'), true);
   assert.ok(Object.keys(BUSINESS_SETTINGS).length > 0);
+  assert.equal(Object.hasOwn(BUSINESS_SETTINGS, 'usd_to_ghs_rate'), false);
+  assert.equal(Object.hasOwn(BUSINESS_SETTINGS, 'multi_currency_charge_enabled'), false);
+});
+
+test('legacy FX keys are accepted but never applied through business settings', () => {
+  const result = validateSettingUpdates({
+    usd_to_ghs_rate: '12.345678',
+    usd_to_ngn_rate: '1500',
+    usd_to_gbp_rate: '0.8',
+    usd_to_eur_rate: '0.9',
+    multi_currency_charge_enabled: '1'
+  });
+  assert.deepEqual(result.value, []);
+  assert.deepEqual(result.ignored, [
+    'usd_to_ghs_rate',
+    'usd_to_ngn_rate',
+    'usd_to_gbp_rate',
+    'usd_to_eur_rate',
+    'multi_currency_charge_enabled'
+  ]);
+
+  const mixed = validateSettingUpdates({
+    booking_fee_mixtape_ghs: '700',
+    usd_to_ghs_rate: '99',
+    multi_currency_charge_enabled: '1'
+  });
+  assert.deepEqual(mixed.value, [['booking_fee_mixtape_ghs', '700.00']]);
+  assert.deepEqual(mixed.ignored, ['usd_to_ghs_rate', 'multi_currency_charge_enabled']);
 });
 
 test('date range accepts valid optional dates and rejects invalid or reversed ranges', () => {

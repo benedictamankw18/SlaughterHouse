@@ -102,7 +102,10 @@ async function getApprovedRate(database, currency, now = Date.now()) {
     throw fxError(`No approved ${normalized} exchange rate is configured. Approve one in Admin before charging in ${normalized}.`, 'FX_RATE_INVALID');
   }
   const parsed = parseDecimalString(row.ghs_per_unit, RATE_DECIMALS);
-  if (!parsed || parsed.value <= 0 || parsed.value >= MAX_RATE) {
+  if (!parsed) {
+    throw fxError(`No approved ${normalized} exchange rate is configured. Approve one in Admin before charging in ${normalized}.`, 'FX_RATE_INVALID');
+  }
+  if (parsed.value <= 0 || parsed.value >= MAX_RATE) {
     throw fxError(`The approved ${normalized} exchange rate is invalid. Approve a new rate in Admin.`, 'FX_RATE_INVALID');
   }
   const approvedAt = row.approved_at ? new Date(row.approved_at).getTime() : NaN;
@@ -307,6 +310,60 @@ async function fetchSuggestedRates({ fetchImpl = globalThis.fetch, now = Date.no
   return value;
 }
 
+/**
+ * Store suggested rates without ever touching an approved rate.
+ *
+ * `runner` is a transaction runner exposing `run` and `all`. Missing currency
+ * rows are inserted with `ghs_per_unit = NULL`; existing approved values,
+ * `approved_by`, and `approved_at` are left exactly as they were.
+ */
+async function persistSuggestedRates(runner, suggestion) {
+  if (!runner || typeof runner.run !== 'function' || typeof runner.all !== 'function') {
+    throw fxError('Storing suggested rates requires a database transaction.', 'FX_SUGGESTION_PERSIST_FAILED');
+  }
+  const rates = suggestion?.rates;
+  if (!rates || typeof rates !== 'object' || Array.isArray(rates)) {
+    throw fxError('The exchange-rate suggestion service returned an invalid response.', 'FX_SUGGESTION_UNAVAILABLE');
+  }
+  const source = String(suggestion.source || SUGGESTION_SOURCE);
+  const expected = new Map();
+  for (const currency of FOREIGN_CURRENCIES) {
+    const parsed = parseDecimalString(rates[currency], RATE_DECIMALS);
+    if (!parsed || parsed.value <= 0 || parsed.value >= MAX_RATE) {
+      throw fxError(`The suggested ${currency} rate is invalid.`, 'FX_SUGGESTION_PERSIST_FAILED');
+    }
+    expected.set(currency, parsed.value);
+  }
+  for (const [currency, value] of expected) {
+    await runner.run(
+      `INSERT INTO fx_rates (
+         currency, ghs_per_unit, suggested_ghs_per_unit, suggested_source, suggested_at
+       ) VALUES (?, NULL, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT (currency) DO UPDATE SET
+         suggested_ghs_per_unit = EXCLUDED.suggested_ghs_per_unit,
+         suggested_source = EXCLUDED.suggested_source,
+         suggested_at = EXCLUDED.suggested_at,
+         updated_at = CURRENT_TIMESTAMP`,
+      [currency, value, source]
+    );
+  }
+  const rows = await runner.all(
+    'SELECT currency, suggested_ghs_per_unit FROM fx_rates WHERE currency IN (?, ?, ?, ?)',
+    [...FOREIGN_CURRENCIES]
+  );
+  const stored = new Map((rows || []).map(row => [
+    String(row.currency).toUpperCase(),
+    parseDecimalString(row.suggested_ghs_per_unit, RATE_DECIMALS)
+  ]));
+  for (const [currency, value] of expected) {
+    const persisted = stored.get(currency);
+    if (!persisted || Math.abs(persisted.value - value) > 1e-9) {
+      throw fxError(`The suggested ${currency} rate could not be saved. Try again.`, 'FX_SUGGESTION_PERSIST_FAILED');
+    }
+  }
+  return { source, rates: Object.fromEntries(expected) };
+}
+
 module.exports = {
   SUPPORTED_CURRENCIES,
   FOREIGN_CURRENCIES,
@@ -329,5 +386,6 @@ module.exports = {
   validateApprovedRate,
   validateMarkupPercent,
   fetchSuggestedRates,
+  persistSuggestedRates,
   clearSuggestionCache
 };

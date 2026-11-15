@@ -415,11 +415,16 @@ locked foreign-currency amount, FX rate, markup, payment provider, and quote
 expiry. Requesting a currency whose feature flag is off or whose rate is stale
 returns a machine-readable `FX_*` error instead of a converted total.
 
-Administrators read approved rates with `GET /api/admin/fx-rates`, fetch
-advisory market suggestions with `GET /api/admin/fx-rates/suggestions`, and
-approve rates or the FX markup with `PUT /api/admin/fx-rates`. Suggestions are
-never used to charge customers; only an approved rate within the last 24 hours
-can price a non-GHS payment.
+Administrators read approved rates and stored suggestions with
+`GET /api/admin/fx-rates`, read only the stored suggestions with
+`GET /api/admin/fx-rates/suggestions`, and refresh suggestions from the market
+service with `POST /api/admin/fx-rates/suggestions/refresh`. Only
+`PUT /api/admin/fx-rates` can approve rates or the FX markup; it also mirrors
+approved rates into the legacy `usd_to_*` display settings. Suggestions are
+never used to charge customers. The legacy `PUT /api/admin/settings` accepts FX
+keys but ignores them, and `POST /api/admin/settings/refresh-rate` is a
+deprecated alias that only refreshes suggestions. Only an approved rate within
+the last 24 hours can price a non-GHS payment.
 
 Administrators can transition paid bookings with
 `PATCH /api/admin/bookings/:id/status` using `paid`, `confirmed`, `completed`,

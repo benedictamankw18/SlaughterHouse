@@ -6,12 +6,14 @@ const {
   RATE_MAX_AGE_MS,
   computeCharge,
   getChargeQuote,
+  getApprovedRate,
   getFxSettings,
   listFxRates,
   roundUpTo,
   validateApprovedRate,
   validateMarkupPercent,
   fetchSuggestedRates,
+  persistSuggestedRates,
   clearSuggestionCache
 } = require('../services/fx');
 
@@ -34,6 +36,48 @@ function fakeDatabase({ settings = {}, rates = {} } = {}) {
         return callback(null, rates[parameters[0]] || null);
       }
       return callback(new Error(`Unexpected query: ${query}`));
+    }
+  };
+}
+
+function fakeSuggestionRunner({ rows = {} } = {}) {
+  const store = new Map(Object.entries(rows).map(([currency, row]) => [currency, { ...row }]));
+  return {
+    store,
+    runner: {
+      async run(query, parameters) {
+        if (/INSERT INTO fx_rates/.test(query)) {
+          const [currency, suggested, source] = parameters;
+          const existing = store.get(currency);
+          if (existing) {
+            existing.suggested_ghs_per_unit = String(suggested);
+            existing.suggested_source = source;
+            existing.suggested_at = new Date();
+          } else {
+            store.set(currency, {
+              currency,
+              ghs_per_unit: null,
+              suggested_ghs_per_unit: String(suggested),
+              suggested_source: source,
+              suggested_at: new Date(),
+              approved_by: null,
+              approved_at: null,
+              updated_at: new Date()
+            });
+          }
+          return;
+        }
+        throw new Error(`Unexpected run: ${query}`);
+      },
+      async all(query, parameters) {
+        if (/FROM fx_rates WHERE currency IN/.test(query)) {
+          return parameters
+            .map(currency => store.get(currency))
+            .filter(Boolean)
+            .map(row => ({ currency: row.currency, suggested_ghs_per_unit: row.suggested_ghs_per_unit }));
+        }
+        throw new Error(`Unexpected all: ${query}`);
+      }
     }
   };
 }
@@ -246,6 +290,120 @@ test('fetchSuggestedRates rejects upstream failures and malformed payloads', asy
   clearSuggestionCache();
   await assert.rejects(
     fetchSuggestedRates({ fetchImpl: async () => { throw new Error('offline'); }, now: 3 }),
+    error => error.code === 'FX_SUGGESTION_UNAVAILABLE'
+  );
+});
+
+test('getApprovedRate rejects suggestion-only rows without an approved rate', async () => {
+  const now = Date.now();
+  const database = fakeDatabase({
+    rates: {
+      USD: {
+        currency: 'USD',
+        ghs_per_unit: null,
+        suggested_ghs_per_unit: '12.4',
+        suggested_source: 'open.er-api.com',
+        suggested_at: new Date(now - 1000),
+        approved_at: null,
+        updated_at: new Date(now - 1000)
+      }
+    }
+  });
+  await assert.rejects(
+    getApprovedRate(database, 'USD', now),
+    error => error.code === 'FX_RATE_INVALID' && /No approved USD/.test(error.message)
+  );
+});
+
+test('listFxRates reports suggestion-only rows as unconfigured but keeps the suggestion', async () => {
+  const now = Date.now();
+  const database = fakeDatabase({
+    rates: {
+      USD: {
+        currency: 'USD',
+        ghs_per_unit: null,
+        suggested_ghs_per_unit: '12.4',
+        suggested_source: 'open.er-api.com',
+        suggested_at: new Date(now - 1000),
+        approved_at: null,
+        updated_at: new Date(now - 1000)
+      }
+    }
+  });
+  const rates = await listFxRates(database, now);
+  const usd = rates.find(rate => rate.currency === 'USD');
+  assert.equal(usd.configured, false);
+  assert.equal(usd.midRate, null);
+  assert.equal(usd.approvedAt, null);
+  assert.equal(usd.stale, true);
+  assert.equal(usd.suggestion.rate, 12.4);
+  assert.equal(usd.suggestion.source, 'open.er-api.com');
+  assert.equal(usd.suggestion.at, new Date(now - 1000).toISOString());
+});
+
+test('persistSuggestedRates stores suggestions without approving rates', async () => {
+  const approvedAt = new Date(Date.now() - 5000);
+  const { runner, store } = fakeSuggestionRunner({
+    rows: {
+      USD: {
+        currency: 'USD',
+        ghs_per_unit: '12.50000000',
+        suggested_ghs_per_unit: '12.1',
+        suggested_source: 'previous-source',
+        suggested_at: approvedAt,
+        approved_by: 'admin-1',
+        approved_at: approvedAt,
+        updated_at: approvedAt
+      }
+    }
+  });
+  const suggestion = {
+    source: 'open.er-api.com',
+    rates: { USD: '12.4', NGN: '0.008', GBP: '15', EUR: '13.33333333' }
+  };
+  const result = await persistSuggestedRates(runner, suggestion);
+  assert.equal(result.source, 'open.er-api.com');
+  assert.deepEqual(result.rates, { USD: 12.4, NGN: 0.008, GBP: 15, EUR: 13.33333333 });
+
+  const usd = store.get('USD');
+  assert.equal(usd.ghs_per_unit, '12.50000000');
+  assert.equal(usd.approved_by, 'admin-1');
+  assert.equal(usd.approved_at, approvedAt);
+  assert.equal(usd.suggested_ghs_per_unit, '12.4');
+  assert.equal(usd.suggested_source, 'open.er-api.com');
+
+  for (const currency of ['NGN', 'GBP', 'EUR']) {
+    const row = store.get(currency);
+    assert.ok(row, `${currency} suggestion row must be created`);
+    assert.equal(row.ghs_per_unit, null, `${currency} must not gain an approved rate`);
+    assert.equal(row.approved_at, null);
+    assert.equal(row.approved_by, null);
+    assert.equal(row.suggested_source, 'open.er-api.com');
+  }
+});
+
+test('persistSuggestedRates fails closed when suggestions cannot be verified', async () => {
+  await assert.rejects(
+    persistSuggestedRates({ run: async () => {}, all: async () => [] }, {
+      source: 'open.er-api.com',
+      rates: { USD: '12.4', NGN: '0.008', GBP: '15', EUR: '13.33' }
+    }),
+    error => error.code === 'FX_SUGGESTION_PERSIST_FAILED'
+  );
+});
+
+test('persistSuggestedRates validates suggestions and requires a transaction runner', async () => {
+  await assert.rejects(
+    persistSuggestedRates(null, { rates: {} }),
+    error => error.code === 'FX_SUGGESTION_PERSIST_FAILED'
+  );
+  const { runner } = fakeSuggestionRunner();
+  await assert.rejects(
+    persistSuggestedRates(runner, { source: 'open.er-api.com', rates: { USD: '12.4', NGN: '0', GBP: '15', EUR: '13.33' } }),
+    error => error.code === 'FX_SUGGESTION_PERSIST_FAILED'
+  );
+  await assert.rejects(
+    persistSuggestedRates(runner, { source: 'open.er-api.com', rates: null }),
     error => error.code === 'FX_SUGGESTION_UNAVAILABLE'
   );
 });

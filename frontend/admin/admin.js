@@ -525,11 +525,10 @@ function renderReport(report) {
   chart.innerHTML = `${reportState.chart === 'histogram' ? renderHistogramChart(periods, series) : renderLineChart(periods, series)}${renderAnalyticsLegend(series)}`;
 }
 
-function renderBusinessSettings(settings, canEdit, suggestedUsdToGhsRate, suggestedUsdToNgnRate, suggestedUsdToGbpRate, suggestedUsdToEurRate) {
+function renderBusinessSettings(settings, canEdit) {
   const form = $('#business-settings-form');
+  if (!form) return;
   const byKey = new Map(settings.map(setting => [setting.key, setting]));
-
-  const isRateEditEnabled = key => localStorage.getItem(key) === 'true';
 
   const sections = [
     {
@@ -559,54 +558,57 @@ function renderBusinessSettings(settings, canEdit, suggestedUsdToGhsRate, sugges
         'beat_default_unlimited_usd',
         'beat_default_exclusive_usd'
       ]
-    },
-    {
-      heading: 'Exchange rates',
-      keys: ['usd_to_ghs_rate', 'usd_to_ngn_rate', 'usd_to_gbp_rate', 'usd_to_eur_rate', 'multi_currency_charge_enabled']
     }
   ];
 
   const renderSetting = setting => {
-    const isGhsRate = setting.key === 'usd_to_ghs_rate';
-    const isNgnRate = setting.key === 'usd_to_ngn_rate';
-    const isGbpRate = setting.key === 'usd_to_gbp_rate';
-    const isEurRate = setting.key === 'usd_to_eur_rate';
-    const isMultiCurrency = setting.key === 'multi_currency_charge_enabled';
-    const exchangeRate = isGhsRate || isNgnRate || isGbpRate || isEurRate;
     const updatedAt = setting.updatedAt ? new Date(setting.updatedAt).toLocaleString() : null;
-    const chargeEnabled = setting.value === '1' || setting.value === true || setting.value === 'true';
-    let rateStatus = '';
-    if (isMultiCurrency) {
-      const checked = chargeEnabled ? 'checked' : '';
-      return `<label class="toggle-setting"><input type="checkbox" name="${escapeHtml(setting.key)}" ${checked ? 'checked' : ''} ${canEdit ? '' : 'disabled'}> ${escapeHtml(setting.label)} <small style="color:rgba(255,255,255,.55)">${chargeEnabled ? 'Enabled' : 'Disabled'}</small></label>`;
-    }
-    if (exchangeRate) {
-      const suggested = isGhsRate ? suggestedUsdToGhsRate : isNgnRate ? suggestedUsdToNgnRate : isGbpRate ? suggestedUsdToGbpRate : suggestedUsdToEurRate;
-      const unit = isGhsRate ? 'GHS' : isNgnRate ? 'NGN' : isGbpRate ? 'GBP' : 'EUR';
-      const suggestedHtml = suggested != null
-        ? `<small class="rate-suggested">Suggested (online): ${escapeHtml(suggested.toFixed(6))} ${unit} per USD</small>`
-        : `<small class="rate-suggested">Suggested ${unit} rate unavailable right now.</small>`;
-      const refreshBtn = canEdit
-        ? `<button type="button" class="rate-refresh-btn" data-rate="${setting.key}" title="Refresh ${unit} rate from online service">↻ Refresh from online</button>`
-        : '';
-      const useSuggestedBtn = suggested != null && canEdit
-        ? `<button type="button" class="rate-use-suggested" data-rate="${setting.key}" data-suggested="${escapeHtml(suggested.toFixed(6))}" title="Use the suggested online ${unit} rate in the field above">Use suggested</button>`
-        : '';
-      const rateKey = `ultbigboyRateEditEnabled:${setting.key}`;
-      const rateEditEnabled = canEdit && isRateEditEnabled(rateKey);
-      const toggle = canEdit
-        ? `<label class="rate-edit-toggle"><input type="checkbox" name="rateEditEnabled" data-rate="${setting.key}" ${rateEditEnabled ? 'checked' : ''}><span class="toggle-slider"></span><span>Allow editing rate</span></label>`
-        : '';
-      rateStatus = `${updatedAt ? `<small>Configured ${unit} rate updated ${escapeHtml(updatedAt)}. ${setting.fresh ? 'Current.' : 'STALE \u2014 beat checkout is disabled until refreshed.'} Rates expire after 24 hours.</small>` : `<small>No ${unit} exchange rate is configured. Beat checkout is unavailable until one is saved.</small>`} ${suggestedHtml} ${refreshBtn} ${useSuggestedBtn} ${toggle}`;
-    }
-    const inputDisabled = exchangeRate && !(canEdit && isRateEditEnabled(`ultbigboyRateEditEnabled:${setting.key}`));
-    return `<label>${escapeHtml(setting.label)}<input name="${escapeHtml(setting.key)}" type="number" min="${exchangeRate ? '0.000001' : '0'}" max="${exchangeRate ? '999999.999999' : '100000000'}" step="${exchangeRate ? '0.000001' : '0.01'}" value="${escapeHtml(setting.value)}" ${canEdit ? 'required' : 'disabled'}${inputDisabled ? ' disabled' : ''}>${rateStatus}</label>`;
+    return `<label>${escapeHtml(setting.label)}<input name="${escapeHtml(setting.key)}" type="number" min="0" max="100000000" step="0.01" value="${escapeHtml(setting.value)}" ${canEdit ? 'required' : 'disabled'}>${updatedAt ? `<small>Updated ${escapeHtml(updatedAt)}</small>` : ''}</label>`;
   };
 
   form.innerHTML = `${sections.map(section => {
     const labels = section.keys.map(key => byKey.get(key)).filter(Boolean).map(renderSetting).join('');
     return `<h3 class="admin-settings-section">${escapeHtml(section.heading)}</h3><div class="admin-settings-grid">${labels}</div>`;
   }).join('')}${canEdit ? '<button class="auth-primary-button" type="submit">Save business settings</button>' : '<p>Only a super-admin can edit business settings.</p>'}`;
+}
+
+let fxRatesState = null;
+
+function renderFxRates(data) {
+  const form = $('#fx-rates-form');
+  if (!form) return;
+  const canEdit = Boolean(data?.canEdit);
+  const settings = data?.settings || {};
+  const rates = Array.isArray(data?.rates) ? data.rates : [];
+  const disabled = canEdit ? '' : 'disabled';
+  const markup = Number(settings.markupPercent ?? 0);
+  const chargeEnabled = Boolean(settings.chargeEnabled);
+  const rateCards = rates.map(rate => {
+    const approvedAt = rate.approvedAt ? new Date(rate.approvedAt).toLocaleString() : null;
+    const suggestedAt = rate.suggestion?.at ? new Date(rate.suggestion.at).toLocaleString() : null;
+    const status = rate.configured
+      ? `Approved: ${Number(rate.midRate).toFixed(8)} GHS per 1 ${rate.currency}${approvedAt ? ` on ${approvedAt}` : ''}. ${rate.stale ? 'STALE - approve a fresh rate.' : 'Current.'}`
+      : `No approved ${rate.currency} rate.`;
+    const suggested = rate.suggestion
+      ? `Suggested: ${Number(rate.suggestion.rate).toFixed(8)} GHS per 1 ${rate.currency}${suggestedAt ? ` (${suggestedAt})` : ''}.`
+      : `No stored ${rate.currency} suggestion. Refresh suggestions to fetch one.`;
+    const useButton = canEdit && rate.suggestion
+      ? `<button type="button" class="rate-use-suggested" data-currency="${escapeHtml(rate.currency)}" data-suggested="${escapeHtml(String(rate.suggestion.rate))}">Use suggested</button>`
+      : '';
+    return `<label>${escapeHtml(rate.currency)} - GHS per 1 ${escapeHtml(rate.currency)}<input name="rate-${escapeHtml(rate.currency)}" data-currency="${escapeHtml(rate.currency)}" type="number" min="0.00000001" max="999999.99999999" step="0.00000001" value="${rate.midRate != null ? escapeHtml(String(rate.midRate)) : ''}" placeholder="Not approved" ${disabled}><small class="rate-status">${escapeHtml(status)}</small><small class="rate-suggested">${escapeHtml(suggested)}</small>${useButton}</label>`;
+  }).join('');
+  form.innerHTML = `
+    <h3 class="admin-settings-section">Approved rates and suggestions</h3>
+    <div class="admin-settings-grid">${rateCards}</div>
+    <h3 class="admin-settings-section">Charging</h3>
+    <div class="admin-settings-grid">
+      <label>FX markup (%)<input name="markupPercent" type="number" min="0" max="50" step="0.01" value="${escapeHtml(String(markup))}" ${disabled}></label>
+      <label class="toggle-setting"><input type="checkbox" name="chargeEnabled" ${chargeEnabled ? 'checked' : ''} ${disabled}> Charge customers in USD, NGN, GBP, and EUR <small style="color:rgba(255,255,255,.55)">${chargeEnabled ? 'Enabled' : 'Disabled'}</small></label>
+    </div>
+    ${canEdit
+      ? '<div class="admin-inline-actions"><button type="button" class="admin-secondary-button" id="fx-refresh-suggestions">Refresh suggestions</button><button class="auth-primary-button" type="submit">Save and approve</button></div>'
+      : '<p>Only a super-admin can approve exchange rates.</p>'}
+  `;
 }
 function renderBookingSettings(settings, canEdit) {
   const form = $('#booking-settings-form');
@@ -1004,10 +1006,21 @@ async function loadAuditLogs() {
 async function loadBusinessSettings() {
   try {
     const data = await api('/api/admin/settings');
-    renderBusinessSettings(data.settings || [], Boolean(data.canEdit), data.suggestedUsdToGhsRate ?? null, data.suggestedUsdToNgnRate ?? null, data.suggestedUsdToGbpRate ?? null, data.suggestedUsdToEurRate ?? null);
+    renderBusinessSettings(data.settings || [], Boolean(data.canEdit));
     $('#business-settings-message').textContent = '';
   } catch (error) {
     message('business-settings-message', error.message || 'Could not load business settings.', true);
+  }
+}
+
+async function loadFxRates() {
+  try {
+    const data = await api('/api/admin/fx-rates');
+    fxRatesState = data;
+    renderFxRates(data);
+    $('#fx-rates-message').textContent = '';
+  } catch (error) {
+    message('fx-rates-message', error.message || 'Could not load exchange rates.', true);
   }
 }
 
@@ -1089,6 +1102,7 @@ async function loadDashboard() {
   loadEmailDeliveries();
   loadLicenseRights();
   loadBusinessSettings();
+  loadFxRates();
   loadBookingSettings();
   loadStaff();
   loadCertificates();
@@ -1305,11 +1319,15 @@ $('#audit-filter').addEventListener('submit', event => {
 $('#business-settings-form').addEventListener('submit', async event => {
   event.preventDefault();
   const form = event.currentTarget;
-  const settings = Object.fromEntries([...form.elements].filter(element => element.name && !element.name.startsWith('rateEditEnabled')).map(element => {
+  const settings = Object.fromEntries([...form.elements].filter(element => element.name && !element.disabled).map(element => {
     if (element.type === 'checkbox') return [element.name, element.checked ? '1' : '0'];
     return [element.name, element.value];
   }));
-  if (!window.confirm('Save these business settings? Price and exchange-rate changes affect future checkouts and requests.')) return;
+  if (!Object.keys(settings).length) {
+    message('business-settings-message', 'No editable business settings to save.', true);
+    return;
+  }
+  if (!window.confirm('Save these business settings? Price changes affect future checkouts and requests.')) return;
   const stopBusy = startButtonBusy(form.querySelector('button[type="submit"]'), 'Saving…');
   if (!stopBusy) return;
   try {
@@ -1323,53 +1341,74 @@ $('#business-settings-form').addEventListener('submit', async event => {
   }
 });
 
-$('#business-settings-form').addEventListener('click', async event => {
-  // Allow editing rate toggle (checkbox, not a button)
-  const toggle = event.target.closest('.rate-edit-toggle');
-  if (toggle) {
-    const checkbox = toggle.querySelector('input[type="checkbox"]');
-    const rateKey = checkbox.getAttribute('data-rate');
-    localStorage.setItem(`ultbigboyRateEditEnabled:${rateKey}`, checkbox.checked);
-    await loadBusinessSettings();
+$('#fx-rates-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const current = fxRatesState;
+  if (!current) return;
+  const rates = {};
+  for (const input of form.querySelectorAll('input[data-currency]')) {
+    const currency = input.getAttribute('data-currency');
+    const value = input.value.trim();
+    if (!currency || !value) continue;
+    const approved = current.rates.find(rate => rate.currency === currency)?.midRate;
+    if (approved != null && Number(value) === Number(approved)) continue;
+    rates[currency] = value;
+  }
+  const settings = {};
+  const markupInput = form.elements.markupPercent;
+  if (markupInput && markupInput.value.trim() !== '' && Number(markupInput.value) !== Number(current.settings.markupPercent)) {
+    settings.markupPercent = markupInput.value.trim();
+  }
+  const chargeInput = form.elements.chargeEnabled;
+  if (chargeInput && chargeInput.checked !== Boolean(current.settings.chargeEnabled)) {
+    settings.chargeEnabled = chargeInput.checked;
+  }
+  if (!Object.keys(rates).length && !Object.keys(settings).length) {
+    message('fx-rates-message', 'No exchange-rate changes to approve.');
     return;
   }
-
-  const button = event.target.closest('button');
-  if (!button) return;
-
-  // Refresh rate from online service
-  if (button.classList.contains('rate-refresh-btn')) {
-    event.preventDefault();
-    const stopBusy = startButtonBusy(button, 'Refreshing…');
-    if (!stopBusy) return;
-    try {
-      const result = await api('/api/admin/settings/refresh-rate', { method: 'POST' });
-      const parts = [`Rate refreshed from online: ${result.setting.value} GHS per USD.`];
-      if (result.ngnSetting) {
-        parts.push(`NGN: ${result.ngnSetting.value} per USD.`);
-      }
-      message('business-settings-message', parts.join(' '));
-      await loadBusinessSettings();
-    } catch (error) {
-      message('business-settings-message', error.message || 'Could not refresh the rate from online.', true);
-    } finally {
-      stopBusy();
-    }
-    return;
+  if (!window.confirm('Approve these exchange-rate changes? They affect future foreign-currency checkouts.')) return;
+  const stopBusy = startButtonBusy(form.querySelector('button[type="submit"]'), 'Saving…');
+  if (!stopBusy) return;
+  try {
+    await api('/api/admin/fx-rates', { method: 'PUT', body: JSON.stringify({ rates, settings }) });
+    await loadFxRates();
+    message('fx-rates-message', 'Exchange rates saved and approved.');
+  } catch (error) {
+    message('fx-rates-message', error.message || 'Could not save exchange rates.', true);
+  } finally {
+    stopBusy();
   }
+});
 
-  // Use suggested rate
-  if (button.classList.contains('rate-use-suggested')) {
+$('#fx-rates-form').addEventListener('click', async event => {
+  const useButton = event.target.closest('.rate-use-suggested');
+  if (useButton) {
     event.preventDefault();
-    const rateKey = button.getAttribute('data-rate');
-    const suggested = button.getAttribute('data-suggested');
-    if (!suggested || !rateKey) return;
-    const input = document.querySelector(`#business-settings-form input[name="${rateKey}"]`);
-    if (input) {
+    const currency = useButton.getAttribute('data-currency');
+    const suggested = useButton.getAttribute('data-suggested');
+    const input = document.querySelector(`#fx-rates-form input[data-currency="${currency}"]`);
+    if (input && suggested) {
       input.value = suggested;
-      input.dispatchEvent(new Event('input', { bubbles: true }));
+      message('fx-rates-message', `Suggestion filled in for ${currency}. Review it and save to approve.`);
     }
-    message('business-settings-message', `Suggested rate ${suggested} applied to ${rateKey}. Save to apply.`);
+    return;
+  }
+
+  const refreshButton = event.target.closest('#fx-refresh-suggestions');
+  if (!refreshButton) return;
+  event.preventDefault();
+  const stopBusy = startButtonBusy(refreshButton, 'Refreshing…');
+  if (!stopBusy) return;
+  try {
+    await api('/api/admin/fx-rates/suggestions/refresh', { method: 'POST' });
+    await loadFxRates();
+    message('fx-rates-message', 'Suggestions refreshed. Approved rates were not changed.');
+  } catch (error) {
+    message('fx-rates-message', error.message || 'Could not refresh exchange-rate suggestions.', true);
+  } finally {
+    stopBusy();
   }
 });
 
