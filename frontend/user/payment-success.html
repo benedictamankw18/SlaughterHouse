@@ -62,10 +62,14 @@
 					// Clear the server-side cart after successful payment
 					try {
 						const cartId = sessionStorage.getItem('ultbigboyCartId');
-						if (cartId) {
+						const csrfToken = sessionStorage.getItem('customerCsrfToken');
+						if (cartId || csrfToken) {
 							await fetch(`${apiBaseUrl || ''}/api/cart`, {
 								method: 'DELETE',
-								headers: { 'X-Cart-Id': cartId }
+								headers: {
+									...(cartId ? { 'X-Cart-Id': cartId } : {}),
+									...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {})
+								}
 							});
 							sessionStorage.removeItem('ultbigboyCartId');
 						}

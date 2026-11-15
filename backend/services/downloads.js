@@ -33,6 +33,9 @@ function verifyDownloadToken(token, reference, productId, license, format) {
 function getDownloadItems(order, apiPublicUrl, licenseRights = null) {
   const rightsMap = licenseRights || DEFAULT_LICENSE_RIGHTS;
   if (!order || typeof order !== 'object' || order.items_json == null) return [];
+  // Only fully paid orders can download. Synthetic callers that do not include a
+  // status keep their previous behavior; real order records never do.
+  if (order.status != null && !isDownloadableOrderStatus(order.status)) return [];
 
   const items = parseOrderItems(order.items_json);
   if (!items) return [];

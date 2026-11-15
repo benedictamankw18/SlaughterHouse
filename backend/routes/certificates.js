@@ -22,7 +22,10 @@ const { createLicenseCertificatePdf } = require('../services/license-certificate
 
 const router = express.Router();
 const { requireAdmin, requireCustomer } = sessions;
-router.use(rateLimit({ windowMs: 60 * 1000, max: 60, message: 'Too many certificate requests. Try again shortly.' }));
+router.use(
+  ['/certificates', '/customer/licenses', '/admin/certificates'],
+  rateLimit({ windowMs: 60 * 1000, max: 60, message: 'Too many certificate requests. Try again shortly.' })
+);
 
 const queryRows = (query, parameters = []) => new Promise((resolve, reject) => database.all(query, parameters, (error, rows) => error ? reject(error) : resolve(rows || [])));
 const queryOne = (query, parameters = []) => new Promise((resolve, reject) => database.get(query, parameters, (error, row) => error ? reject(error) : resolve(row)));
