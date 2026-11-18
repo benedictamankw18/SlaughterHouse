@@ -11,7 +11,6 @@
     "test": "node --test \"test/*.test.js\"",
     "test:integration": "node --test test/routes.integration.test.js",
     "test:browser": "playwright test -c playwright.config.js",
-    "migrate:postgres": "node migrate-to-postgres.js",
     "admin:create": "node scripts/create-admin.js",
     "backup": "node scripts/backup.js",
     "restore": "node scripts/restore.js",
@@ -36,7 +35,6 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
-    "@playwright/test": "^1.65.0",
-    "sqlite3": "^6.0.1"
+    "@playwright/test": "^1.65.0"
   }
 }

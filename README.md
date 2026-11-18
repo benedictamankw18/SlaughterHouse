@@ -78,7 +78,6 @@ local `backend\.env`; never commit credentials.
 | `S3_ENDPOINT`, `S3_FORCE_PATH_STYLE`, `MEDIA_KEY_PREFIX`, `PUBLIC_MEDIA_BASE_URL` | Optional S3 endpoint and media URL configuration. |
 | `EMAIL_API_KEY`, `EMAIL_FROM` | Email provider configuration. Run the separate email worker to process queued messages. |
 | `ALLOW_EPHEMERAL_STORAGE` | Disposable-deployment override only; do not enable for production customer media. |
-| `SQLITE_SOURCE_PATH` | Optional source database path for the legacy migration utility. |
 
 See [backend/.env.example](./backend/.env.example) and the
 [operations guide](./docs/operations.md) for all settings and production

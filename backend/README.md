@@ -193,9 +193,7 @@ SELECT version, applied_at FROM schema_migrations ORDER BY version;
 
 Starting the API with `node server.js` also applies pending migrations before
 serving requests. Keep schema changes in a new, incrementing migration; never
-edit a migration that has already been applied to a shared database. The
-legacy SQLite import utility reads `SQLITE_SOURCE_PATH` and imports rows into
-PostgreSQL after the schema migrations have run.
+edit a migration that has already been applied to a shared database.
 
 Automated tests cover the pure service layer (booking rules, download tokens,
 input validation, password hashing, pricing, and migration structure) with
