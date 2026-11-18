@@ -296,10 +296,6 @@ if (loginButton) {
     </div>
     <div class="auth-view" data-auth-view="signup">
       <form class="auth-form" id="signup-form">
-        <div class="auth-role-buttons" role="group" aria-label="Account type">
-          <button class="auth-role-button active" type="button" data-role="artist" aria-pressed="true">I'm an artist</button>
-          <button class="auth-role-button" type="button" data-role="non_artist" aria-pressed="false">I'm not an artist</button>
-        </div>
         <input id="signup-role" name="role" type="hidden" value="artist">
         <label for="signup-email">Gmail / email</label>
         <input id="signup-email" name="email" type="email" autocomplete="email" placeholder="you@gmail.com" required>
@@ -342,18 +338,6 @@ if (loginButton) {
     const element = document.getElementById(id);
     element.textContent = message;
     element.classList.toggle('error', isError);
-  };
-  const setSignupRole = role => {
-    document.getElementById('signup-role').value = role;
-    document.getElementById('artist-fields').hidden = role !== 'artist';
-    document.getElementById('address-field').hidden = role === 'artist';
-    document.getElementById('signup-artist-name').required = role === 'artist';
-    document.getElementById('signup-address').required = role !== 'artist';
-    authPanel.querySelectorAll('.auth-role-button').forEach(button => {
-      const active = button.dataset.role === role;
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-pressed', String(active));
-    });
   };
   refreshAuthPanel = () => {
     const loggedIn = Boolean(customerUser?.name && customerUser?.email);
@@ -580,7 +564,6 @@ if (loginButton) {
     }
   });
   authPanel.querySelectorAll('[data-auth-switch]').forEach(button => button.addEventListener('click', () => setAuthView(button.dataset.authSwitch)));
-  authPanel.querySelectorAll('.auth-role-button').forEach(button => button.addEventListener('click', () => setSignupRole(button.dataset.role)));
   authPanel.querySelector('#forgot-password-button').addEventListener('click', () => setAuthView('reset-request'));
   authPanel.querySelector('#logout-button').addEventListener('click', async event => {
     const stopBusy = window.startActionBusy(event.currentTarget, 'Logging out…');
@@ -625,7 +608,6 @@ if (loginButton) {
       authPanel.querySelector('#verify-email-submit').disabled = !data.verificationToken;
       setAuthMessage('verify-email-message', verificationMessage, false);
       signupForm.reset();
-      setSignupRole('artist');
       setAuthView('verify-email');
     } catch (error) {
       setAuthMessage('signup-message', error.message || 'Could not create the account.');

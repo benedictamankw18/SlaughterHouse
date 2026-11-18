@@ -800,9 +800,11 @@ const migrations = [
   },
   {
     // Cart ownership constraints plus authoritative license purchase numbering.
-    // Existing deployments never wrote these carts (migrations 41-43 were unreleased),
-    // so ownership rows can be constrained without deduplicating data. Purchase numbers
-    // are assigned from the counter inside the payment transaction from now on.
+    // Purchase numbers are assigned from the counter inside the payment transaction
+    // from now on. Deployments that ran migrations 41-43 before the unique cart
+    // indexes existed can hold duplicate cart rows (the cart upsert relied on
+    // ON CONFLICT, which needs the index), so deduplicate - keeping the most recently
+    // updated row per owner - before the indexes are built.
     version: 44,
     statements: [
       { ensureColumn: { table: 'licenses', column: 'purchase_number', definition: 'INT NULL' } },
@@ -813,6 +815,12 @@ const migrations = [
        SET count = GREATEST(count, COALESCE((SELECT MAX(purchase_number) FROM licenses), 0))
        WHERE id = 1`,
       'CREATE UNIQUE INDEX IF NOT EXISTS uq_licenses_purchase_number ON licenses (purchase_number)',
+      `DELETE FROM carts a USING carts b
+       WHERE a.cart_id IS NOT NULL AND a.cart_id = b.cart_id
+         AND (a.updated_at < b.updated_at OR (a.updated_at = b.updated_at AND a.id < b.id))`,
+      `DELETE FROM carts a USING carts b
+       WHERE a.user_id IS NOT NULL AND a.user_id = b.user_id
+         AND (a.updated_at < b.updated_at OR (a.updated_at = b.updated_at AND a.id < b.id))`,
       'CREATE UNIQUE INDEX IF NOT EXISTS uq_carts_user_id ON carts (user_id)',
       'CREATE UNIQUE INDEX IF NOT EXISTS uq_carts_cart_id ON carts (cart_id)',
       'ALTER TABLE carts ADD CONSTRAINT carts_scope_check CHECK ((user_id IS NULL) <> (cart_id IS NULL))'
